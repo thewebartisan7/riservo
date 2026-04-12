@@ -198,6 +198,70 @@ Each decision has a stable ID that can be referenced in code comments (e.g., `//
 
 ---
 
+### D-021 — AvailabilityException uses nullable FK, not polymorphic
+- **Date**: 2026-04-12
+- **Status**: accepted
+- **Context**: AvailabilityExceptions can belong to either a Business (business-level) or a specific Collaborator (collaborator-level). Two approaches were considered: polymorphic relationship (`exceptionalable_type` + `exceptionalable_id`) vs. simple FK approach.
+- **Decision**: `availability_exceptions` table has `business_id` (always set, for scoping per D-012) and nullable `collaborator_id`. When `collaborator_id` is null, it's a business-level exception. When set, it's collaborator-level.
+- **Consequences**: Simpler queries, no polymorphic joins. `business_id` is always available for scoping.
+
+---
+
+### D-022 — Avatar field on User model, not BusinessUser pivot
+- **Date**: 2026-04-12
+- **Status**: accepted
+- **Context**: SPEC §13 lists avatar as being "on BusinessUser pivot or User profile." Multi-business collaborators needing different avatars per business is unlikely for MVP.
+- **Decision**: `avatar` is a nullable string column on the `users` table. One avatar per person across all businesses.
+- **Consequences**: Simpler model, no pivot complexity. If per-business avatars are needed post-MVP, a migration can move the field.
+
+---
+
+### D-023 — Assignment strategy column added in Session 2
+- **Date**: 2026-04-12
+- **Status**: accepted
+- **Context**: P-001 proposed adding `assignment_strategy` to Business. The Business migration is created in Session 2, and adding the column now avoids an extra migration in Session 3.
+- **Decision**: `assignment_strategy` string column on `businesses` table with default `first_available`. Session 3 implements the actual assignment logic.
+- **Consequences**: Session 3 agent can focus on the scheduling engine without needing a migration. P-001 is partially resolved — the field exists, but the Session 3 agent still decides whether to implement round-robin or keep first-available only.
+
+---
+
+### D-024 — day_of_week uses ISO 8601 numbering
+- **Date**: 2026-04-12
+- **Status**: accepted
+- **Context**: Multiple tables store `day_of_week` values. Different systems use different numbering: Carbon's `dayOfWeek` (0=Sunday), `dayOfWeekIso` (1=Monday), JavaScript's `getDay()` (0=Sunday).
+- **Decision**: All `day_of_week` columns use ISO 8601 numbering: 1=Monday through 7=Sunday. This matches Carbon's `dayOfWeekIso` property.
+- **Consequences**: When checking availability, use `$date->dayOfWeekIso` (not `$date->dayOfWeek`). A `DayOfWeek` int-backed enum enforces valid values.
+
+---
+
+### D-025 — Enum fields stored as strings for SQLite compatibility
+- **Date**: 2026-04-12
+- **Status**: accepted
+- **Context**: MySQL/MariaDB native ENUM types are not supported by SQLite. The project uses SQLite for development.
+- **Decision**: All enum-backed fields (status, source, role, type, etc.) are stored as `string` columns. PHP string-backed enums with Eloquent casts enforce valid values at the application layer.
+- **Consequences**: Cross-database compatible. No migration issues between SQLite (dev) and MariaDB (prod). Validation at the database level is sacrificed for portability.
+
+---
+
+### D-026 — Skip Blueprint, use artisan make commands
+- **Date**: 2026-04-12
+- **Status**: accepted
+- **Supersedes**: D-011
+- **Context**: D-011 proposed using Laravel Blueprint for initial data layer scaffolding. However, Blueprint generates old-convention code (`$fillable` arrays) incompatible with Laravel 13's `#[Fillable]` attributes, cannot express custom FK names like `collaborator_id`, and requires extensive manual adjustment.
+- **Decision**: Session 2 uses `php artisan make:model`, `make:migration`, and `make:factory` instead of Blueprint. The `draft.yaml` task from the roadmap is replaced by manually written, convention-following code.
+- **Consequences**: No Blueprint dependency. All generated code follows Laravel 13 conventions from the start. Slightly more upfront work, but no post-generation cleanup.
+
+---
+
+### D-027 — FK naming: collaborator_id for user-as-collaborator references
+- **Date**: 2026-04-12
+- **Status**: accepted
+- **Context**: Several tables reference the `users` table to represent the collaborator performing a service. Using `user_id` everywhere is ambiguous — `bookings.user_id` could mean the customer's user, the business owner, or the collaborator.
+- **Decision**: Tables where the FK represents a collaborator use `collaborator_id` (pointing to `users.id`): `bookings`, `availability_rules`, `availability_exceptions`, `collaborator_service`. Tables where the FK represents a generic user use `user_id`: `customers`, `calendar_integrations`.
+- **Consequences**: Self-documenting schema. Relationship methods are named `collaborator()` where appropriate. Requires explicit `->constrained('users')` in migrations since Laravel can't infer the table from `collaborator_id`.
+
+---
+
 ### P-001 — Assignment strategy: configurable or always first-available? (Open Proposal)
 - **Date**: 2026-04-12
 - **Status**: open — for Session 3 agent to evaluate

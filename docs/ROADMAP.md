@@ -20,25 +20,24 @@ Starting point: fresh Laravel 13 installation (no starter kit) provided by the d
 
 ---
 
-## Session 2 — Data Layer (Blueprint + Models + Seeders)
+## Session 2 — Data Layer (Models + Migrations + Seeders)
 
-- [ ] Write `draft.yaml` for Laravel Blueprint covering all core models:
-  - `Business` (include `timezone` field, default `Europe/Zurich`), `User`, `BusinessUser` (pivot with roles)
+- [x] Create migrations, models, and factories for all core models (D-026: used artisan instead of Blueprint):
+  - `Business` (include `timezone` field, default `Europe/Zurich`), `User` (modified), `BusinessUser` (pivot with roles)
   - `BusinessHour` (business-level weekly open/close schedule)
   - `Service` (include `slug` field), `CollaboratorService` (pivot)
   - `Customer`, `Booking`
   - `AvailabilityRule`, `AvailabilityException`
   - `CalendarIntegration`
-- [ ] Run Blueprint to generate migrations, models, factories
-- [ ] Review and adjust generated migrations (indexes, constraints, enums)
-- [ ] Write seeders:
-  - 1 Business with realistic data and a unique slug
-  - 3 Collaborators with different weekly schedules
-  - 4–5 Services with varying durations, prices, buffer_before/after
-  - Business-level and collaborator-level availability rules
-  - A handful of future and past Bookings across statuses
-- [ ] Verify all relationships and factories work correctly
-- [ ] Confirm SQLite compatibility for all migrations
+- [x] Review and adjust migrations (indexes, constraints, enums)
+- [x] Write seeders:
+  - 1 Business ("Salone Bella") with realistic data and unique slug
+  - 4 Staff (1 admin + 3 collaborators) with different weekly schedules
+  - 5 Services with varying durations, prices, buffer_before/after
+  - Business-level and collaborator-level availability rules and exceptions
+  - 10 Bookings across all statuses (confirmed, pending, completed, cancelled, no_show, manual)
+- [x] Verify all relationships and factories work correctly (57 tests passing)
+- [x] Confirm SQLite compatibility for all migrations
 
 ---
 
