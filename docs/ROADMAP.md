@@ -16,7 +16,7 @@ Starting point: fresh Laravel 13 installation (no starter kit) provided by the d
 - [x] Configure `composer.json` with useful dev dependencies (Pint, Larastan, etc.)
 - [x] Set up Laravel Pint for code style
 - [x] Configure PHPUnit / Pest for testing
-- [ ] Commit baseline with CI-ready structure
+- [x] Commit baseline with CI-ready structure
 
 ---
 

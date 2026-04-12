@@ -2,7 +2,7 @@
 
 **Session**: 1 — Project Setup  
 **Date**: 2026-04-12  
-**Status**: Complete (pending final commit)
+**Status**: Complete
 
 ---
 
@@ -19,6 +19,7 @@ Session 1 verified and completed all setup tasks for the Laravel 13 project.
 - **Directory structure**: created `app/Services/`, `app/DTOs/`, `app/Enums/` with `.gitkeep` files
 - **Larastan**: installed `larastan/larastan:^3.0` as dev dependency, created `phpstan.neon` (level 5, Larastan extension)
 - **Pint config**: created `pint.json` with `laravel` preset
+- **CI**: GitHub Actions workflow (`.github/workflows/ci.yml`) — runs Pint, Larastan, and Pest on push/PR to `main`
 
 ### Verification
 - `php artisan test --compact` — 2 passed
@@ -34,7 +35,7 @@ Session 1 verified and completed all setup tasks for the Laravel 13 project.
 - Frontend: not installed (Session 4)
 - Tests: Pest configured, default tests passing
 - Code quality: Pint (laravel preset) + Larastan (level 5) configured and passing
-- Remaining: final commit of baseline (developer to handle)
+- CI: GitHub Actions workflow runs Pint, Larastan, and Pest on push/PR to `main`
 
 ---
 
