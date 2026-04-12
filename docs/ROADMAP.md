@@ -11,11 +11,11 @@
 
 Starting point: fresh Laravel 13 installation (no starter kit) provided by the developer.
 
-- [ ] Configure `.env` for local development (SQLite, mail, app settings)
-- [ ] Set up directory structure conventions (Services, DTOs, Enums, etc.)
-- [ ] Configure `composer.json` with useful dev dependencies (Pint, Larastan, etc.)
-- [ ] Set up Laravel Pint for code style
-- [ ] Configure PHPUnit / Pest for testing
+- [x] Configure `.env` for local development (SQLite, mail, app settings)
+- [x] Set up directory structure conventions (Services, DTOs, Enums, etc.)
+- [x] Configure `composer.json` with useful dev dependencies (Pint, Larastan, etc.)
+- [x] Set up Laravel Pint for code style
+- [x] Configure PHPUnit / Pest for testing
 - [ ] Commit baseline with CI-ready structure
 
 ---
