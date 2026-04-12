@@ -262,11 +262,48 @@ Each decision has a stable ID that can be referenced in code comments (e.g., `//
 
 ---
 
-### P-001 — Assignment strategy: configurable or always first-available? (Open Proposal)
+### P-001 — Assignment strategy: configurable or always first-available? (Resolved)
 - **Date**: 2026-04-12
-- **Status**: open — for Session 3 agent to evaluate
+- **Status**: resolved — see D-028
 - **Context**: SPEC §5.4 says automatic collaborator assignment strategy is "configurable (round-robin or first-available)." It is worth questioning whether this needs to be configurable at all in MVP.
 - **Proposal**: Add `assignment_strategy` enum to Business (`first_available` | `round_robin`). Alternatively, always use `first_available` for MVP and defer configurability. The Session 3 agent should evaluate both options during planning and propose the right approach — including whether the complexity of round-robin is justified for MVP.
+- **Resolution**: Both strategies implemented. Round-robin uses a "least-busy" approach (D-028).
+
+---
+
+### D-028 — Round-robin uses least-busy strategy
+- **Date**: 2026-04-12
+- **Status**: accepted
+- **Context**: P-001 asked whether round-robin is needed for MVP and how it should work. True sequential round-robin requires state tracking (a `last_assigned_collaborator_id` column and update logic). A simpler approach achieves the same goal of fair workload distribution.
+- **Decision**: The `round_robin` assignment strategy picks the collaborator with the fewest upcoming `confirmed`/`pending` bookings for the business. Among ties, the collaborator with the lowest ID wins (stable ordering). No extra state-tracking column needed.
+- **Consequences**: Stateless and simple. Distribution is based on actual workload, not arbitrary rotation order. If a collaborator calls in sick and gets their bookings cancelled, they naturally get assigned more bookings when they return.
+
+---
+
+### D-029 — TimeWindow DTO for availability calculations
+- **Date**: 2026-04-12
+- **Status**: accepted
+- **Context**: The scheduling engine manipulates time ranges extensively — intersecting business hours with collaborator rules, subtracting exceptions, checking booking overlaps. Using raw arrays of start/end times is error-prone.
+- **Decision**: A `TimeWindow` value object (`app/DTOs/TimeWindow.php`) represents a time range with `CarbonImmutable` start/end. Static methods on the class provide collection operations: `intersect`, `subtract`, `merge`, `union`.
+- **Consequences**: Type-safe time range operations. All availability calculations use `TimeWindow[]` arrays. Reusable across `AvailabilityService` and `SlotGeneratorService`.
+
+---
+
+### D-030 — Slot calculation works entirely in business timezone
+- **Date**: 2026-04-12
+- **Status**: accepted
+- **Context**: Availability rules and business hours are stored as time-of-day strings (e.g., `09:00`). Bookings are stored as UTC datetimes (per D-005). The scheduling engine must reconcile these two representations.
+- **Decision**: `AvailabilityService` and `SlotGeneratorService` operate entirely in the business's local timezone. Time-of-day strings from rules/hours are combined with the target date in the business timezone to produce `CarbonImmutable` instances. Booking queries convert the target date's boundaries to UTC for the WHERE clause.
+- **Consequences**: Slot start times returned to callers are in business timezone. DST transitions are handled correctly by Carbon. Callers (future sessions) converting slot times to UTC for booking creation must use the business timezone as context.
+
+---
+
+### D-031 — Only pending and confirmed bookings block availability
+- **Date**: 2026-04-12
+- **Status**: accepted
+- **Context**: SPEC §5.3 says slot calculation "subtracts existing confirmed/pending bookings." It must be explicit which booking statuses block availability, since getting this wrong either double-books or hides valid slots.
+- **Decision**: Only bookings with status `pending` or `confirmed` are considered when checking for conflicts during slot generation. Bookings with status `cancelled`, `completed`, or `no_show` do not block any slots.
+- **Consequences**: A cancelled booking immediately frees up its slot. A completed booking also frees its slot (relevant if a business manually marks a past booking as completed and the system checks historical dates for some reason).
 
 ---
 

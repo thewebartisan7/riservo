@@ -45,7 +45,7 @@ Starting point: fresh Laravel 13 installation (no starter kit) provided by the d
 
 Core service that calculates available booking slots. Built test-first.
 
-- [ ] Write unit tests covering:
+- [x] Write unit tests covering:
   - Basic slot generation from a weekly schedule
   - Correct application of `buffer_before`, `buffer_after`, and per-service `slot_interval`
   - Business-level exception blocks full day and partial day
@@ -55,10 +55,10 @@ Core service that calculates available booking slots. Built test-first.
   - Slot calculation respects business timezone (UTC storage, local display)
   - Edge cases: back-to-back bookings, midnight boundary, slot at exact closing time, DST transitions
   - Automatic collaborator assignment (first-available and round-robin strategies)
-- [ ] Implement `AvailabilityService` until all tests pass
-- [ ] Implement `SlotGeneratorService` (takes rules + exceptions + bookings → returns available slots)
-- [ ] Write integration test: full slot calculation for a realistic business scenario using seeded data
-- [ ] No UI in this session — engine only
+- [x] Implement `AvailabilityService` until all tests pass
+- [x] Implement `SlotGeneratorService` (takes rules + exceptions + bookings → returns available slots)
+- [x] Write integration test: full slot calculation for a realistic business scenario using seeded data
+- [x] No UI in this session — engine only
 
 ---
 
