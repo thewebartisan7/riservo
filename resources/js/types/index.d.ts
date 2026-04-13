@@ -178,6 +178,13 @@ export interface CustomerSearchResponse {
     }>;
 }
 
+// Calendar types
+export interface CalendarCollaborator {
+    id: number;
+    name: string;
+    avatar_url: string | null;
+}
+
 export interface PageProps {
     auth: {
         user: User | null;

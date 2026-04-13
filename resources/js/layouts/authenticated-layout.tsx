@@ -1,6 +1,7 @@
 import { Head, Link, usePage } from '@inertiajs/react';
 import { index as dashboardIndex } from '@/actions/App/Http/Controllers/Dashboard/DashboardController';
 import { index as bookingsIndex } from '@/actions/App/Http/Controllers/Dashboard/BookingController';
+import { index as calendarIndex } from '@/actions/App/Http/Controllers/Dashboard/CalendarController';
 import { index as customersIndex } from '@/actions/App/Http/Controllers/Dashboard/CustomerController';
 import { destroy } from '@/actions/App/Http/Controllers/Auth/LoginController';
 import type { PropsWithChildren } from 'react';
@@ -50,6 +51,7 @@ export default function AuthenticatedLayout({
     const navItems = [
         { label: t('Dashboard'), href: dashboardIndex.url(), active: currentPath === '/dashboard' },
         { label: t('Bookings'), href: bookingsIndex.url(), active: currentPath.startsWith('/dashboard/bookings') },
+        { label: t('Calendar'), href: calendarIndex.url(), active: currentPath.startsWith('/dashboard/calendar') },
         ...(isAdmin
             ? [{ label: t('Customers'), href: customersIndex.url(), active: currentPath.startsWith('/dashboard/customers') }]
             : []),

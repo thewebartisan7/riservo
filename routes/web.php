@@ -11,6 +11,7 @@ use App\Http\Controllers\Booking\BookingManagementController;
 use App\Http\Controllers\Booking\PublicBookingController;
 use App\Http\Controllers\Customer\BookingController as CustomerBookingController;
 use App\Http\Controllers\Dashboard\BookingController as DashboardBookingController;
+use App\Http\Controllers\Dashboard\CalendarController;
 use App\Http\Controllers\Dashboard\CustomerController as DashboardCustomerController;
 use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Dashboard\Settings\BookingSettingsController;
@@ -94,6 +95,9 @@ Route::middleware('auth')->group(function () {
         Route::post('/dashboard/bookings', [DashboardBookingController::class, 'store'])->name('dashboard.bookings.store');
         Route::patch('/dashboard/bookings/{booking}/status', [DashboardBookingController::class, 'updateStatus'])->name('dashboard.bookings.update-status');
         Route::patch('/dashboard/bookings/{booking}/notes', [DashboardBookingController::class, 'updateNotes'])->name('dashboard.bookings.update-notes');
+
+        // Calendar
+        Route::get('/dashboard/calendar', [CalendarController::class, 'index'])->name('dashboard.calendar');
 
         // Dashboard API (JSON)
         Route::get('/dashboard/api/available-dates', [DashboardBookingController::class, 'availableDates'])->name('dashboard.api.available-dates');

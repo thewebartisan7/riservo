@@ -1,92 +1,77 @@
 # Handoff
 
-**Session**: UI Review — COSS UI, Inertia v3, TypeScript remediation  
+**Session**: 11 — Calendar View  
 **Date**: 2026-04-13  
 **Status**: Complete
 
 ---
 
-## What Was Done
+## What Was Built
 
-A full codebase review and remediation pass across ~30 files, correcting accumulated drift in COSS UI component usage, Inertia v3 idioms, TypeScript safety, and two small Laravel fixes. No new features — pure quality improvement.
+A full calendar page for the business dashboard with three view modes, collaborator filtering, booking detail integration, and current time indicator.
 
-### COSS UI Field Migration (17 files)
+### Backend
 
-Replaced all manual `<div className="flex flex-col gap-2">` + `<label htmlFor>` + `<InputError>` patterns with proper `Field` / `FieldLabel` / `FieldError` / `FieldDescription` components.
+- **`CalendarController`** (`app/Http/Controllers/Dashboard/CalendarController.php`): Single `index()` method that accepts `view` (day/week/month) and `date` query params. Computes visible date range, queries bookings within it (UTC-converted), returns as Inertia props. Collaborator role sees only own bookings. Route: `GET /dashboard/calendar`.
 
-- **Auth pages** (7): login, register, forgot-password, reset-password, magic-link, customer-register, accept-invitation
-- **Onboarding pages** (3): step-1, step-3, step-4
-- **Settings pages** (3): profile, booking, embed
-- **Components** (4): service-form, collaborator-invite-dialog, exception-dialog, customer-form
+### Frontend — Calendar Components
 
-Key pattern: `FieldError` uses `match` prop (= `match={true}`) to force display of server-side Inertia validation errors, since Base UI's Field.Error only renders for HTML5 validation by default.
+All in `resources/js/components/calendar/`:
 
-### Native `<select>` → COSS UI `Select` (4 files, 8 instances)
+- **`calendar-header.tsx`**: Date navigation (prev/today/next), view switcher (COSS UI Select), "New booking" button (admin only). Uses `date-fns` for date arithmetic. Navigation via Inertia partial reloads (`only: ['bookings', 'view', 'date']`).
+- **`week-view.tsx`**: 7-column time grid (Mon–Sun) with 288 five-minute rows. Events positioned via CSS grid `gridRow`/`gridColumnStart` inline styles (not dynamic Tailwind classes). Overlap handling via `layoutOverlappingEvents` — side-by-side flex items splitting width. Auto-scrolls to 7 AM on mount. Mobile: horizontal scroll (`width: 165%` pattern).
+- **`day-view.tsx`**: Single-column time grid with same 288-row structure. Desktop sidebar has a mini calendar for quick date navigation. Mobile shows a week day strip.
+- **`month-view.tsx`**: 7-column grid with `gridTemplateRows` via inline style. Desktop shows up to 2 booking entries per day with "+N more". Mobile shows colored dots per day; tapping a day shows its bookings in a list below the grid.
+- **`calendar-event.tsx`**: Shared event rendering component + utility functions: `getBookingGridPosition`, `getDateInTimezone`, `layoutOverlappingEvents` (overlap detection and column assignment).
+- **`current-time-indicator.tsx`**: Red line + dot positioned at current time via `Intl.DateTimeFormat` in business timezone. Updates every 60 seconds.
+- **`collaborator-filter.tsx`**: Admin-only toggle pills with color dots. Client-side filter — no server roundtrip.
 
-- `booking.tsx`: confirmation_mode, assignment_strategy, payment_mode
-- `embed.tsx`: service pre-filter
-- `step-3.tsx`: slot_interval_minutes
-- `time-window-row.tsx`: open_time, close_time (96 time options each)
+### Frontend — Support Files
 
-Uses `name` prop on `Select` for native form submission within Inertia `<Form>`, `value` + `onValueChange` for controlled selects.
+- **`resources/js/lib/calendar-colors.ts`**: Palette of 8 colors (blue, pink, indigo, green, amber, purple, teal, rose). `getCollaboratorColor(index)` and `getCollaboratorColorMap(ids)` utilities.
+- **`resources/js/pages/dashboard/calendar.tsx`**: Page component. Manages state for booking detail sheet, manual booking dialog, and collaborator visibility. Filters bookings client-side by visible collaborators (D-060).
+- **`resources/js/types/index.d.ts`**: Added `CalendarCollaborator` interface.
+- **`resources/js/layouts/authenticated-layout.tsx`**: Added "Calendar" nav item (visible to both admin and collaborator roles).
 
-### Inertia v3 Improvements
+### Tests
 
-- **Partial reloads**: Added `only: ['bookings']` and `only: ['customers']` to filter/search router calls in bookings and customers pages
-- **View Transitions**: Enabled globally via `defaults.visitOptions` in `createInertiaApp`
-
-### N+1 Query Fixes (1 file)
-
-`CollaboratorController.php`:
-- `index()`: Replaced per-collaborator `->services()->count()` with `withCount`
-- `show()`: Replaced per-service `->collaborators()->exists()` with constrained eager loading
-
-### TypeScript Response Interfaces
-
-Added 7 response shape interfaces to `types/index.d.ts` (`SlugCheckResponse`, `FileUploadResponse`, `AvatarUploadResponse`, `AvailableDatesResponse`, `AvailableSlotsResponse`, `BookingStoreResponse`, `CustomerSearchResponse`) and updated inline `as` casts in 7 component files.
-
-### Documentation
-
-- `resources/js/components/ui/CLAUDE.md` — COSS UI component usage rules
-- `resources/js/CLAUDE.md` — Inertia v3 + React frontend rules
-- `docs/FUTURE-UX-IDEAS.md` — deferred UX improvement ideas (polling, prefetching, scroll preservation)
+- `tests/Feature/Dashboard/CalendarControllerTest.php`: 10 tests covering default view, date range queries, view switching, date navigation, day-only filtering, month padded range, admin vs collaborator access, auth redirect, and invalid view fallback.
 
 ---
 
 ## Current Project State
 
-- **Backend**: 22 migrations, 12 models, 4 services, 1 DTO, 23 controllers, 22 form requests, 5 notifications, 3 custom middleware, 2 scheduled commands
-- **Frontend**: 34 pages, 5 layouts, 55 COSS UI components, 4 onboarding components, 6 booking components, 3 dashboard components, 5 settings components
-- **Tests**: 369 passing (1280 assertions)
+- **Backend**: 22 migrations, 12 models, 4 services, 1 DTO, 24 controllers, 22 form requests, 5 notifications, 3 custom middleware, 2 scheduled commands
+- **Frontend**: 35 pages, 5 layouts, 55 COSS UI components, 4 onboarding components, 6 booking components, 3 dashboard components, 5 settings components, 8 calendar components
+- **Tests**: 379 passing (1387 assertions)
 - **Build**: `npm run build` succeeds, `vendor/bin/pint` clean
 
 ---
 
-## Decisions Made
+## Key Conventions Established
 
-- **NumberField for Price**: Intentionally skipped — stepper +/- buttons are wrong UX for freeform currency input. `<Input type="number">` stays.
-- **useCopyToClipboard**: Intentionally skipped — the hook doesn't exist in the COSS UI install. Current 5-line implementation in `embed-snippet.tsx` works fine.
-- **InputError component**: Kept for 3 files that use it for error summary blocks (not per-field). Added doc comment noting it's only for summaries.
-- **View Transitions**: Enabled globally via `defaults.visitOptions` — graceful no-op in unsupported browsers.
+1. **No dynamic Tailwind classes**: Calendar uses inline `style` props for grid positioning (`gridRow`, `gridColumnStart`, `gridTemplateRows`) instead of dynamic class strings like `` `sm:col-start-${n}` `` — Tailwind tree-shakes them.
+2. **Overlap layout algorithm**: `layoutOverlappingEvents()` assigns column/totalColumns to events. Width and margin-left are calculated as percentages via inline styles.
+3. **Time grid structure**: 288 rows = 24 hours × 12 five-minute intervals. Row offset of +2 accounts for the header. Both week and day views share this grid system.
+4. **Timezone rendering**: `Intl.DateTimeFormat` with `timeZone` option for rendering dates/times in business timezone. `date-fns` for date arithmetic (which is timezone-naive — works on local dates from the server).
+5. **Calendar navigation**: `router.get()` with `preserveState: true` and `only: ['bookings', 'view', 'date']` for fast partial reloads when switching dates/views.
 
 ---
 
-## What Session 11 Needs to Know
+## What Session 12 Needs to Know
 
-Session 11 implements billing (Laravel Cashier).
+Session 12 implements billing (Laravel Cashier).
 
-- **CLAUDE.md files**: Two new CLAUDE.md files document COSS UI and Inertia v3 patterns. Follow these when building billing UI.
-- **Field pattern**: All new forms must use `Field` / `FieldLabel` / `FieldError` / `FieldDescription` from `@/components/ui/field`. Use `match` prop on `FieldError` for server-side validation errors.
-- **Select pattern**: Use COSS UI `Select` with `name` prop for form selects — never native `<select>`.
-- **Forms**: Prefer Inertia `<Form>` for standard submissions. `useForm` only when programmatic control is needed.
-- **HTTP requests**: Use `useHttp` for all standalone AJAX — never `fetch()`.
-- **Partial reloads**: Use `only: [...]` for filter/sort/pagination interactions.
-- **Response types**: Define interfaces in `types/index.d.ts` for `useHttp` response shapes.
+- **Calendar is built and functional** — no dependencies on billing.
+- **`date-fns`** is now used in the frontend (transitive dependency of `react-day-picker`, v4.1.0). Available for import but only used in calendar components.
+- **Existing patterns**: Follow the CLAUDE.md files in `resources/js/` and `resources/js/components/ui/` for forms, HTTP requests, and UI components.
+- **Services and collaborators props** are shared to both the bookings page and the calendar page for the manual booking dialog.
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **is_active filtering in public booking**: Still deferred from Session 9 — `SlotGeneratorService` and `PublicBookingController::collaborators()` should filter out deactivated collaborators
-- **Onboarding fetch() migration**: Resolved — onboarding step-1 was already using `useHttp`, not `fetch()`
-- **Email template translations**: All templates use `__()` but only English keys exist. IT/DE/FR translations are pre-launch work per D-008
+- **is_active filtering in public booking**: Still deferred from Session 9 — `SlotGeneratorService` and `PublicBookingController::collaborators()` should filter out deactivated collaborators.
+- **Click-to-create on empty time slots**: Not implemented — future enhancement. Currently only the "New booking" button in the header opens the manual booking dialog.
+- **Bundle size warning**: The JS bundle is 866 KB (254 KB gzipped). The chunk size warning from Vite is informational — code-splitting can be done post-MVP if needed.
+- **Email template translations**: All templates use `__()` but only English keys exist. IT/DE/FR translations are pre-launch work per D-008.

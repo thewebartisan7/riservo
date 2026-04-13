@@ -546,3 +546,30 @@ Each decision has a stable ID that can be referenced in code comments (e.g., `//
 - **Context**: The roadmap listed "Booking confirmed (to collaborator)" and "New booking received (to business/collaborator)" as separate templates. These are near-identical in structure — both notify staff about a booking with its details.
 - **Decision**: A single `BookingReceivedNotification` class with a `$context` parameter ('new' | 'confirmed') adapts the subject line and heading. Sent to business admins + assigned collaborator on booking creation (context='new') and on admin confirmation of a pending booking (context='confirmed').
 - **Consequences**: One fewer notification class. Template reuse. The distinction between "new" and "confirmed" is still clear to the recipient via subject/heading.
+
+---
+
+### D-058 — Calendar default view is week
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: The calendar supports day, week, and month views. A default is needed when navigating to `/dashboard/calendar` without a `view` parameter.
+- **Decision**: Default view is `week`. Week view provides the best balance of detail and overview for daily business operations. This matches industry conventions (Google Calendar, Cal.com, Calendly).
+- **Consequences**: The URL `/dashboard/calendar` renders the current week. View preference is not persisted — each navigation starts with week view unless a `view` query param is present.
+
+---
+
+### D-059 — Collaborator colors assigned from fixed palette by index
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: Admin calendar shows bookings from all collaborators, color-coded for visual distinction. Colors need to be assigned deterministically without database storage.
+- **Decision**: A palette of 8 visually distinct colors is defined in `resources/js/lib/calendar-colors.ts`. Each collaborator is assigned `palette[index % 8]` based on their position in the collaborators array (sorted by ID).
+- **Consequences**: Colors are consistent within a session but may shift if collaborators are added/removed/reordered. No database migration needed. Sufficient for MVP volumes (3-5 collaborators).
+
+---
+
+### D-060 — Calendar collaborator filter is client-side only
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: Admin calendar shows all collaborators' bookings. A filter lets the admin toggle visibility per collaborator. Two approaches: client-side filtering (hide/show in UI) or server-side filtering (re-query with selected collaborator IDs).
+- **Decision**: Client-side filtering. All bookings for the date range are loaded via Inertia props. The collaborator toggle filter hides/shows bookings in the UI without a server roundtrip.
+- **Consequences**: Fast toggle interaction (no network delay). Acceptable for MVP volumes. If a business has many collaborators with dense bookings, server-side filtering can be added post-MVP.
