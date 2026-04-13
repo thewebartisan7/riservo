@@ -8,7 +8,7 @@ import { useTrans } from '@/hooks/use-trans';
 import { router, useHttp } from '@inertiajs/react';
 import { store, show } from '@/actions/App/Http/Controllers/OnboardingController';
 import type { FormEvent } from 'react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface Props {
     hours: DaySchedule[];
@@ -18,16 +18,24 @@ export default function Step2({ hours: initialHours }: Props) {
     const { t } = useTrans();
     const [hours, setHours] = useState<DaySchedule[]>(initialHours);
     const http = useHttp({ hours: [] as DaySchedule[] });
+    const pendingSubmit = useRef(false);
 
     function submit(e: FormEvent) {
         e.preventDefault();
         http.setData('hours', hours);
-        http.post(store.url(2), {
-            onSuccess: () => {
-                router.visit(show(3));
-            },
-        });
+        pendingSubmit.current = true;
     }
+
+    useEffect(() => {
+        if (pendingSubmit.current && http.data.hours.length > 0) {
+            pendingSubmit.current = false;
+            http.post(store.url(2), {
+                onSuccess: () => {
+                    router.visit(show(3));
+                },
+            });
+        }
+    }, [http.data.hours]);
 
     return (
         <OnboardingLayout step={2} title={t('Working Hours')}>
