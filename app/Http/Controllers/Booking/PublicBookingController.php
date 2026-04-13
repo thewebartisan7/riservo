@@ -80,6 +80,7 @@ class PublicBookingController extends Controller
             ])->values(),
             'preSelectedServiceSlug' => $preSelectedServiceSlug,
             'customerPrefill' => $customerPrefill,
+            'embed' => (bool) request('embed'),
         ]);
     }
 

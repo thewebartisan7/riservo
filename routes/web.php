@@ -13,6 +13,13 @@ use App\Http\Controllers\Customer\BookingController as CustomerBookingController
 use App\Http\Controllers\Dashboard\BookingController as DashboardBookingController;
 use App\Http\Controllers\Dashboard\CustomerController as DashboardCustomerController;
 use App\Http\Controllers\Dashboard\DashboardController;
+use App\Http\Controllers\Dashboard\Settings\BookingSettingsController;
+use App\Http\Controllers\Dashboard\Settings\BusinessExceptionController;
+use App\Http\Controllers\Dashboard\Settings\CollaboratorController as SettingsCollaboratorController;
+use App\Http\Controllers\Dashboard\Settings\EmbedController;
+use App\Http\Controllers\Dashboard\Settings\ProfileController as SettingsProfileController;
+use App\Http\Controllers\Dashboard\Settings\ServiceController as SettingsServiceController;
+use App\Http\Controllers\Dashboard\Settings\WorkingHoursController;
 use App\Http\Controllers\OnboardingController;
 use App\Http\Controllers\WelcomeController;
 use Illuminate\Support\Facades\Route;
@@ -97,6 +104,52 @@ Route::middleware('auth')->group(function () {
             Route::get('/dashboard/customers', [DashboardCustomerController::class, 'index'])->name('dashboard.customers');
             Route::get('/dashboard/customers/{customer}', [DashboardCustomerController::class, 'show'])->name('dashboard.customers.show');
             Route::get('/dashboard/api/customers/search', [DashboardCustomerController::class, 'search'])->name('dashboard.api.customers.search');
+        });
+
+        // Settings (admin only)
+        Route::middleware('role:admin')->prefix('dashboard/settings')->group(function () {
+            // Profile
+            Route::get('/profile', [SettingsProfileController::class, 'edit'])->name('settings.profile');
+            Route::put('/profile', [SettingsProfileController::class, 'update'])->name('settings.profile.update');
+            Route::post('/profile/logo', [SettingsProfileController::class, 'uploadLogo'])->name('settings.profile.upload-logo');
+            Route::post('/profile/slug-check', [SettingsProfileController::class, 'checkSlug'])->name('settings.profile.slug-check');
+
+            // Booking settings
+            Route::get('/booking', [BookingSettingsController::class, 'edit'])->name('settings.booking');
+            Route::put('/booking', [BookingSettingsController::class, 'update'])->name('settings.booking.update');
+
+            // Working hours
+            Route::get('/hours', [WorkingHoursController::class, 'edit'])->name('settings.hours');
+            Route::put('/hours', [WorkingHoursController::class, 'update'])->name('settings.hours.update');
+
+            // Business exceptions
+            Route::get('/exceptions', [BusinessExceptionController::class, 'index'])->name('settings.exceptions');
+            Route::post('/exceptions', [BusinessExceptionController::class, 'store'])->name('settings.exceptions.store');
+            Route::put('/exceptions/{exception}', [BusinessExceptionController::class, 'update'])->name('settings.exceptions.update');
+            Route::delete('/exceptions/{exception}', [BusinessExceptionController::class, 'destroy'])->name('settings.exceptions.destroy');
+
+            // Services
+            Route::get('/services', [SettingsServiceController::class, 'index'])->name('settings.services');
+            Route::get('/services/create', [SettingsServiceController::class, 'create'])->name('settings.services.create');
+            Route::post('/services', [SettingsServiceController::class, 'store'])->name('settings.services.store');
+            Route::get('/services/{service}', [SettingsServiceController::class, 'edit'])->name('settings.services.edit');
+            Route::put('/services/{service}', [SettingsServiceController::class, 'update'])->name('settings.services.update');
+
+            // Collaborators
+            Route::get('/collaborators', [SettingsCollaboratorController::class, 'index'])->name('settings.collaborators');
+            Route::post('/collaborators/invite', [SettingsCollaboratorController::class, 'invite'])->name('settings.collaborators.invite');
+            Route::post('/collaborators/invitations/{invitation}/resend', [SettingsCollaboratorController::class, 'resendInvitation'])->name('settings.collaborators.resend-invitation');
+            Route::delete('/collaborators/invitations/{invitation}', [SettingsCollaboratorController::class, 'cancelInvitation'])->name('settings.collaborators.cancel-invitation');
+            Route::get('/collaborators/{user}', [SettingsCollaboratorController::class, 'show'])->name('settings.collaborators.show');
+            Route::put('/collaborators/{user}/schedule', [SettingsCollaboratorController::class, 'updateSchedule'])->name('settings.collaborators.update-schedule');
+            Route::post('/collaborators/{user}/exceptions', [SettingsCollaboratorController::class, 'storeException'])->name('settings.collaborators.store-exception');
+            Route::put('/collaborators/{user}/exceptions/{exception}', [SettingsCollaboratorController::class, 'updateException'])->name('settings.collaborators.update-exception');
+            Route::delete('/collaborators/{user}/exceptions/{exception}', [SettingsCollaboratorController::class, 'destroyException'])->name('settings.collaborators.destroy-exception');
+            Route::post('/collaborators/{user}/toggle-active', [SettingsCollaboratorController::class, 'toggleActive'])->name('settings.collaborators.toggle-active');
+            Route::post('/collaborators/{user}/avatar', [SettingsCollaboratorController::class, 'uploadAvatar'])->name('settings.collaborators.upload-avatar');
+
+            // Embed & Share
+            Route::get('/embed', [EmbedController::class, 'edit'])->name('settings.embed');
         });
     });
 

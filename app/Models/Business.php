@@ -59,7 +59,7 @@ class Business extends Model
     {
         return $this->belongsToMany(User::class)
             ->using(BusinessUser::class)
-            ->withPivot('role')
+            ->withPivot(['role', 'is_active'])
             ->withTimestamps();
     }
 

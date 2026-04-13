@@ -7,15 +7,30 @@ interface BookingLayoutProps {
     title?: string;
     businessName: string;
     businessLogoUrl?: string | null;
+    embed?: boolean;
 }
 
 export default function BookingLayout({
     title,
     businessName,
     businessLogoUrl,
+    embed,
     children,
 }: PropsWithChildren<BookingLayoutProps>) {
     const { t } = useTrans();
+
+    if (embed) {
+        return (
+            <>
+                {title && <Head title={title} />}
+                <div className="flex min-h-screen flex-col">
+                    <main className="mx-auto w-full max-w-lg flex-1 px-4 py-6">
+                        {children}
+                    </main>
+                </div>
+            </>
+        );
+    }
 
     return (
         <>

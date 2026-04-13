@@ -492,3 +492,39 @@ Each decision has a stable ID that can be referenced in code comments (e.g., `//
 - **Context**: Business staff create manual bookings from the dashboard for phone/walk-in customers. The UI pattern and default status need to be defined.
 - **Decision**: Manual booking creation uses a multi-step dialog (customer → service → collaborator → date/time → confirm) that keeps the user in context on the dashboard. Manual bookings are created with `source: manual` and always `status: confirmed` — there is no pending state for staff-created bookings since the business is already aware of them.
 - **Consequences**: The `confirmation_mode` setting does not affect manual bookings. The dialog reuses the same AvailabilityService for slot calculation. Placeholder notification (from Session 7) is sent to the customer.
+
+---
+
+### D-052 — Settings controllers under Dashboard\Settings namespace
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: Settings pages need their own controllers separate from onboarding, even though they share similar logic, because they operate under different middleware (admin-only, onboarded) and serve different UX flows (edit-in-place vs wizard).
+- **Decision**: Create a `Dashboard\Settings` controller namespace with 7 controllers (Profile, BookingSettings, WorkingHours, BusinessException, Service, Collaborator, Embed). Validation rules are duplicated from onboarding form requests rather than shared via a service class, because the code is thin enough that extraction would be premature abstraction.
+- **Consequences**: Some validation rule duplication between onboarding and settings form requests. If rules diverge in the future, this is actually desirable.
+
+---
+
+### D-053 — Collaborator is_active on pivot, not soft delete
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: Deactivating a collaborator should preserve their booking history and data but exclude them from scheduling. Soft-deleting the `User` would affect their ability to log in to other businesses. Soft-deleting the pivot row would lose the role information.
+- **Decision**: Add `is_active` boolean (default true) to the `business_user` pivot. Deactivated collaborators are excluded from slot generation and booking but their data and history remain intact. They can be reactivated at any time.
+- **Consequences**: `SlotGeneratorService` and public booking flow should filter for `is_active = true` on the pivot when listing available collaborators. The migration is additive and non-breaking.
+
+---
+
+### D-054 — Embed mode via query parameter, not separate route
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: The public booking page at `/{slug}` needs to be embeddable in iframes on third-party sites with a stripped-down UI (no nav/footer).
+- **Decision**: `?embed=1` query parameter on the existing `/{slug}` route triggers embed mode. The same controller and page component are used; the React layout conditionally hides header and footer. A separate `public/embed.js` file provides a popup modal script for third-party sites — a vanilla JS file that is not bundled through Vite.
+- **Consequences**: No route duplication. The booking page component receives an `embed` boolean prop. The popup JS script reads `data-slug` from its own script tag and opens an iframe overlay when any `[data-riservo-open]` element is clicked.
+
+---
+
+### D-055 — Settings sub-navigation via nested layout
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: Settings pages need consistent left-side navigation across 7 sections without repeating the nav markup in each page.
+- **Decision**: `settings-layout.tsx` wraps `authenticated-layout.tsx` and renders a sub-navigation sidebar specific to settings. Each settings page uses `settings-layout` as its layout.
+- **Consequences**: Two levels of layout nesting: `authenticated-layout` (sidebar + header) > `settings-layout` (sub-nav + content area). This follows the existing layout composition pattern.

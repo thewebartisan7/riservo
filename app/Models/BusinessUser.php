@@ -16,6 +16,7 @@ class BusinessUser extends Pivot
     {
         return [
             'role' => BusinessUserRole::class,
+            'is_active' => 'boolean',
         ];
     }
 }

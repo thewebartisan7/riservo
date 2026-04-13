@@ -21,8 +21,8 @@ interface BookingPageProps extends PageProps {
 
 export default function BookingShow() {
     const { t } = useTrans();
-    const { business, services, preSelectedServiceSlug, customerPrefill } =
-        usePage<BookingPageProps>().props;
+    const { business, services, preSelectedServiceSlug, customerPrefill, embed } =
+        usePage<BookingPageProps & { embed: boolean }>().props;
 
     // Auto-select service if pre-filtered via URL
     const preSelectedService = useMemo(() => {
@@ -106,6 +106,7 @@ export default function BookingShow() {
             title={`${t('Book')} - ${business.name}`}
             businessName={business.name}
             businessLogoUrl={business.logo_url}
+            embed={embed}
         >
             {business.description && step === 'service' && (
                 <p className="mb-4 text-sm text-muted-foreground">{business.description}</p>

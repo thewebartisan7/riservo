@@ -1,0 +1,139 @@
+<?php
+
+use App\Models\Business;
+use App\Models\Service;
+use App\Models\User;
+
+beforeEach(function () {
+    $this->business = Business::factory()->onboarded()->create();
+    $this->admin = User::factory()->create();
+    $this->business->users()->attach($this->admin, ['role' => 'admin']);
+});
+
+test('admin can view services list', function () {
+    Service::factory()->count(3)->create(['business_id' => $this->business->id]);
+
+    $this->actingAs($this->admin)
+        ->get('/dashboard/settings/services')
+        ->assertOk()
+        ->assertInertia(fn ($page) => $page
+            ->component('dashboard/settings/services/index')
+            ->has('services', 3)
+        );
+});
+
+test('admin can view create service page', function () {
+    $this->actingAs($this->admin)
+        ->get('/dashboard/settings/services/create')
+        ->assertOk()
+        ->assertInertia(fn ($page) => $page->component('dashboard/settings/services/create'));
+});
+
+test('admin can create a service', function () {
+    $this->actingAs($this->admin)
+        ->post('/dashboard/settings/services', [
+            'name' => 'Haircut',
+            'description' => 'A fresh haircut',
+            'duration_minutes' => 30,
+            'price' => 50.00,
+            'buffer_before' => 5,
+            'buffer_after' => 10,
+            'slot_interval_minutes' => 15,
+            'is_active' => true,
+            'collaborator_ids' => [],
+        ])
+        ->assertRedirect('/dashboard/settings/services');
+
+    $service = $this->business->services()->first();
+    expect($service->name)->toBe('Haircut');
+    expect($service->slug)->toBe('haircut');
+    expect($service->duration_minutes)->toBe(30);
+    expect((float) $service->price)->toBe(50.00);
+});
+
+test('service slug is unique within business', function () {
+    Service::factory()->create(['business_id' => $this->business->id, 'slug' => 'haircut']);
+
+    $this->actingAs($this->admin)
+        ->post('/dashboard/settings/services', [
+            'name' => 'Haircut',
+            'duration_minutes' => 30,
+            'slot_interval_minutes' => 15,
+            'collaborator_ids' => [],
+        ])
+        ->assertRedirect();
+
+    $slugs = $this->business->services()->pluck('slug')->sort()->values()->all();
+    expect($slugs)->toBe(['haircut', 'haircut-2']);
+});
+
+test('admin can edit a service', function () {
+    $service = Service::factory()->create(['business_id' => $this->business->id]);
+
+    $this->actingAs($this->admin)
+        ->get("/dashboard/settings/services/{$service->id}")
+        ->assertOk()
+        ->assertInertia(fn ($page) => $page
+            ->component('dashboard/settings/services/edit')
+            ->has('service')
+        );
+});
+
+test('admin can update a service', function () {
+    $service = Service::factory()->create([
+        'business_id' => $this->business->id,
+        'name' => 'Old Name',
+    ]);
+
+    $this->actingAs($this->admin)
+        ->put("/dashboard/settings/services/{$service->id}", [
+            'name' => 'New Name',
+            'duration_minutes' => 60,
+            'price' => null,
+            'buffer_before' => 0,
+            'buffer_after' => 0,
+            'slot_interval_minutes' => 30,
+            'is_active' => true,
+            'collaborator_ids' => [],
+        ])
+        ->assertRedirect();
+
+    expect($service->fresh()->name)->toBe('New Name');
+});
+
+test('admin can assign collaborators to a service', function () {
+    $service = Service::factory()->create(['business_id' => $this->business->id]);
+    $collaborator = User::factory()->create();
+    $this->business->users()->attach($collaborator, ['role' => 'collaborator']);
+
+    $this->actingAs($this->admin)
+        ->put("/dashboard/settings/services/{$service->id}", [
+            'name' => $service->name,
+            'duration_minutes' => $service->duration_minutes,
+            'slot_interval_minutes' => $service->slot_interval_minutes,
+            'collaborator_ids' => [$collaborator->id],
+        ])
+        ->assertRedirect();
+
+    expect($service->collaborators()->count())->toBe(1);
+    expect($service->collaborators()->first()->id)->toBe($collaborator->id);
+});
+
+test('cannot edit service from another business', function () {
+    $otherBusiness = Business::factory()->onboarded()->create();
+    $service = Service::factory()->create(['business_id' => $otherBusiness->id]);
+
+    $this->actingAs($this->admin)
+        ->get("/dashboard/settings/services/{$service->id}")
+        ->assertForbidden();
+});
+
+test('service name is required', function () {
+    $this->actingAs($this->admin)
+        ->post('/dashboard/settings/services', [
+            'duration_minutes' => 30,
+            'slot_interval_minutes' => 15,
+            'collaborator_ids' => [],
+        ])
+        ->assertSessionHasErrors('name');
+});

@@ -169,19 +169,19 @@ The main authenticated view for business owners and collaborators. Calendar view
 
 Full settings area for managing the business configuration.
 
-- [ ] Business profile editing (name, description, logo, contact info, slug)
-- [ ] Booking settings: confirmation mode, collaborator selection toggle, cancellation window, payment mode
-- [ ] Business-level working hours editor (update after onboarding)
-- [ ] Business-level exceptions: add/edit/delete closures and special hours
-- [ ] Service management: create, edit, deactivate services (name, duration, price, buffer_before, buffer_after, slot_interval, assigned collaborators)
-- [ ] Collaborator management:
+- [x] Business profile editing (name, description, logo, contact info, slug)
+- [x] Booking settings: confirmation mode, collaborator selection toggle, cancellation window, payment mode
+- [x] Business-level working hours editor (update after onboarding)
+- [x] Business-level exceptions: add/edit/delete closures and special hours
+- [x] Service management: create, edit, deactivate services (name, duration, price, buffer_before, buffer_after, slot_interval, assigned collaborators)
+- [x] Collaborator management:
   - View all collaborators
   - Invite new collaborator by email
   - Edit collaborator's weekly schedule
   - Add/edit/delete collaborator exceptions (absences, partial blocks, extra availability)
   - Collaborator avatar upload (optional, with fallback to generated initials)
   - Deactivate collaborator
-- [ ] Embed & Share settings:
+- [x] Embed & Share settings:
   - `?embed=1` param: strips navigation, adapts layout for iframe embedding
   - Popup embed: JS snippet (`<script>`) that opens booking form in a modal overlay on the business's own website
   - Both embed modes support service pre-filter via URL param
@@ -194,7 +194,7 @@ Full settings area for managing the business configuration.
 
 Transactional email system for all booking lifecycle events.
 
-- [ ] Configure transactional email provider (Mailgun or Postmark via Laravel Mail)
+- [ ] Configure Laravel Mail with Hostpoint SMTP for MVP (credentials via .env — provider is swappable with no code changes)
 - [ ] Email templates in React Email or Blade (consistent branding):
   - Booking confirmed (to customer)
   - Booking confirmed (to collaborator)
@@ -206,6 +206,10 @@ Transactional email system for all booking lifecycle events.
 - [ ] Queue setup for async email delivery
 - [ ] Scheduled job: automatically transition confirmed bookings to `completed` status after their end time has passed
 - [ ] Test all email flows end-to-end using seeded data
+- [ ] Document server requirements in `docs/DEPLOYMENT.md`:
+  scheduler setup (cron entry for `schedule:run`), queue worker
+  setup and recommended supervisor config, required `.env` keys
+  for mail, queue driver, and app URL
 
 ---
 
@@ -290,6 +294,7 @@ Features explicitly out of scope for MVP, to be planned separately:
 - Owner vs Admin role distinction (separate permissions)
 - Vertical-specific extensions
 - S3 / Laravel Cloud file storage migration (when Hostpoint outgrown)
+- Migrate transactional email to Mailtrap Sending (or equivalent dedicated provider) when Hostpoint SMTP limits are outgrown
 
 ---
 

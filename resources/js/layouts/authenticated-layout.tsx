@@ -53,6 +53,9 @@ export default function AuthenticatedLayout({
         ...(isAdmin
             ? [{ label: t('Customers'), href: customersIndex.url(), active: currentPath.startsWith('/dashboard/customers') }]
             : []),
+        ...(isAdmin
+            ? [{ label: t('Settings'), href: '/dashboard/settings/profile', active: currentPath.startsWith('/dashboard/settings') }]
+            : []),
     ];
 
     return (
