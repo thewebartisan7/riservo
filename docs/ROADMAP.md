@@ -139,16 +139,20 @@ The customer-facing booking experience at `riservo.ch/{slug}`.
 
 ## Session 8 — Business Dashboard
 
-The main authenticated view for business owners and collaborators.
+The main authenticated view for business owners and collaborators. Calendar view is handled separately in Session 12.
+
+> **UI guidelines** (suggestions — the agent should evaluate and adapt during planning):
+> - **Dashboard home**: cards/list for today's appointments and stats — low volume, no pagination needed.
+> - **Bookings list & Customer Directory**: COSS UI Table component. Server-side sorting (query params via Inertia `<Link>`), server-side pagination (`->paginate()`), server-side filters — all via Inertia partial reloads. TanStack Table is likely overkill here; evaluate during planning.
+> - **Booking detail**: slide-over or modal panel.
+> - The UI does not need to be pixel-perfect at this stage — the visual refinement pass will happen later with Pencil.dev. Focus on the right component foundations and data flow.
 
 - [ ] Dashboard home: today's appointments summary, quick stats (bookings this week, upcoming)
-- [ ] Calendar view (day / week / month) showing bookings
-  - Admin: all collaborators, with filter by collaborator
-  - Collaborator: own bookings only
+- [ ] Bookings list view with filters (date range, collaborator, service, status)
+  - Server-side sorting and pagination for past bookings
 - [ ] Booking detail panel (slide-over or modal): full booking info, status actions
 - [ ] Change booking status: confirm, cancel, no-show, complete
 - [ ] Add internal note to a booking
-- [ ] Bookings list view with filters (date range, collaborator, service, status)
 - [ ] Manual booking creation from dashboard:
   - Search and select existing customer or create new
   - Select service, collaborator, date, time slot (using AvailabilityService)
@@ -156,6 +160,7 @@ The main authenticated view for business owners and collaborators.
 - [ ] Customer Directory (CRM):
   - List all customers with at least one booking
   - Search by name, email, phone
+  - Server-side search and pagination
   - Customer detail: contact info, booking history, stats (total visits, last visit)
 
 ---
@@ -223,9 +228,34 @@ SaaS subscription management for business accounts.
 
 ---
 
-## Session 12 — Google Calendar Sync
+## Session 12 — Calendar View
 
-Two-way synchronization between riservo.ch bookings and collaborator Google Calendars. Built behind a `CalendarProvider` interface for future extensibility.
+Custom calendar component for the business dashboard. Built with TailwindPlus templates as design reference.
+
+> **Architecture hint**: consider a server-driven approach where the controller generates the calendar grid and bookings via Carbon, served as Inertia props. Navigation between weeks/months could use Inertia partial reloads (`only: ['calendar']`) to keep it fast. `date-fns` (already a transitive dependency via `react-day-picker`) is available for any client-side date math needed for rendering. The agent should evaluate this approach against alternatives during planning.
+
+- [ ] Month view: grid showing bookings per day, navigation between months
+- [ ] Week view: time-based grid showing bookings with proportional height
+- [ ] Day view: detailed hour-by-hour view
+- [ ] View switcher (day / week / month) and date navigation (prev / today / next)
+- [ ] Admin: sees all collaborators' bookings in a single combined view
+  - Collaborator filter (toggle list with color indicators — multi-select, default all visible)
+  - Bookings color-coded by collaborator
+  - When multiple collaborators have bookings at the same time, handle overlap with a simple approach (e.g., split cell width, stacked entries)
+- [ ] Collaborator: sees only their own bookings
+- [ ] Click on booking to open detail panel (built in Session 8)
+- [ ] Current time indicator
+- [ ] Responsive behavior for smaller screens
+
+> **Scope notes**:
+> - A single collaborator can never have overlapping bookings (enforced by AvailabilityService). Cross-collaborator overlap in the combined admin view needs simple handling — the agent should find an effective UI approach during planning.
+> - Full parallel column view (one dedicated column per collaborator, Google Calendar style) is post-MVP — it requires a more complex layout engine. The MVP combined view with filtering should be designed so it can evolve toward this in the future.
+
+---
+
+## Session 13 — Google Calendar Sync
+
+Two-way synchronization between riservo.ch bookings and collaborator Google Calendars. Built behind a `CalendarProvider` interface for future extensibility. Synced events are displayed in the calendar view built in Session 12.
 
 - [ ] Define `CalendarProvider` interface (connect, disconnect, push event, delete event, handle incoming webhook)
 - [ ] Google Calendar OAuth 2.0 flow per collaborator (connect / disconnect from profile settings)
