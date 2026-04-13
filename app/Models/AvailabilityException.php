@@ -8,7 +8,13 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property ExceptionType $type
+ * @property Carbon $start_date
+ * @property Carbon $end_date
+ */
 #[Fillable([
     'business_id',
     'collaborator_id',

@@ -11,7 +11,14 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property PaymentMode $payment_mode
+ * @property ConfirmationMode $confirmation_mode
+ * @property AssignmentStrategy $assignment_strategy
+ * @property Carbon|null $onboarding_completed_at
+ */
 #[Fillable([
     'name',
     'slug',

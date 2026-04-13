@@ -41,6 +41,7 @@ class OnboardingController extends Controller
             3 => $this->showService($business),
             4 => $this->showInvitations($business),
             5 => $this->showSummary($business),
+            default => abort(404),
         };
     }
 
@@ -58,6 +59,7 @@ class OnboardingController extends Controller
             3 => $this->storeService(app(StoreServiceRequest::class), $business),
             4 => $this->storeInvitations(app(StoreInvitationsRequest::class), $business),
             5 => $this->storeLaunch($business),
+            default => abort(404),
         };
     }
 

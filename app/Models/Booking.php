@@ -10,7 +10,15 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property BookingStatus $status
+ * @property BookingSource $source
+ * @property PaymentStatus $payment_status
+ * @property Carbon $starts_at
+ * @property Carbon $ends_at
+ */
 #[Fillable([
     'business_id',
     'collaborator_id',

@@ -8,7 +8,14 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property BusinessUserRole $role
+ * @property array<int, int>|null $service_ids
+ * @property Carbon $expires_at
+ * @property Carbon|null $accepted_at
+ */
 #[Fillable(['business_id', 'email', 'role', 'token', 'service_ids', 'expires_at', 'accepted_at'])]
 class BusinessInvitation extends Model
 {

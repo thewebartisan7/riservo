@@ -60,19 +60,14 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function currentBusinessRole(): ?BusinessUserRole
     {
-        $business = $this->currentBusiness();
+        /** @var (Business&object{pivot: BusinessUser})|null $business */
+        $business = $this->businesses()->first();
 
         if (! $business) {
             return null;
         }
 
-        $role = $business->pivot->role;
-
-        if ($role instanceof BusinessUserRole) {
-            return $role;
-        }
-
-        return BusinessUserRole::from($role);
+        return $business->pivot->role;
     }
 
     /** @return BelongsToMany<Business, $this, BusinessUser, 'pivot'> */
