@@ -53,4 +53,12 @@ class BusinessFactory extends Factory
             'allow_collaborator_choice' => false,
         ]);
     }
+
+    public function onboarded(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'onboarding_step' => 5,
+            'onboarding_completed_at' => now(),
+        ]);
+    }
 }

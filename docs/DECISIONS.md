@@ -384,3 +384,30 @@ Each decision has a stable ID that can be referenced in code comments (e.g., `//
 - **Context**: D-003 and D-013 established catch-all `/{slug}` routing. Business slugs must not collide with system routes. A blocklist is needed to prevent registration of slugs like `login`, `dashboard`, `api`, etc.
 - **Decision**: A `SlugService` maintains a constant array of reserved slugs (all current and planned system route prefixes). Business registration generates a slug from the business name via `Str::slug()`, checks against the blocklist and existing slugs, and appends an incrementing number if taken.
 - **Consequences**: The blocklist must be maintained as new routes are added. Slug generation is centralized in `SlugService` — used by registration (Session 5) and business settings (Session 9).
+
+---
+
+### D-040 — Onboarding state via onboarding_step + onboarding_completed_at
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: New business owners must complete a multi-step onboarding wizard before accessing the dashboard. The system needs to know (a) whether onboarding is complete, and (b) which step the user was on if they left mid-flow.
+- **Decision**: Two fields on the `businesses` table: `onboarding_step` (unsignedTinyInteger, default 1) tracks the current/furthest step, and `onboarding_completed_at` (nullable timestamp) marks completion. An `EnsureOnboardingComplete` middleware redirects unboarded admins to `/onboarding/step/{step}`. Each step saves data immediately to the real models (Business, BusinessHour, Service, BusinessInvitation), so the wizard is naturally resumable with pre-populated data.
+- **Consequences**: Each step is independently persistent — no temporary draft storage needed. The `onboarding_step` value only advances forward, never backwards, even if the user re-edits an earlier step.
+
+---
+
+### D-041 — Service pre-assignment via service_ids JSON on business_invitations
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: During onboarding step 4, the admin invites collaborators and can select which services they should be assigned to. However, collaborators don't exist as Users until they accept the invite (D-036). The `collaborator_service` pivot requires a `user_id`.
+- **Decision**: A `service_ids` nullable JSON column on `business_invitations` stores an array of service IDs that should be auto-assigned when the collaborator accepts. `InvitationController@accept` reads this field and creates `collaborator_service` records for valid service IDs that still exist.
+- **Consequences**: If a service is deleted between invitation and acceptance, the orphaned ID is silently ignored. Service assignment can also happen later in Session 9's collaborator management UI.
+
+---
+
+### D-042 — Logo uploaded immediately via separate endpoint
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: The onboarding wizard step 1 includes a logo upload. Two approaches: (a) upload the file with the form submission, or (b) upload immediately via a separate endpoint and store the path.
+- **Decision**: Logo is uploaded immediately via `POST /onboarding/logo-upload`, which stores the file to `Storage::disk('public')` under `logos/`, updates `business.logo` with the relative path, and returns the path and public URL as JSON. The main profile form stores only the path string, not the file.
+- **Consequences**: Instant preview feedback for the user. Old logos are deleted on replacement. The endpoint returns JSON, not an Inertia response — consumed via `fetch()` on the frontend (will use `useHttp` after upgrading to Inertia client v3).

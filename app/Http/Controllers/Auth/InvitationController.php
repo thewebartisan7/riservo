@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\AcceptInvitationRequest;
 use App\Models\BusinessInvitation;
+use App\Models\Service;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
@@ -42,6 +43,14 @@ class InvitationController extends Controller
         $invitation->business->users()->attach($user->id, [
             'role' => $invitation->role->value,
         ]);
+
+        // Auto-assign services from invitation (see D-041)
+        if ($invitation->service_ids) {
+            $validServiceIds = Service::where('business_id', $invitation->business_id)
+                ->whereIn('id', $invitation->service_ids)
+                ->pluck('id');
+            $user->services()->attach($validServiceIds);
+        }
 
         $invitation->update(['accepted_at' => now()]);
 

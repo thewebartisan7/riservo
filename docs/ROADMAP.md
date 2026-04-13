@@ -99,15 +99,15 @@ Custom auth implementation — **no Laravel Fortify, no Jetstream**.
 
 Distraction-free wizard shown to a business owner after registration. Completed before the dashboard is accessible for the first time.
 
-- [ ] Step 1 — Business profile: name, description, logo upload, contact info, slug (with live availability check)
-- [ ] Step 2 — Working hours: set weekly schedule (days + time windows) with a clean visual interface
-- [ ] Step 3 — First service: add at least one service (name, duration, price, buffers, slot interval)
-- [ ] Step 4 — Invite collaborators (optional, skippable): invite by email, assign to service
-- [ ] Step 5 — Summary & launch: show public booking URL, copy link, go to dashboard
-- [ ] Wizard state persisted server-side (resumable if interrupted)
-- [ ] Progress indicator (step X of Y)
-- [ ] Smooth transitions between steps, no distractions (no main nav visible)
-- [ ] On completion, redirect to dashboard with a welcome state
+- [x] Step 1 — Business profile: name, description, logo upload, contact info, slug (with live availability check)
+- [x] Step 2 — Working hours: set weekly schedule (days + time windows) with a clean visual interface
+- [x] Step 3 — First service: add at least one service (name, duration, price, buffers, slot interval)
+- [x] Step 4 — Invite collaborators (optional, skippable): invite by email, assign to service
+- [x] Step 5 — Summary & launch: show public booking URL, copy link, go to dashboard
+- [x] Wizard state persisted server-side (resumable if interrupted)
+- [x] Progress indicator (step X of Y)
+- [x] Smooth transitions between steps, no distractions (no main nav visible)
+- [x] On completion, redirect to dashboard with a welcome state
 
 ---
 

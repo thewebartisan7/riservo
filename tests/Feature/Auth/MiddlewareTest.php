@@ -11,10 +11,10 @@ test('unauthenticated user is redirected to login', function () {
     $response->assertRedirect('/login');
 });
 
-test('admin can access dashboard', function () {
+test('admin can access dashboard when onboarded', function () {
     $this->withoutVite();
     $user = User::factory()->create();
-    $business = Business::factory()->create();
+    $business = Business::factory()->onboarded()->create();
     $business->users()->attach($user->id, ['role' => BusinessUserRole::Admin->value]);
 
     $response = $this->actingAs($user)->get('/dashboard');

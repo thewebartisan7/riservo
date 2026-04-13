@@ -27,6 +27,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'cancellation_window_hours',
     'assignment_strategy',
     'reminder_hours',
+    'onboarding_step',
+    'onboarding_completed_at',
 ])]
 class Business extends Model
 {
@@ -41,6 +43,7 @@ class Business extends Model
             'allow_collaborator_choice' => 'boolean',
             'assignment_strategy' => AssignmentStrategy::class,
             'reminder_hours' => 'array',
+            'onboarding_completed_at' => 'datetime',
         ];
     }
 
@@ -87,5 +90,16 @@ class Business extends Model
     public function availabilityExceptions(): HasMany
     {
         return $this->hasMany(AvailabilityException::class);
+    }
+
+    /** @return HasMany<BusinessInvitation, $this> */
+    public function invitations(): HasMany
+    {
+        return $this->hasMany(BusinessInvitation::class);
+    }
+
+    public function isOnboarded(): bool
+    {
+        return $this->onboarding_completed_at !== null;
     }
 }

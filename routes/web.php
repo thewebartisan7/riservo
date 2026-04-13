@@ -9,6 +9,8 @@ use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Booking\BookingManagementController;
 use App\Http\Controllers\Customer\BookingController as CustomerBookingController;
+use App\Http\Controllers\OnboardingController;
+use App\Http\Controllers\WelcomeController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -57,9 +59,24 @@ Route::middleware('auth')->group(function () {
         ->middleware('throttle:6,1')
         ->name('verification.send');
 
-    // Business dashboard (auth + verified + business role)
-    Route::middleware(['verified', 'role:admin,collaborator'])->group(function () {
+    // Onboarding wizard (auth + verified + admin only, no onboarded middleware)
+    Route::middleware(['verified', 'role:admin'])->group(function () {
+        Route::get('/onboarding/step/{step}', [OnboardingController::class, 'show'])
+            ->name('onboarding.show')
+            ->where('step', '[1-5]');
+        Route::post('/onboarding/step/{step}', [OnboardingController::class, 'store'])
+            ->name('onboarding.store')
+            ->where('step', '[1-5]');
+        Route::post('/onboarding/slug-check', [OnboardingController::class, 'checkSlug'])
+            ->name('onboarding.slug-check');
+        Route::post('/onboarding/logo-upload', [OnboardingController::class, 'uploadLogo'])
+            ->name('onboarding.logo-upload');
+    });
+
+    // Business dashboard (auth + verified + business role + onboarded)
+    Route::middleware(['verified', 'role:admin,collaborator', 'onboarded'])->group(function () {
         Route::get('/dashboard', fn () => Inertia::render('dashboard'))->name('dashboard');
+        Route::get('/dashboard/welcome', [WelcomeController::class, 'show'])->name('dashboard.welcome');
     });
 
     // Customer area (auth + customer role)

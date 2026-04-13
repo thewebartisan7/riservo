@@ -1,6 +1,6 @@
 # Handoff
 
-**Session**: 5 — Authentication  
+**Session**: 6 — Business Onboarding Wizard  
 **Date**: 2026-04-13  
 **Status**: Complete
 
@@ -8,137 +8,118 @@
 
 ## What Was Built
 
-Session 5 implemented the complete custom authentication system (no Fortify, no Jetstream) covering three user types: business admins, collaborators, and customers.
+Session 6 implemented a 5-step onboarding wizard that new business admins must complete before accessing the dashboard. The wizard covers business profile setup, working hours, first service creation, collaborator invitations, and a summary/launch step.
 
 ### Backend
 
-**3 migrations:**
-- `make_password_nullable_on_users_table` — allows magic-link-only users
-- `add_magic_link_token_to_users_table` — one-time-use magic link enforcement
-- `create_business_invitations_table` — collaborator invite storage
-
-**Models:**
-- `BusinessInvitation` — new model with factory, helpers: `isExpired()`, `isAccepted()`, `isPending()`
-- `User` updated — implements `MustVerifyEmail`, added `magic_link_token` to fillable/hidden, added helpers: `hasBusinessRole()`, `isCustomer()`, `currentBusiness()`, `currentBusinessRole()`
-
-**9 controllers:**
-- `Auth\RegisterController` — business owner registration (creates User + Business + admin pivot)
-- `Auth\LoginController` — email/password login, logout, role-based redirect
-- `Auth\MagicLinkController` — magic link request + verify (for business users and customers, auto-creates User for guest customers)
-- `Auth\EmailVerificationController` — notice, verify, resend
-- `Auth\PasswordResetController` — forgot password + reset password
-- `Auth\InvitationController` — collaborator invite acceptance (creates User + BusinessUser pivot)
-- `Auth\CustomerRegisterController` — customer password registration (links to existing Customer record)
-- `Booking\BookingManagementController` — guest booking view/cancel via cancellation_token
-- `Customer\BookingController` — authenticated customer bookings list + cancel
-
-**4 form requests** with validation and rate limiting:
-- `RegisterRequest`, `LoginRequest` (with rate limiting), `AcceptInvitationRequest`, `CustomerRegisterRequest`
+**2 migrations:**
+- `add_onboarding_fields_to_businesses_table` — `onboarding_step` (default 1), `onboarding_completed_at` (nullable)
+- `add_service_ids_to_business_invitations_table` — `service_ids` JSON nullable
 
 **1 middleware:**
-- `EnsureUserHasRole` — checks admin/collaborator via BusinessUser pivot, customer via Customer record
+- `EnsureOnboardingComplete` — redirects unboarded admins to `/onboarding/step/{step}`, registered as `onboarded` alias
 
-**1 service:**
-- `SlugService` — generates unique business slugs with reserved slug blocklist
+**2 controllers:**
+- `OnboardingController` — `show(step)`, `store(step)`, `checkSlug()`, `uploadLogo()` — central hub for all 5 wizard steps
+- `WelcomeController` — renders `/dashboard/welcome` after onboarding
 
-**2 notifications:**
-- `MagicLinkNotification`, `InvitationNotification` — plain email (Session 10 adds templates)
+**4 form requests** in `App\Http\Requests\Onboarding\`:
+- `StoreProfileRequest` — validates business profile with slug uniqueness/reserved check
+- `StoreHoursRequest` — validates nested array of days with time windows
+- `StoreServiceRequest` — validates service fields including slot interval allowlist
+- `StoreInvitationsRequest` — validates invitation emails and service_ids
+
+**Model updates:**
+- `Business` — added fillable `onboarding_step`, `onboarding_completed_at`; added `isOnboarded()` helper, `invitations()` relationship
+- `BusinessInvitation` — added fillable `service_ids` with array cast
+- `BusinessFactory` — added `onboarded()` state
+
+**Other backend changes:**
+- `SlugService` — added `onboarding` to reserved slugs, added `isTakenExcluding()` method
+- `InvitationController@accept` — auto-assigns services from `service_ids` on invitation acceptance
+- `bootstrap/app.php` — registered `onboarded` middleware alias
+- `routes/web.php` — added 4 onboarding routes (show, store, slug-check, logo-upload), welcome route, added `onboarded` middleware to dashboard group
 
 ### Frontend
 
-**10 React pages** (2 rewrites + 8 new) using COSS UI + Inertia `useForm()`:
-- `auth/register.tsx` — business registration with business_name field
-- `auth/login.tsx` — email/password with remember me, links to magic-link and forgot-password
-- `auth/magic-link.tsx` — email input for magic link request
-- `auth/verify-email.tsx` — verification notice with resend button
-- `auth/forgot-password.tsx` — password reset request
-- `auth/reset-password.tsx` — new password form
-- `auth/accept-invitation.tsx` — collaborator invite acceptance
-- `auth/customer-register.tsx` — customer password registration
-- `bookings/show.tsx` — guest booking details + cancel button
-- `customer/bookings.tsx` — authenticated customer bookings list (upcoming + past)
+**1 layout:**
+- `onboarding-layout.tsx` — minimal chrome with logo, logout, progress bar, clickable step navigation
+
+**6 pages:**
+- `onboarding/step-1.tsx` — business profile with live slug check and logo upload
+- `onboarding/step-2.tsx` — working hours editor (7-day schedule with multiple time windows)
+- `onboarding/step-3.tsx` — first service creation (name, duration, price, buffers, slot interval)
+- `onboarding/step-4.tsx` — collaborator invitations with service assignment chips
+- `onboarding/step-5.tsx` — summary view with edit links and launch button
+- `dashboard/welcome.tsx` — celebration page with public URL and next-step cards
+
+**3 components** in `components/onboarding/`:
+- `week-schedule-editor.tsx` — manages 7 day rows
+- `day-row.tsx` — toggle + time windows per day
+- `time-window-row.tsx` — open/close time selects + remove button
 
 **Updated:**
-- `authenticated-layout.tsx` — added logout button
-- `types/index.d.ts` — added Business, BookingDetail, BookingSummary, InvitationData interfaces
-- `HandleInertiaRequests` — shares `auth.role`, `auth.business`, `auth.email_verified`
 - `lang/en.json` — 60+ new translation keys
-- `components/input-error.tsx` — reusable validation error display
+- `tests/Feature/Auth/MiddlewareTest.php` — updated to use `onboarded()` factory state
 
-### Routes (25 total)
+### Routes (4 new)
 
 | Route | Purpose |
 |-------|---------|
-| GET/POST `/register` | Business registration |
-| GET/POST `/login` | Login |
-| POST `/logout` | Logout |
-| GET/POST `/magic-link` | Magic link request |
-| GET `/magic-link/verify/{user}` | Magic link verification (signed) |
-| GET/POST `/forgot-password` | Password reset request |
-| GET `/reset-password/{token}`, POST `/reset-password` | Password reset |
-| GET `/email/verify` | Verification notice |
-| GET `/email/verify/{id}/{hash}` | Verify email (signed) |
-| POST `/email/verification-notification` | Resend verification |
-| GET/POST `/invite/{token}` | Collaborator invite acceptance |
-| GET/POST `/customer/register` | Customer registration |
-| GET `/dashboard` | Dashboard (auth + verified + role:admin,collaborator) |
-| GET `/my-bookings`, POST `/my-bookings/{booking}/cancel` | Customer bookings |
-| GET `/bookings/{token}`, POST `/bookings/{token}/cancel` | Guest booking management |
+| GET/POST `/onboarding/step/{step}` | Wizard step show/store (1-5) |
+| POST `/onboarding/slug-check` | Live slug availability check (JSON) |
+| POST `/onboarding/logo-upload` | Immediate logo upload (JSON) |
+| GET `/dashboard/welcome` | Post-onboarding welcome page |
 
 ---
 
 ## Current Project State
 
-- **Backend**: 17 migrations, 11 models, 3 services, 1 DTO, 9 controllers, 4 form requests, 2 notifications, 2 custom middleware
-- **Frontend**: 14 pages, 2 layouts, 55 COSS UI components, 1 helper component
-- **Tests**: 163 passing (349 assertions)
+- **Backend**: 19 migrations, 11 models, 4 services, 1 DTO, 12 controllers, 8 form requests, 2 notifications, 3 custom middleware
+- **Frontend**: 20 pages, 3 layouts, 55 COSS UI components, 4 helper/onboarding components
+- **Tests**: 215 passing (566 assertions)
 - **Build**: `npm run build` succeeds, `npx tsc --noEmit` clean, `vendor/bin/pint` clean
 
 ---
 
 ## Key Conventions Established
 
-- **Auth controllers** in `App\Http\Controllers\Auth\` namespace
-- **Form requests** in `App\Http\Requests\Auth\` namespace
-- **Notifications** in `App\Notifications\` namespace
-- **Role middleware**: `role:admin,collaborator` on dashboard routes, `role:customer` on customer routes
-- **Email verification**: `verified` middleware on dashboard routes; collaborators verified on invite acceptance, customers verified via magic link or on password registration
-- **Magic link one-time use**: Token stored on User, cleared after use, new request invalidates old
-- **Business creation at registration**: minimal Business (name + slug) — onboarding wizard (Session 6) completes the profile
-- **Reserved slugs**: maintained in `SlugService::RESERVED_SLUGS` constant
-- **InputError component**: `resources/js/components/input-error.tsx` for displaying validation errors
-- **Inertia useForm**: all auth forms use `useForm()` with typed form data
+- **Onboarding controller** in `App\Http\Controllers\OnboardingController` — single controller with step-dispatch pattern
+- **Onboarding form requests** in `App\Http\Requests\Onboarding\` namespace
+- **Onboarding layout**: `resources/js/layouts/onboarding-layout.tsx` — no sidebar, progress indicator
+- **Onboarding components**: `resources/js/components/onboarding/` — reusable schedule editor
+- **BusinessFactory `onboarded()` state**: use in tests where business must be fully onboarded
+- **JSON API endpoints**: slug check and logo upload return JSON, not Inertia responses; consumed via `fetch()` (see note below about useHttp)
+- **Step data saves immediately**: each wizard step persists to real models, not temporary storage
+- **Step tracking**: `onboarding_step` only advances forward, never backwards
+- **Logo storage**: `Storage::disk('public')` under `logos/` directory
 
 ---
 
-## What Session 6 Needs to Know
+## What Session 7 Needs to Know
 
-Session 6 implements the business onboarding wizard shown after registration.
+Session 7 implements the public booking flow at `riservo.ch/{slug}`.
 
-- **After registration**, users are redirected to `/email/verify`. After verification, they go to `/dashboard`. Session 6 should intercept unboarded users and redirect to the wizard instead.
-- **Minimal Business created at registration**: only `name` and `slug` are set. The wizard must fill in: description, logo, contact info (phone, email, address), timezone (if not Europe/Zurich).
-- **Business hours**: the wizard sets up weekly working hours (BusinessHour model already exists from Session 2).
-- **First service**: wizard creates at least one Service (model exists from Session 2).
-- **Invite collaborators**: wizard uses the `BusinessInvitation` model and `InvitationNotification` built in Session 5.
-- **Slug is already generated**: the wizard's slug field should allow editing with live availability check. Use `SlugService` for validation.
-- **Auth context**: `auth.user`, `auth.role` ('admin'), `auth.business` are available via Inertia shared props.
-- **User is always the admin**: the wizard runs in the context of a verified admin user.
+- **Business is fully set up after onboarding**: after Session 6, a business has a profile, working hours, and at least one service. The public booking page can rely on this data existing.
+- **Business hours exist**: `business_hours` table has records for open days. Use `AvailabilityService` from Session 3 for slot calculation.
+- **Service has a slug**: auto-generated from name during onboarding. Used in `/{slug}/{service-slug}` URL routing.
+- **Auth context**: the booking flow is public (no auth required). Guest customers create a Customer record at booking time.
+- **Onboarding middleware**: the `onboarded` middleware is on the dashboard route group. Public routes at `/{slug}` should NOT have this middleware.
+- **Existing rate limiting**: no rate limiting on public routes yet — Session 7 must add it per the roadmap.
 
 ---
 
 ## Decisions Recorded
 
-- **D-035**: Same `web` guard for all user types with role-based middleware
-- **D-036**: `business_invitations` table for collaborator invites (no pre-created users)
-- **D-037**: Magic link one-time use via `magic_link_token` column on users table
-- **D-038**: Email verification required for business dashboard access
-- **D-039**: Reserved slug blocklist for business registration
+- **D-040**: Onboarding state via `onboarding_step` + `onboarding_completed_at` on Business
+- **D-041**: Service pre-assignment via `service_ids` JSON on `business_invitations`
+- **D-042**: Logo uploaded immediately to `Storage::disk('public')`, path stored on Business
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **Chunk size warning**: Vite build produces a 607 KB JS bundle. Not a problem for MVP but code splitting can be added later.
-- **Customer bookings page layout**: currently uses `GuestLayout` (centered card). Could benefit from a dedicated `CustomerLayout` in a future session.
-- **Admin UI for sending invites**: backend is built (model, notification, factory) but no admin-facing UI. Session 9 builds the collaborator management settings.
-- **Custom email templates**: all notifications use plain Laravel mail. Session 10 replaces with branded templates.
+- **Inertia client v3 upgrade**: The project has `@inertiajs/react@2.3.21` (v2). The server adapter is v3 (`inertiajs/inertia-laravel@3`). Upgrading the client to v3 would enable the `useHttp` hook for standalone HTTP requests (currently using `fetch()`). This upgrade should be done carefully as it may have breaking changes — consider doing it as a dedicated task.
+- **Chunk size warning**: Vite build produces a ~641 KB JS bundle (up from 607 KB in Session 5). Code splitting should be considered before adding many more pages.
+- **Working hours edge cases**: The UI allows saving hours where a day has windows but the day is marked as disabled (the controller handles this correctly by filtering). No overlap detection between windows — if a user sets 09:00-17:00 and 10:00-14:00, both are saved. The `AvailabilityService` from Session 3 handles overlapping windows correctly by merging them.
+- **CSRF meta tag**: The `fetch()` calls in step-1 rely on a `<meta name="csrf-token">` tag. Verify this is present in the root Blade template — Laravel includes it by default.

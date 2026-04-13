@@ -31,6 +31,7 @@ class SlugService
         'logout',
         'magic-link',
         'my-bookings',
+        'onboarding',
         'pricing',
         'privacy',
         'register',
@@ -71,5 +72,10 @@ class SlugService
     public function isTaken(string $slug): bool
     {
         return Business::where('slug', $slug)->exists();
+    }
+
+    public function isTakenExcluding(string $slug, int $businessId): bool
+    {
+        return Business::where('slug', $slug)->where('id', '!=', $businessId)->exists();
     }
 }

@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['business_id', 'email', 'role', 'token', 'expires_at', 'accepted_at'])]
+#[Fillable(['business_id', 'email', 'role', 'token', 'service_ids', 'expires_at', 'accepted_at'])]
 class BusinessInvitation extends Model
 {
     /** @use HasFactory<BusinessInvitationFactory> */
@@ -19,6 +19,7 @@ class BusinessInvitation extends Model
     {
         return [
             'role' => BusinessUserRole::class,
+            'service_ids' => 'array',
             'expires_at' => 'datetime',
             'accepted_at' => 'datetime',
         ];
