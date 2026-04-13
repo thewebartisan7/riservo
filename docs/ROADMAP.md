@@ -115,6 +115,11 @@ Distraction-free wizard shown to a business owner after registration. Completed 
 
 The customer-facing booking experience at `riservo.ch/{slug}`.
 
+> **UI hint — COSS UI calendar particles**: check https://coss.com/ui/particles?tags=calendar for ready-made calendar and time slot components. Particularly useful:
+> - `pnpm dlx shadcn@latest add @coss/p-calendar-19` — calendar with integrated time slot picker (good fit for date + time selection in one view)
+> - `pnpm dlx shadcn@latest add @coss/p-calendar-24` — calendar with customizable day buttons (could show free slot count per day for instant visibility)
+> The agent should evaluate these particles and pick the best UX — these are suggestions, not requirements.
+
 - [ ] Business public page: name, description, list of active services
 - [ ] Service selection step
 - [ ] Collaborator selection step (shown only if business allows it; "Any available" option; collaborator avatar displayed if set)
