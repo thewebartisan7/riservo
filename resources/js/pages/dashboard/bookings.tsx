@@ -102,6 +102,7 @@ export default function BookingsPage() {
         router.get(bookingsIndex.url(), cleaned, {
             preserveState: true,
             preserveScroll: true,
+            only: ['bookings'],
         });
     }
 

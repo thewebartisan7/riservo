@@ -3,7 +3,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } f
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { InputError } from '@/components/input-error';
+import { Field, FieldLabel, FieldError, FieldDescription } from '@/components/ui/field';
 import { useTrans } from '@/hooks/use-trans';
 import { Form, useHttp } from '@inertiajs/react';
 import {
@@ -12,6 +12,7 @@ import {
     uploadLogo as uploadLogoAction,
 } from '@/actions/App/Http/Controllers/Dashboard/Settings/ProfileController';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { FileUploadResponse, SlugCheckResponse } from '@/types';
 
 interface Props {
     business: {
@@ -54,7 +55,7 @@ export default function Profile({ business, logoUrl }: Props) {
             pendingSlugCheck.current = false;
             slugHttp.post(checkSlugAction.url(), {
                 onSuccess: (response: unknown) => {
-                    const data = response as { available: boolean };
+                    const data = response as SlugCheckResponse;
                     setSlugAvailable(data.available);
                 },
             });
@@ -74,7 +75,7 @@ export default function Profile({ business, logoUrl }: Props) {
             pendingLogoUpload.current = false;
             logoHttp.post(uploadLogoAction.url(), {
                 onSuccess: (response: unknown) => {
-                    const data = response as { path: string; url: string };
+                    const data = response as FileUploadResponse;
                     setLogoPath(data.path);
                     setPreviewUrl(data.url);
                 },
@@ -93,20 +94,19 @@ export default function Profile({ business, logoUrl }: Props) {
                     {({ errors, processing }) => (
                         <>
                             <CardPanel className="flex flex-col gap-4">
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="name" className="text-sm font-medium">{t('Business name')}</label>
-                                    <Input id="name" name="name" defaultValue={business.name ?? ''} required />
-                                    <InputError message={errors.name} />
-                                </div>
+                                <Field>
+                                    <FieldLabel>{t('Business name')}</FieldLabel>
+                                    <Input name="name" defaultValue={business.name ?? ''} required />
+                                    {errors.name && <FieldError match>{errors.name}</FieldError>}
+                                </Field>
 
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="slug" className="text-sm font-medium">{t('Booking URL')}</label>
+                                <Field>
+                                    <FieldLabel>{t('Booking URL')}</FieldLabel>
                                     <div className="flex items-center gap-0">
                                         <span className="flex h-9 items-center rounded-l-lg border border-r-0 bg-muted px-3 text-sm text-muted-foreground sm:h-8">
                                             riservo.ch/
                                         </span>
                                         <Input
-                                            id="slug"
                                             name="slug"
                                             className="rounded-l-none"
                                             value={slug}
@@ -119,32 +119,31 @@ export default function Profile({ business, logoUrl }: Props) {
                                         />
                                     </div>
                                     {slugHttp.processing && (
-                                        <p className="text-xs text-muted-foreground">{t('Checking...')}</p>
+                                        <FieldDescription>{t('Checking...')}</FieldDescription>
                                     )}
                                     {!slugHttp.processing && slugAvailable !== null && (
                                         <p className={`text-xs ${slugAvailable ? 'text-green-600' : 'text-destructive-foreground'}`}>
                                             {slugAvailable ? t('This URL is available') : t('This URL is not available')}
                                         </p>
                                     )}
-                                    <InputError message={errors.slug} />
-                                </div>
+                                    {errors.slug && <FieldError match>{errors.slug}</FieldError>}
+                                </Field>
 
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="description" className="text-sm font-medium">{t('Description')}</label>
+                                <Field>
+                                    <FieldLabel>{t('Description')}</FieldLabel>
                                     <Textarea
-                                        id="description"
                                         name="description"
                                         defaultValue={business.description ?? ''}
                                         rows={3}
                                         placeholder={t('Describe your business...')}
                                     />
-                                    <InputError message={errors.description} />
-                                </div>
+                                    {errors.description && <FieldError match>{errors.description}</FieldError>}
+                                </Field>
 
                                 <input type="hidden" name="logo" value={logoPath} />
 
-                                <div className="flex flex-col gap-2">
-                                    <label className="text-sm font-medium">{t('Logo')}</label>
+                                <Field>
+                                    <FieldLabel>{t('Logo')}</FieldLabel>
                                     <div className="flex items-center gap-4">
                                         {previewUrl && (
                                             <img src={previewUrl} alt={t('Business logo')} className="h-16 w-16 rounded-lg object-cover" />
@@ -156,35 +155,34 @@ export default function Profile({ business, logoUrl }: Props) {
                                                 onChange={handleLogoChange}
                                                 className="text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground hover:file:bg-primary/90"
                                             />
-                                            <p className="mt-1 text-xs text-muted-foreground">{t('JPG, PNG or WebP. Max 2MB.')}</p>
+                                            <FieldDescription>{t('JPG, PNG or WebP. Max 2MB.')}</FieldDescription>
                                         </div>
                                     </div>
-                                    {logoHttp.processing && <p className="text-xs text-muted-foreground">{t('Uploading...')}</p>}
-                                </div>
+                                    {logoHttp.processing && <FieldDescription>{t('Uploading...')}</FieldDescription>}
+                                </Field>
 
                                 <div className="grid grid-cols-2 gap-4">
-                                    <div className="flex flex-col gap-2">
-                                        <label htmlFor="phone" className="text-sm font-medium">{t('Phone')}</label>
-                                        <Input id="phone" name="phone" type="tel" defaultValue={business.phone ?? ''} />
-                                        <InputError message={errors.phone} />
-                                    </div>
-                                    <div className="flex flex-col gap-2">
-                                        <label htmlFor="email" className="text-sm font-medium">{t('Contact email')}</label>
-                                        <Input id="email" name="email" type="email" defaultValue={business.email ?? ''} />
-                                        <InputError message={errors.email} />
-                                    </div>
+                                    <Field>
+                                        <FieldLabel>{t('Phone')}</FieldLabel>
+                                        <Input name="phone" type="tel" defaultValue={business.phone ?? ''} />
+                                        {errors.phone && <FieldError match>{errors.phone}</FieldError>}
+                                    </Field>
+                                    <Field>
+                                        <FieldLabel>{t('Contact email')}</FieldLabel>
+                                        <Input name="email" type="email" defaultValue={business.email ?? ''} />
+                                        {errors.email && <FieldError match>{errors.email}</FieldError>}
+                                    </Field>
                                 </div>
 
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="address" className="text-sm font-medium">{t('Address')}</label>
+                                <Field>
+                                    <FieldLabel>{t('Address')}</FieldLabel>
                                     <Input
-                                        id="address"
                                         name="address"
                                         defaultValue={business.address ?? ''}
                                         placeholder={t('Street, city, postal code')}
                                     />
-                                    <InputError message={errors.address} />
-                                </div>
+                                    {errors.address && <FieldError match>{errors.address}</FieldError>}
+                                </Field>
                             </CardPanel>
                             <CardFooter className="flex justify-end">
                                 <Button type="submit" disabled={processing}>{t('Save changes')}</Button>

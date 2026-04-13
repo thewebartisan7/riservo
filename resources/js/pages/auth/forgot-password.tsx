@@ -2,7 +2,7 @@ import GuestLayout from '@/layouts/guest-layout';
 import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { InputError } from '@/components/input-error';
+import { Field, FieldLabel, FieldError } from '@/components/ui/field';
 import { useTrans } from '@/hooks/use-trans';
 import { Form, Link, usePage } from '@inertiajs/react';
 import { store } from '@/actions/App/Http/Controllers/Auth/PasswordResetController';
@@ -29,18 +29,17 @@ export default function ForgotPassword() {
                                     <p className="text-sm text-green-600">{status}</p>
                                 )}
 
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="email" className="text-sm font-medium">{t('Email')}</label>
+                                <Field>
+                                    <FieldLabel>{t('Email')}</FieldLabel>
                                     <Input
-                                        id="email"
                                         name="email"
                                         type="email"
                                         defaultValue=""
                                         required
                                         autoFocus
                                     />
-                                    <InputError message={errors.email} />
-                                </div>
+                                    {errors.email && <FieldError match>{errors.email}</FieldError>}
+                                </Field>
                             </CardPanel>
                             <CardFooter className="flex items-center justify-between">
                                 <Link href={loginCreate()} className="text-sm text-muted-foreground hover:underline">

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Field, FieldLabel, FieldError } from '@/components/ui/field';
 import { useTrans } from '@/hooks/use-trans';
 import type { FormEvent } from 'react';
 
@@ -52,47 +53,47 @@ export default function CustomerForm({
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <h2 className="text-lg font-semibold">{t('Your details')}</h2>
 
-            <div>
-                <label className="mb-1 block text-sm font-medium">{t('Name')} *</label>
+            <Field>
+                <FieldLabel>{t('Name')} *</FieldLabel>
                 <Input
                     value={data.name}
                     onChange={(e) => setData({ ...data, name: e.target.value })}
                     placeholder={t('Full name')}
                 />
-                {errors.name && <p className="mt-1 text-xs text-destructive">{errors.name}</p>}
-            </div>
+                {errors.name && <FieldError match>{errors.name}</FieldError>}
+            </Field>
 
-            <div>
-                <label className="mb-1 block text-sm font-medium">{t('Email')} *</label>
+            <Field>
+                <FieldLabel>{t('Email')} *</FieldLabel>
                 <Input
                     type="email"
                     value={data.email}
                     onChange={(e) => setData({ ...data, email: e.target.value })}
                     placeholder="email@example.com"
                 />
-                {errors.email && <p className="mt-1 text-xs text-destructive">{errors.email}</p>}
-            </div>
+                {errors.email && <FieldError match>{errors.email}</FieldError>}
+            </Field>
 
-            <div>
-                <label className="mb-1 block text-sm font-medium">{t('Phone')} *</label>
+            <Field>
+                <FieldLabel>{t('Phone')} *</FieldLabel>
                 <Input
                     type="tel"
                     value={data.phone}
                     onChange={(e) => setData({ ...data, phone: e.target.value })}
                     placeholder="+41 79 123 45 67"
                 />
-                {errors.phone && <p className="mt-1 text-xs text-destructive">{errors.phone}</p>}
-            </div>
+                {errors.phone && <FieldError match>{errors.phone}</FieldError>}
+            </Field>
 
-            <div>
-                <label className="mb-1 block text-sm font-medium">{t('Notes')}</label>
+            <Field>
+                <FieldLabel>{t('Notes')}</FieldLabel>
                 <Textarea
                     value={data.notes}
                     onChange={(e) => setData({ ...data, notes: e.target.value })}
                     placeholder={t('Any additional information...')}
                     rows={3}
                 />
-            </div>
+            </Field>
 
             {/* Honeypot — hidden from real users, bots fill it */}
             <div

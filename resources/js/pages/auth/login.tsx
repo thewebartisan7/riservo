@@ -3,7 +3,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } f
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
-import { InputError } from '@/components/input-error';
+import { Field, FieldLabel, FieldError } from '@/components/ui/field';
 import { useTrans } from '@/hooks/use-trans';
 import { Form, Link, usePage } from '@inertiajs/react';
 import { store } from '@/actions/App/Http/Controllers/Auth/LoginController';
@@ -32,30 +32,28 @@ export default function Login() {
                                     <p className="text-sm text-green-600">{status}</p>
                                 )}
 
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="email" className="text-sm font-medium">{t('Email')}</label>
+                                <Field>
+                                    <FieldLabel>{t('Email')}</FieldLabel>
                                     <Input
-                                        id="email"
                                         name="email"
                                         type="email"
                                         defaultValue=""
                                         required
                                         autoFocus
                                     />
-                                    <InputError message={errors.email} />
-                                </div>
+                                    {errors.email && <FieldError match>{errors.email}</FieldError>}
+                                </Field>
 
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="password" className="text-sm font-medium">{t('Password')}</label>
+                                <Field>
+                                    <FieldLabel>{t('Password')}</FieldLabel>
                                     <Input
-                                        id="password"
                                         name="password"
                                         type="password"
                                         defaultValue=""
                                         required
                                     />
-                                    <InputError message={errors.password} />
-                                </div>
+                                    {errors.password && <FieldError match>{errors.password}</FieldError>}
+                                </Field>
 
                                 <div className="flex items-center gap-2">
                                     <input type="hidden" name="remember" value={remember ? '1' : '0'} />

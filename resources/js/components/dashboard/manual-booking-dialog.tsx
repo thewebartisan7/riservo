@@ -7,6 +7,7 @@ import {
 } from '@/actions/App/Http/Controllers/Dashboard/BookingController';
 import { search as customerSearchAction } from '@/actions/App/Http/Controllers/Dashboard/CustomerController';
 import { useTrans } from '@/hooks/use-trans';
+import type { AvailableDatesResponse, AvailableSlotsResponse } from '@/types';
 import {
     Dialog,
     DialogPopup,
@@ -140,7 +141,7 @@ export default function ManualBookingDialog({
         }
         datesHttp.get(availableDatesAction.url({ query: params }), {
             onSuccess: (resp: unknown) => {
-                const data = resp as { dates: Record<string, boolean> };
+                const data = resp as AvailableDatesResponse;
                 setAvailableDates(data.dates);
             },
         });
@@ -160,7 +161,7 @@ export default function ManualBookingDialog({
         }
         slotsHttp.get(slotsAction.url({ query: params }), {
             onSuccess: (resp: unknown) => {
-                const data = resp as { slots: string[] };
+                const data = resp as AvailableSlotsResponse;
                 setAvailableSlots(data.slots);
             },
         });

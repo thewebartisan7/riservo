@@ -2,7 +2,7 @@ import GuestLayout from '@/layouts/guest-layout';
 import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { InputError } from '@/components/input-error';
+import { Field, FieldLabel, FieldError } from '@/components/ui/field';
 import { useTrans } from '@/hooks/use-trans';
 import { Form, usePage } from '@inertiajs/react';
 import { accept } from '@/actions/App/Http/Controllers/Auth/InvitationController';
@@ -28,52 +28,48 @@ export default function AcceptInvitation() {
                     {({ errors, processing }) => (
                         <>
                             <CardPanel className="flex flex-col gap-4">
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="email" className="text-sm font-medium">{t('Email')}</label>
+                                <Field>
+                                    <FieldLabel>{t('Email')}</FieldLabel>
                                     <Input
-                                        id="email"
                                         type="email"
                                         defaultValue={invitation.email}
                                         readOnly
                                         disabled
                                     />
-                                </div>
+                                </Field>
 
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="name" className="text-sm font-medium">{t('Name')}</label>
+                                <Field>
+                                    <FieldLabel>{t('Name')}</FieldLabel>
                                     <Input
-                                        id="name"
                                         name="name"
                                         type="text"
                                         defaultValue=""
                                         required
                                         autoFocus
                                     />
-                                    <InputError message={errors.name} />
-                                </div>
+                                    {errors.name && <FieldError match>{errors.name}</FieldError>}
+                                </Field>
 
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="password" className="text-sm font-medium">{t('Password')}</label>
+                                <Field>
+                                    <FieldLabel>{t('Password')}</FieldLabel>
                                     <Input
-                                        id="password"
                                         name="password"
                                         type="password"
                                         defaultValue=""
                                         required
                                     />
-                                    <InputError message={errors.password} />
-                                </div>
+                                    {errors.password && <FieldError match>{errors.password}</FieldError>}
+                                </Field>
 
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="password_confirmation" className="text-sm font-medium">{t('Confirm Password')}</label>
+                                <Field>
+                                    <FieldLabel>{t('Confirm Password')}</FieldLabel>
                                     <Input
-                                        id="password_confirmation"
                                         name="password_confirmation"
                                         type="password"
                                         defaultValue=""
                                         required
                                     />
-                                </div>
+                                </Field>
                             </CardPanel>
                             <CardFooter className="flex justify-end">
                                 <Button type="submit" disabled={processing}>

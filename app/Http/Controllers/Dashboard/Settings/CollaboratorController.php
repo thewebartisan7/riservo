@@ -29,6 +29,7 @@ class CollaboratorController extends Controller
         $business = $request->user()->currentBusiness();
 
         $collaborators = $business->collaborators()
+            ->withCount(['services' => fn ($q) => $q->where('services.business_id', $business->id)])
             ->get(['users.id', 'users.name', 'users.email', 'users.avatar'])
             ->map(fn (User $c) => [
                 'id' => $c->id,
@@ -36,7 +37,7 @@ class CollaboratorController extends Controller
                 'email' => $c->email,
                 'avatar_url' => $c->avatar ? Storage::disk('public')->url($c->avatar) : null,
                 'is_active' => $c->pivot->is_active,
-                'services_count' => $c->services()->where('services.business_id', $business->id)->count(),
+                'services_count' => $c->services_count,
             ]);
 
         $invitations = $business->invitations()
@@ -112,11 +113,12 @@ class CollaboratorController extends Controller
 
         $services = $business->services()
             ->where('is_active', true)
+            ->with(['collaborators' => fn ($q) => $q->where('users.id', $user->id)->select('users.id')])
             ->get(['id', 'name'])
             ->map(fn ($s) => [
                 'id' => $s->id,
                 'name' => $s->name,
-                'assigned' => $s->collaborators()->where('users.id', $user->id)->exists(),
+                'assigned' => $s->collaborators->isNotEmpty(),
             ]);
 
         return Inertia::render('dashboard/settings/collaborators/show', [

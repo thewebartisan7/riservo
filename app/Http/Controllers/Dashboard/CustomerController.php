@@ -37,15 +37,17 @@ class CustomerController extends Controller
             ->paginate(20)
             ->withQueryString();
 
+        $customers->getCollection()->transform(fn (Customer $customer) => [
+            'id' => $customer->id,
+            'name' => $customer->name,
+            'email' => $customer->email,
+            'phone' => $customer->phone,
+            'bookings_count' => $customer->bookings_count,
+            'last_booking_at' => $customer->bookings_max_starts_at,
+        ]);
+
         return Inertia::render('dashboard/customers', [
-            'customers' => $customers->through(fn (Customer $customer) => [
-                'id' => $customer->id,
-                'name' => $customer->name,
-                'email' => $customer->email,
-                'phone' => $customer->phone,
-                'bookings_count' => $customer->bookings_count,
-                'last_booking_at' => $customer->bookings_max_starts_at,
-            ]),
+            'customers' => $customers,
             'filters' => [
                 'search' => $request->string('search', ''),
             ],

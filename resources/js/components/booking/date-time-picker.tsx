@@ -4,6 +4,7 @@ import { availableDates as availableDatesAction, slots as slotsAction } from '@/
 import { Calendar } from '@/components/ui/calendar';
 import { Button } from '@/components/ui/button';
 import { useTrans } from '@/hooks/use-trans';
+import type { AvailableDatesResponse, AvailableSlotsResponse } from '@/types';
 
 interface DateTimePickerProps {
     slug: string;
@@ -50,7 +51,7 @@ export default function DateTimePicker({
             availableDatesAction.url(slug, { query: datesQuery }),
             {
                 onSuccess: (response: unknown) => {
-                    const data = response as { dates: Record<string, boolean> };
+                    const data = response as AvailableDatesResponse;
                     setAvailableDates(data.dates);
                 },
             },
@@ -70,7 +71,7 @@ export default function DateTimePicker({
             slotsAction.url(slug, { query: slotsQuery }),
             {
                 onSuccess: (response: unknown) => {
-                    const data = response as { slots: string[] };
+                    const data = response as AvailableSlotsResponse;
                     setSlots(data.slots);
                 },
             },

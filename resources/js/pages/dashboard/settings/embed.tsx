@@ -1,5 +1,7 @@
 import SettingsLayout from '@/layouts/settings-layout';
 import { Card, CardHeader, CardTitle, CardDescription, CardPanel } from '@/components/ui/card';
+import { Field, FieldLabel } from '@/components/ui/field';
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useTrans } from '@/hooks/use-trans';
 import { EmbedSnippet } from '@/components/settings/embed-snippet';
 import { useState } from 'react';
@@ -46,19 +48,20 @@ export default function Embed({ slug, baseUrl, embedUrl, appUrl, services }: Pro
                     </CardHeader>
                     <CardPanel className="flex flex-col gap-4">
                         {services.length > 0 && (
-                            <div className="flex flex-col gap-2">
-                                <label className="text-sm font-medium">{t('Pre-filter by service (optional)')}</label>
-                                <select
-                                    value={previewService}
-                                    onChange={(e) => setPreviewService(e.target.value)}
-                                    className="flex h-9 w-full rounded-lg border bg-background px-3 py-1 text-sm shadow-xs sm:h-8"
-                                >
-                                    <option value="">{t('All services')}</option>
-                                    {services.map((s) => (
-                                        <option key={s.id} value={s.slug}>{s.name}</option>
-                                    ))}
-                                </select>
-                            </div>
+                            <Field>
+                                <FieldLabel>{t('Pre-filter by service (optional)')}</FieldLabel>
+                                <Select value={previewService} onValueChange={(val) => setPreviewService(val ?? '')}>
+                                    <SelectTrigger>
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectPopup>
+                                        <SelectItem value="">{t('All services')}</SelectItem>
+                                        {services.map((s) => (
+                                            <SelectItem key={s.id} value={s.slug}>{s.name}</SelectItem>
+                                        ))}
+                                    </SelectPopup>
+                                </Select>
+                            </Field>
                         )}
                         <EmbedSnippet label={t('Iframe snippet')} code={iframeSnippet} />
                     </CardPanel>

@@ -27,6 +27,7 @@ import { WeekScheduleEditor } from '@/components/onboarding/week-schedule-editor
 import type { DaySchedule } from '@/components/onboarding/day-row';
 import { ExceptionDialog, type ExceptionData } from '@/components/settings/exception-dialog';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
+import type { AvatarUploadResponse } from '@/types';
 
 interface CollaboratorDetail {
     id: number;
@@ -93,7 +94,7 @@ export default function CollaboratorShow({ collaborator, schedule: initialSchedu
             pendingAvatarUpload.current = false;
             avatarHttp.post(uploadAvatarAction.url(collaborator.id), {
                 onSuccess: (response: unknown) => {
-                    const data = response as { url: string };
+                    const data = response as AvatarUploadResponse;
                     setAvatarUrl(data.url);
                 },
             });

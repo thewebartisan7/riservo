@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { InputError } from '@/components/input-error';
+import { Field, FieldLabel, FieldError, FieldDescription } from '@/components/ui/field';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } from '@/components/ui/card';
@@ -76,26 +76,25 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                 {({ errors, processing }) => (
                     <>
                         <CardPanel className="flex flex-col gap-4">
-                            <div className="flex flex-col gap-2">
-                                <Label htmlFor="name">{t('Service name')}</Label>
-                                <Input id="name" name="name" defaultValue={service?.name ?? ''} required />
-                                <InputError message={errors.name} />
-                            </div>
+                            <Field>
+                                <FieldLabel>{t('Service name')}</FieldLabel>
+                                <Input name="name" defaultValue={service?.name ?? ''} required />
+                                {errors.name && <FieldError match>{errors.name}</FieldError>}
+                            </Field>
 
-                            <div className="flex flex-col gap-2">
-                                <Label htmlFor="description">{t('Description')}</Label>
+                            <Field>
+                                <FieldLabel>{t('Description')}</FieldLabel>
                                 <Textarea
-                                    id="description"
                                     name="description"
                                     defaultValue={service?.description ?? ''}
                                     rows={3}
                                 />
-                                <InputError message={errors.description} />
-                            </div>
+                                {errors.description && <FieldError match>{errors.description}</FieldError>}
+                            </Field>
 
                             <div className="grid grid-cols-2 gap-4">
-                                <div className="flex flex-col gap-2">
-                                    <Label>{t('Duration (minutes)')}</Label>
+                                <Field>
+                                    <FieldLabel>{t('Duration (minutes)')}</FieldLabel>
                                     <NumberField name="duration_minutes" defaultValue={service?.duration_minutes ?? 60} min={5} max={480}>
                                         <NumberFieldGroup>
                                             <NumberFieldDecrement />
@@ -103,12 +102,11 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                                             <NumberFieldIncrement />
                                         </NumberFieldGroup>
                                     </NumberField>
-                                    <InputError message={errors.duration_minutes} />
-                                </div>
-                                <div className="flex flex-col gap-2">
-                                    <Label htmlFor="price">{t('Price')}</Label>
+                                    {errors.duration_minutes && <FieldError match>{errors.duration_minutes}</FieldError>}
+                                </Field>
+                                <Field>
+                                    <FieldLabel>{t('Price')}</FieldLabel>
                                     <Input
-                                        id="price"
                                         name="price"
                                         type="number"
                                         min={0}
@@ -116,13 +114,13 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                                         defaultValue={service?.price ?? ''}
                                         placeholder={t('Leave empty for "on request"')}
                                     />
-                                    <InputError message={errors.price} />
-                                </div>
+                                    {errors.price && <FieldError match>{errors.price}</FieldError>}
+                                </Field>
                             </div>
 
                             <div className="grid grid-cols-3 gap-4">
-                                <div className="flex flex-col gap-2">
-                                    <Label>{t('Buffer before (min)')}</Label>
+                                <Field>
+                                    <FieldLabel>{t('Buffer before (min)')}</FieldLabel>
                                     <NumberField name="buffer_before" defaultValue={service?.buffer_before ?? 0} min={0} max={120}>
                                         <NumberFieldGroup>
                                             <NumberFieldDecrement />
@@ -130,10 +128,10 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                                             <NumberFieldIncrement />
                                         </NumberFieldGroup>
                                     </NumberField>
-                                    <InputError message={errors.buffer_before} />
-                                </div>
-                                <div className="flex flex-col gap-2">
-                                    <Label>{t('Buffer after (min)')}</Label>
+                                    {errors.buffer_before && <FieldError match>{errors.buffer_before}</FieldError>}
+                                </Field>
+                                <Field>
+                                    <FieldLabel>{t('Buffer after (min)')}</FieldLabel>
                                     <NumberField name="buffer_after" defaultValue={service?.buffer_after ?? 0} min={0} max={120}>
                                         <NumberFieldGroup>
                                             <NumberFieldDecrement />
@@ -141,10 +139,10 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                                             <NumberFieldIncrement />
                                         </NumberFieldGroup>
                                     </NumberField>
-                                    <InputError message={errors.buffer_after} />
-                                </div>
-                                <div className="flex flex-col gap-2">
-                                    <Label>{t('Slot interval')}</Label>
+                                    {errors.buffer_after && <FieldError match>{errors.buffer_after}</FieldError>}
+                                </Field>
+                                <Field>
+                                    <FieldLabel>{t('Slot interval')}</FieldLabel>
                                     <Select
                                         name="slot_interval_minutes"
                                         defaultValue={String(service?.slot_interval_minutes ?? 30)}
@@ -161,22 +159,22 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                                             ))}
                                         </SelectPopup>
                                     </Select>
-                                    <InputError message={errors.slot_interval_minutes} />
-                                </div>
+                                    {errors.slot_interval_minutes && <FieldError match>{errors.slot_interval_minutes}</FieldError>}
+                                </Field>
                             </div>
 
                             <div className="flex items-center justify-between">
                                 <div>
                                     <Label htmlFor="is_active">{t('Active')}</Label>
-                                    <p className="text-xs text-muted-foreground">{t('Inactive services are hidden from customers')}</p>
+                                    <FieldDescription>{t('Inactive services are hidden from customers')}</FieldDescription>
                                 </div>
                                 <Switch id="is_active" checked={isActive} onCheckedChange={setIsActive} />
                                 <input type="hidden" name="is_active" value={isActive ? '1' : '0'} />
                             </div>
 
                             {collaborators.length > 0 && (
-                                <div className="flex flex-col gap-2">
-                                    <Label>{t('Assigned collaborators')}</Label>
+                                <Field>
+                                    <FieldLabel>{t('Assigned collaborators')}</FieldLabel>
                                     <div className="flex flex-col gap-2">
                                         {collaborators.map((c) => (
                                             <Label key={c.id}>
@@ -194,7 +192,7 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                                     {selectedCollaborators.length === 0 && (
                                         <input type="hidden" name="collaborator_ids" value="" />
                                     )}
-                                </div>
+                                </Field>
                             )}
                         </CardPanel>
                         <CardFooter className="flex justify-end">

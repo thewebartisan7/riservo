@@ -2,7 +2,7 @@ import OnboardingLayout from '@/layouts/onboarding-layout';
 import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { InputError } from '@/components/input-error';
+import { Field, FieldLabel, FieldError } from '@/components/ui/field';
 import { useTrans } from '@/hooks/use-trans';
 import { router, useHttp } from '@inertiajs/react';
 import { store, show } from '@/actions/App/Http/Controllers/OnboardingController';
@@ -93,19 +93,21 @@ export default function Step4({ services, pendingInvitations }: Props) {
                 </CardHeader>
                 <form onSubmit={submit}>
                     <CardPanel className="flex flex-col gap-4">
-                        {invitations.map((invitation, index) => (
+                        {invitations.map((invitation, index) => {
+                            const emailError = (http.errors as Record<string, string>)[`invitations.${index}.email`];
+                            return (
                             <div key={index} className="rounded-lg border p-4">
                                 <div className="flex items-start gap-2">
-                                    <div className="flex-1">
-                                        <label className="text-sm font-medium">{t('Email')}</label>
+                                    <Field className="flex-1">
+                                        <FieldLabel>{t('Email')}</FieldLabel>
                                         <Input
                                             type="email"
                                             value={invitation.email}
                                             onChange={(e) => updateEmail(index, e.target.value)}
                                             placeholder={t('collaborator@example.com')}
                                         />
-                                        <InputError message={(http.errors as Record<string, string>)[`invitations.${index}.email`]} />
-                                    </div>
+                                        {emailError && <FieldError match>{emailError}</FieldError>}
+                                    </Field>
                                     {invitations.length > 1 && (
                                         <Button
                                             type="button"
@@ -145,7 +147,8 @@ export default function Step4({ services, pendingInvitations }: Props) {
                                     </div>
                                 )}
                             </div>
-                        ))}
+                            );
+                        })}
 
                         <Button type="button" variant="outline" size="sm" className="w-fit" onClick={addRow}>
                             <PlusIcon className="mr-1 h-4 w-4" />

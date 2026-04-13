@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { InputError } from '@/components/input-error';
+import { Field, FieldLabel, FieldError } from '@/components/ui/field';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Calendar } from '@/components/ui/calendar';
@@ -126,8 +126,8 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
                     </DialogHeader>
                     <DialogPanel>
                         <div className="flex flex-col gap-4">
-                            <div className="flex flex-col gap-2">
-                                <Label>{t('Type')}</Label>
+                            <Field>
+                                <FieldLabel>{t('Type')}</FieldLabel>
                                 <Select
                                     defaultValue={http.data.type}
                                     onValueChange={(val) => http.setData('type', val as string)}
@@ -144,12 +144,12 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
                                         ))}
                                     </SelectPopup>
                                 </Select>
-                                <InputError message={http.errors.type} />
-                            </div>
+                                {http.errors.type && <FieldError match>{http.errors.type}</FieldError>}
+                            </Field>
 
                             <div className="grid grid-cols-2 gap-4">
-                                <div className="flex flex-col gap-2">
-                                    <Label>{t('Start date')}</Label>
+                                <Field>
+                                    <FieldLabel>{t('Start date')}</FieldLabel>
                                     <Popover open={startDateOpen} onOpenChange={setStartDateOpen}>
                                         <PopoverTrigger
                                             render={<Button variant="outline" type="button" />}
@@ -170,10 +170,10 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
                                             />
                                         </PopoverPopup>
                                     </Popover>
-                                    <InputError message={http.errors.start_date} />
-                                </div>
-                                <div className="flex flex-col gap-2">
-                                    <Label>{t('End date')}</Label>
+                                    {http.errors.start_date && <FieldError match>{http.errors.start_date}</FieldError>}
+                                </Field>
+                                <Field>
+                                    <FieldLabel>{t('End date')}</FieldLabel>
                                     <Popover open={endDateOpen} onOpenChange={setEndDateOpen}>
                                         <PopoverTrigger
                                             render={<Button variant="outline" type="button" />}
@@ -194,8 +194,8 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
                                             />
                                         </PopoverPopup>
                                     </Popover>
-                                    <InputError message={http.errors.end_date} />
-                                </div>
+                                    {http.errors.end_date && <FieldError match>{http.errors.end_date}</FieldError>}
+                                </Field>
                             </div>
 
                             <Label>
@@ -215,39 +215,36 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
 
                             {isPartial && (
                                 <div className="grid grid-cols-2 gap-4">
-                                    <div className="flex flex-col gap-2">
-                                        <Label htmlFor="start_time">{t('Start time')}</Label>
+                                    <Field>
+                                        <FieldLabel>{t('Start time')}</FieldLabel>
                                         <Input
-                                            id="start_time"
                                             type="time"
                                             value={http.data.start_time ?? ''}
                                             onChange={(e) => http.setData('start_time', e.target.value)}
                                         />
-                                        <InputError message={http.errors.start_time} />
-                                    </div>
-                                    <div className="flex flex-col gap-2">
-                                        <Label htmlFor="end_time">{t('End time')}</Label>
+                                        {http.errors.start_time && <FieldError match>{http.errors.start_time}</FieldError>}
+                                    </Field>
+                                    <Field>
+                                        <FieldLabel>{t('End time')}</FieldLabel>
                                         <Input
-                                            id="end_time"
                                             type="time"
                                             value={http.data.end_time ?? ''}
                                             onChange={(e) => http.setData('end_time', e.target.value)}
                                         />
-                                        <InputError message={http.errors.end_time} />
-                                    </div>
+                                        {http.errors.end_time && <FieldError match>{http.errors.end_time}</FieldError>}
+                                    </Field>
                                 </div>
                             )}
 
-                            <div className="flex flex-col gap-2">
-                                <Label htmlFor="reason">{t('Reason (optional)')}</Label>
+                            <Field>
+                                <FieldLabel>{t('Reason (optional)')}</FieldLabel>
                                 <Input
-                                    id="reason"
                                     value={http.data.reason ?? ''}
                                     onChange={(e) => http.setData('reason', e.target.value || null)}
                                     placeholder={t('e.g. Holiday, Sick day')}
                                 />
-                                <InputError message={http.errors.reason} />
-                            </div>
+                                {http.errors.reason && <FieldError match>{http.errors.reason}</FieldError>}
+                            </Field>
                         </div>
                     </DialogPanel>
                     <DialogFooter>

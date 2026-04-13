@@ -14,6 +14,10 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
+/**
+ * @property-read BusinessUser|null $pivot
+ * @property-read int $services_count
+ */
 #[Fillable(['name', 'email', 'password', 'avatar', 'magic_link_token'])]
 #[Hidden(['password', 'remember_token', 'magic_link_token'])]
 class User extends Authenticatable implements MustVerifyEmail

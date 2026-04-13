@@ -32,7 +32,7 @@ export default function CollaboratorPicker({
     useEffect(() => {
         http.get(collaboratorsAction.url(slug, { query: { service_id: serviceId } }), {
             onSuccess: (response: unknown) => {
-                const data = response as { collaborators: PublicCollaborator[] };
+                const data = response as { collaborators: PublicCollaborator[] }; // typed via PublicCollaborator
                 setCollaborators(data.collaborators);
             },
         });

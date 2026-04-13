@@ -142,6 +142,42 @@ export interface ServiceWithCollaborators extends FilterOption {
     collaborators: FilterOption[];
 }
 
+// useHttp response shapes
+export interface SlugCheckResponse {
+    available: boolean;
+}
+
+export interface FileUploadResponse {
+    path: string;
+    url: string;
+}
+
+export interface AvatarUploadResponse {
+    url: string;
+}
+
+export interface AvailableDatesResponse {
+    dates: Record<string, boolean>;
+}
+
+export interface AvailableSlotsResponse {
+    slots: string[];
+}
+
+export interface BookingStoreResponse {
+    token: string;
+    status: string;
+}
+
+export interface CustomerSearchResponse {
+    customers: Array<{
+        id: number;
+        name: string;
+        email: string;
+        phone: string | null;
+    }>;
+}
+
 export interface PageProps {
     auth: {
         user: User | null;

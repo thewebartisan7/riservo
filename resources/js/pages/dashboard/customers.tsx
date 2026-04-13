@@ -57,7 +57,7 @@ export default function CustomersPage() {
                 router.get(
                     customersIndex.url(),
                     search ? { search } : {},
-                    { preserveState: true, preserveScroll: true },
+                    { preserveState: true, preserveScroll: true, only: ['customers'] },
                 );
             }
         }, 300);

@@ -3,7 +3,7 @@ import { store } from '@/actions/App/Http/Controllers/Booking/PublicBookingContr
 import { Button } from '@/components/ui/button';
 import { Card, CardPanel } from '@/components/ui/card';
 import { useTrans } from '@/hooks/use-trans';
-import type { PublicCollaborator, PublicService } from '@/types';
+import type { BookingStoreResponse, PublicCollaborator, PublicService } from '@/types';
 import type { CustomerData } from './customer-form';
 
 interface BookingSummaryProps {
@@ -62,7 +62,7 @@ export default function BookingSummary({
         http.setData('website', getHoneypotValue());
         http.post(store.url(slug), {
             onSuccess: (response: unknown) => {
-                const result = response as { token: string; status: string };
+                const result = response as BookingStoreResponse;
                 onSuccess(result);
             },
         });

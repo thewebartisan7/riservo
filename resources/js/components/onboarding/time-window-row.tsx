@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useTrans } from '@/hooks/use-trans';
 import { Trash2Icon } from 'lucide-react';
 
@@ -22,29 +23,31 @@ export function TimeWindowRow({ openTime, closeTime, onChange, onRemove, canRemo
 
     return (
         <div className="flex items-center gap-2">
-            <select
-                value={openTime}
-                onChange={(e) => onChange('open_time', e.target.value)}
-                className="h-8 rounded-md border border-input bg-background px-2 text-sm shadow-xs"
-            >
-                {TIME_OPTIONS.map((time) => (
-                    <option key={`open-${time}`} value={time}>
-                        {time}
-                    </option>
-                ))}
-            </select>
+            <Select value={openTime} onValueChange={(val) => onChange('open_time', val)}>
+                <SelectTrigger size="sm" className="w-24">
+                    <SelectValue />
+                </SelectTrigger>
+                <SelectPopup>
+                    {TIME_OPTIONS.map((time) => (
+                        <SelectItem key={`open-${time}`} value={time}>
+                            {time}
+                        </SelectItem>
+                    ))}
+                </SelectPopup>
+            </Select>
             <span className="text-sm text-muted-foreground">{t('to')}</span>
-            <select
-                value={closeTime}
-                onChange={(e) => onChange('close_time', e.target.value)}
-                className="h-8 rounded-md border border-input bg-background px-2 text-sm shadow-xs"
-            >
-                {TIME_OPTIONS.map((time) => (
-                    <option key={`close-${time}`} value={time}>
-                        {time}
-                    </option>
-                ))}
-            </select>
+            <Select value={closeTime} onValueChange={(val) => onChange('close_time', val)}>
+                <SelectTrigger size="sm" className="w-24">
+                    <SelectValue />
+                </SelectTrigger>
+                <SelectPopup>
+                    {TIME_OPTIONS.map((time) => (
+                        <SelectItem key={`close-${time}`} value={time}>
+                            {time}
+                        </SelectItem>
+                    ))}
+                </SelectPopup>
+            </Select>
             {canRemove && (
                 <Button
                     type="button"

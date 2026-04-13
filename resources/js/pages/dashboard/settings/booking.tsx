@@ -1,7 +1,7 @@
 import SettingsLayout from '@/layouts/settings-layout';
 import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { InputError } from '@/components/input-error';
+import { Field, FieldLabel, FieldError, FieldDescription } from '@/components/ui/field';
 import {
     NumberField,
     NumberFieldDecrement,
@@ -9,6 +9,13 @@ import {
     NumberFieldIncrement,
     NumberFieldInput,
 } from '@/components/ui/number-field';
+import {
+    Select,
+    SelectItem,
+    SelectPopup,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
@@ -43,20 +50,20 @@ export default function BookingSettings({ settings }: Props) {
                     {({ errors, processing }) => (
                         <>
                             <CardPanel className="flex flex-col gap-6">
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="confirmation_mode" className="text-sm font-medium">{t('Confirmation mode')}</label>
-                                    <select
-                                        id="confirmation_mode"
-                                        name="confirmation_mode"
-                                        defaultValue={settings.confirmation_mode}
-                                        className="flex h-9 w-full rounded-lg border bg-background px-3 py-1 text-sm shadow-xs sm:h-8"
-                                    >
-                                        <option value="auto">{t('Auto-confirm')}</option>
-                                        <option value="manual">{t('Manual confirmation')}</option>
-                                    </select>
-                                    <p className="text-xs text-muted-foreground">{t('Auto-confirm instantly confirms bookings. Manual requires your approval.')}</p>
-                                    <InputError message={errors.confirmation_mode} />
-                                </div>
+                                <Field>
+                                    <FieldLabel>{t('Confirmation mode')}</FieldLabel>
+                                    <Select name="confirmation_mode" defaultValue={settings.confirmation_mode}>
+                                        <SelectTrigger>
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectPopup>
+                                            <SelectItem value="auto">{t('Auto-confirm')}</SelectItem>
+                                            <SelectItem value="manual">{t('Manual confirmation')}</SelectItem>
+                                        </SelectPopup>
+                                    </Select>
+                                    <FieldDescription>{t('Auto-confirm instantly confirms bookings. Manual requires your approval.')}</FieldDescription>
+                                    {errors.confirmation_mode && <FieldError match>{errors.confirmation_mode}</FieldError>}
+                                </Field>
 
                                 <div className="flex items-center justify-between">
                                     <div>
@@ -71,23 +78,23 @@ export default function BookingSettings({ settings }: Props) {
                                     <input type="hidden" name="allow_collaborator_choice" value={collaboratorChoice ? '1' : '0'} />
                                 </div>
 
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="assignment_strategy" className="text-sm font-medium">{t('Assignment strategy')}</label>
-                                    <select
-                                        id="assignment_strategy"
-                                        name="assignment_strategy"
-                                        defaultValue={settings.assignment_strategy}
-                                        className="flex h-9 w-full rounded-lg border bg-background px-3 py-1 text-sm shadow-xs sm:h-8"
-                                    >
-                                        <option value="first_available">{t('First available')}</option>
-                                        <option value="round_robin">{t('Round robin (least busy)')}</option>
-                                    </select>
-                                    <p className="text-xs text-muted-foreground">{t('How collaborators are assigned when customer does not choose one')}</p>
-                                    <InputError message={errors.assignment_strategy} />
-                                </div>
+                                <Field>
+                                    <FieldLabel>{t('Assignment strategy')}</FieldLabel>
+                                    <Select name="assignment_strategy" defaultValue={settings.assignment_strategy}>
+                                        <SelectTrigger>
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectPopup>
+                                            <SelectItem value="first_available">{t('First available')}</SelectItem>
+                                            <SelectItem value="round_robin">{t('Round robin (least busy)')}</SelectItem>
+                                        </SelectPopup>
+                                    </Select>
+                                    <FieldDescription>{t('How collaborators are assigned when customer does not choose one')}</FieldDescription>
+                                    {errors.assignment_strategy && <FieldError match>{errors.assignment_strategy}</FieldError>}
+                                </Field>
 
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="cancellation_window_hours" className="text-sm font-medium">{t('Cancellation window (hours)')}</label>
+                                <Field>
+                                    <FieldLabel>{t('Cancellation window (hours)')}</FieldLabel>
                                     <NumberField
                                         name="cancellation_window_hours"
                                         defaultValue={settings.cancellation_window_hours}
@@ -100,28 +107,28 @@ export default function BookingSettings({ settings }: Props) {
                                             <NumberFieldIncrement />
                                         </NumberFieldGroup>
                                     </NumberField>
-                                    <p className="text-xs text-muted-foreground">{t('Minimum hours before appointment that customers can cancel. 0 = anytime.')}</p>
-                                    <InputError message={errors.cancellation_window_hours} />
-                                </div>
+                                    <FieldDescription>{t('Minimum hours before appointment that customers can cancel. 0 = anytime.')}</FieldDescription>
+                                    {errors.cancellation_window_hours && <FieldError match>{errors.cancellation_window_hours}</FieldError>}
+                                </Field>
 
-                                <div className="flex flex-col gap-2">
-                                    <label htmlFor="payment_mode" className="text-sm font-medium">{t('Payment mode')}</label>
-                                    <select
-                                        id="payment_mode"
-                                        name="payment_mode"
-                                        defaultValue={settings.payment_mode}
-                                        className="flex h-9 w-full rounded-lg border bg-background px-3 py-1 text-sm shadow-xs sm:h-8"
-                                    >
-                                        <option value="offline">{t('Pay on-site')}</option>
-                                        <option value="online">{t('Pay online')}</option>
-                                        <option value="customer_choice">{t('Customer choice')}</option>
-                                    </select>
-                                    <p className="text-xs text-muted-foreground">{t('Online payments require Stripe setup (coming soon)')}</p>
-                                    <InputError message={errors.payment_mode} />
-                                </div>
+                                <Field>
+                                    <FieldLabel>{t('Payment mode')}</FieldLabel>
+                                    <Select name="payment_mode" defaultValue={settings.payment_mode}>
+                                        <SelectTrigger>
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectPopup>
+                                            <SelectItem value="offline">{t('Pay on-site')}</SelectItem>
+                                            <SelectItem value="online">{t('Pay online')}</SelectItem>
+                                            <SelectItem value="customer_choice">{t('Customer choice')}</SelectItem>
+                                        </SelectPopup>
+                                    </Select>
+                                    <FieldDescription>{t('Online payments require Stripe setup (coming soon)')}</FieldDescription>
+                                    {errors.payment_mode && <FieldError match>{errors.payment_mode}</FieldError>}
+                                </Field>
 
-                                <div className="flex flex-col gap-2">
-                                    <span className="text-sm font-medium">{t('Booking reminders')}</span>
+                                <Field>
+                                    <FieldLabel>{t('Booking reminders')}</FieldLabel>
                                     <div className="flex gap-4">
                                         <Label>
                                             <Checkbox
@@ -140,8 +147,8 @@ export default function BookingSettings({ settings }: Props) {
                                             {t('1 hour before')}
                                         </Label>
                                     </div>
-                                    <InputError message={errors.reminder_hours} />
-                                </div>
+                                    {errors.reminder_hours && <FieldError match>{errors.reminder_hours}</FieldError>}
+                                </Field>
                             </CardPanel>
                             <CardFooter className="flex justify-end">
                                 <Button type="submit" disabled={processing}>{t('Save changes')}</Button>

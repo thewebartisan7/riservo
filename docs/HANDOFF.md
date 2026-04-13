@@ -1,71 +1,55 @@
 # Handoff
 
-**Session**: 10 — Notifications (Email)  
+**Session**: UI Review — COSS UI, Inertia v3, TypeScript remediation  
 **Date**: 2026-04-13  
 **Status**: Complete
 
 ---
 
-## What Was Built
+## What Was Done
 
-Session 10 implemented the complete transactional email notification system for all booking lifecycle events, two scheduled commands, and production deployment documentation.
+A full codebase review and remediation pass across ~30 files, correcting accumulated drift in COSS UI component usage, Inertia v3 idioms, TypeScript safety, and two small Laravel fixes. No new features — pure quality improvement.
 
-### Migration
+### COSS UI Field Migration (17 files)
 
-- `booking_reminders` table: `booking_id` (FK), `hours_before`, `sent_at`, unique constraint on `(booking_id, hours_before)` — see D-056
+Replaced all manual `<div className="flex flex-col gap-2">` + `<label htmlFor>` + `<InputError>` patterns with proper `Field` / `FieldLabel` / `FieldError` / `FieldDescription` components.
 
-### Model
+- **Auth pages** (7): login, register, forgot-password, reset-password, magic-link, customer-register, accept-invitation
+- **Onboarding pages** (3): step-1, step-3, step-4
+- **Settings pages** (3): profile, booking, embed
+- **Components** (4): service-form, collaborator-invite-dialog, exception-dialog, customer-form
 
-- `BookingReminder`: belongs to Booking, used for reminder deduplication
-- `Booking`: added `reminders()` HasMany relationship
+Key pattern: `FieldError` uses `match` prop (= `match={true}`) to force display of server-side Inertia validation errors, since Base UI's Field.Error only renders for HTML5 validation by default.
 
-### Notification Classes (4 total, all queued)
+### Native `<select>` → COSS UI `Select` (4 files, 8 instances)
 
-1. **BookingConfirmedNotification** (rewritten) — sent to customer when booking is auto-confirmed or manually confirmed by admin
-2. **BookingReceivedNotification** (new) — sent to business admins + assigned collaborator on new booking creation or confirmation; `$context` param ('new' | 'confirmed') adapts subject/content (D-057)
-3. **BookingCancelledNotification** (new) — sent on cancellation; `$cancelledBy` param ('customer' | 'business') determines recipients and content
-4. **BookingReminderNotification** (new) — sent to customer by scheduled command based on `Business.reminder_hours`
+- `booking.tsx`: confirmation_mode, assignment_strategy, payment_mode
+- `embed.tsx`: service pre-filter
+- `step-3.tsx`: slot_interval_minutes
+- `time-window-row.tsx`: open_time, close_time (96 time options each)
 
-All use `implements ShouldQueue`, Blade markdown templates, business timezone for date formatting.
+Uses `name` prop on `Select` for native form submission within Inertia `<Form>`, `value` + `onValueChange` for controlled selects.
 
-### Blade Email Templates (4 files)
+### Inertia v3 Improvements
 
-- `resources/views/mail/booking-confirmed.blade.php`
-- `resources/views/mail/booking-received.blade.php`
-- `resources/views/mail/booking-cancelled.blade.php`
-- `resources/views/mail/booking-reminder.blade.php`
+- **Partial reloads**: Added `only: ['bookings']` and `only: ['customers']` to filter/search router calls in bookings and customers pages
+- **View Transitions**: Enabled globally via `defaults.visitOptions` in `createInertiaApp`
 
-Published Laravel mail views in `resources/views/vendor/mail/` — customized header to remove Laravel-specific logo check.
+### N+1 Query Fixes (1 file)
 
-### Scheduled Commands (2)
+`CollaboratorController.php`:
+- `index()`: Replaced per-collaborator `->services()->count()` with `withCount`
+- `show()`: Replaced per-service `->collaborators()->exists()` with constrained eager loading
 
-- `bookings:send-reminders` — every 5 minutes, `withoutOverlapping()`. Finds confirmed bookings starting within ±5 min of each configured reminder interval. Uses `booking_reminders` table for deduplication
-- `bookings:auto-complete` — every 15 minutes. Transitions confirmed bookings past `ends_at` to `completed` status
+### TypeScript Response Interfaces
 
-### Controller Wiring (4 controllers modified)
-
-- **PublicBookingController**: sends `BookingConfirmedNotification` to customer only when auto-confirmed (not for pending); always sends `BookingReceivedNotification` to staff
-- **Dashboard\BookingController**: on status change to confirmed → notifies customer + staff; on cancel → notifies customer. Manual booking creation → notifies customer + staff (excludes creating admin)
-- **BookingManagementController**: customer cancel via token → notifies admins + collaborator
-- **Customer\BookingController**: customer cancel via auth → notifies admins + collaborator
-
-### Queue Config
-
-- `config/queue.php`: set `after_commit => true` for database connection — notifications only dispatch after DB commit
+Added 7 response shape interfaces to `types/index.d.ts` (`SlugCheckResponse`, `FileUploadResponse`, `AvatarUploadResponse`, `AvailableDatesResponse`, `AvailableSlotsResponse`, `BookingStoreResponse`, `CustomerSearchResponse`) and updated inline `as` casts in 7 component files.
 
 ### Documentation
 
-- `docs/DEPLOYMENT.md`: server requirements, scheduler cron, queue worker + Supervisor config, required `.env` keys, Hostpoint SMTP template
-- `.env.example`: added commented Hostpoint SMTP config block
-
-### Tests (6 files, 22 tests)
-
-- `BookingConfirmedNotificationTest` — auto-confirm dispatch, pending skips, dashboard confirm, subject check (4 tests)
-- `BookingReceivedNotificationTest` — staff dispatch, pending dispatch, manual booking, context-aware subject (4 tests)
-- `BookingCancelledNotificationTest` — token cancel, dashboard cancel, auth cancel, subjects (5 tests)
-- `BookingReminderNotificationTest` — subject check (1 test)
-- `SendBookingRemindersTest` — time window, dedup, per-business config, cancelled skip (4 tests)
-- `AutoCompleteBookingsTest` — confirmed past, pending skip, future skip, cancelled skip (4 tests)
+- `resources/js/components/ui/CLAUDE.md` — COSS UI component usage rules
+- `resources/js/CLAUDE.md` — Inertia v3 + React frontend rules
+- `docs/FUTURE-UX-IDEAS.md` — deferred UX improvement ideas (polling, prefetching, scroll preservation)
 
 ---
 
@@ -78,14 +62,12 @@ Published Laravel mail views in `resources/views/vendor/mail/` — customized he
 
 ---
 
-## Key Conventions Established
+## Decisions Made
 
-- **Notification pattern**: Customer notifications use `Notification::route('mail', $email)->notify(...)` (anonymous notifiable). Staff notifications use `Notification::send($userCollection, ...)` since User is Notifiable
-- **Staff notify helper**: Controllers that notify staff collect admins + collaborator, unique by ID, optionally exclude the acting user
-- **Blade markdown templates** in `resources/views/mail/` — all use `<x-mail::message>`, `<x-mail::panel>`, `<x-mail::button>` components
-- **Queued notifications**: all 4 booking notifications implement `ShouldQueue`. Queue `after_commit` is true — notifications dispatch only after DB transaction commits
-- **Reminder deduplication**: `booking_reminders` table with unique constraint prevents duplicate sends (D-056)
-- **Scheduled commands**: registered in `routes/console.php` using `Schedule::command()` facade
+- **NumberField for Price**: Intentionally skipped — stepper +/- buttons are wrong UX for freeform currency input. `<Input type="number">` stays.
+- **useCopyToClipboard**: Intentionally skipped — the hook doesn't exist in the COSS UI install. Current 5-line implementation in `embed-snippet.tsx` works fine.
+- **InputError component**: Kept for 3 files that use it for error summary blocks (not per-field). Added doc comment noting it's only for summaries.
+- **View Transitions**: Enabled globally via `defaults.visitOptions` — graceful no-op in unsupported browsers.
 
 ---
 
@@ -93,24 +75,18 @@ Published Laravel mail views in `resources/views/vendor/mail/` — customized he
 
 Session 11 implements billing (Laravel Cashier).
 
-- **Queue worker** must be running for notifications to be processed — `php artisan queue:work` or Supervisor in production
-- **Scheduler** must be running for reminders and auto-complete — `php artisan schedule:run` via cron
-- **Business model** already has the `reminder_hours` JSON field — billing may need to gate reminder features behind paid plans
-- **`after_commit` is true** on the database queue — any new queued jobs in billing will also wait for DB commit before dispatching
-- **Existing notification classes** follow a consistent pattern — if billing needs email notifications (e.g., payment failed), follow the same `implements ShouldQueue` + Blade markdown template pattern
-
----
-
-## Decisions Recorded
-
-- **D-056**: Reminder deduplication via `booking_reminders` table
-- **D-057**: Merged BookingReceivedNotification for staff (covers "new booking" and "booking confirmed to collaborator")
+- **CLAUDE.md files**: Two new CLAUDE.md files document COSS UI and Inertia v3 patterns. Follow these when building billing UI.
+- **Field pattern**: All new forms must use `Field` / `FieldLabel` / `FieldError` / `FieldDescription` from `@/components/ui/field`. Use `match` prop on `FieldError` for server-side validation errors.
+- **Select pattern**: Use COSS UI `Select` with `name` prop for form selects — never native `<select>`.
+- **Forms**: Prefer Inertia `<Form>` for standard submissions. `useForm` only when programmatic control is needed.
+- **HTTP requests**: Use `useHttp` for all standalone AJAX — never `fetch()`.
+- **Partial reloads**: Use `only: [...]` for filter/sort/pagination interactions.
+- **Response types**: Define interfaces in `types/index.d.ts` for `useHttp` response shapes.
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **Bundle size**: unchanged from Session 9 (~811 KB JS) — no frontend changes in this session
-- **is_active filtering in public booking**: still deferred from Session 9 — `SlotGeneratorService` and `PublicBookingController::collaborators()` should filter out deactivated collaborators
-- **Onboarding fetch() migration**: still deferred — onboarding step-1 uses raw `fetch()` instead of `useHttp`
-- **Email template translations**: all templates use `__()` but only English keys exist. IT/DE/FR translations are pre-launch work per D-008
+- **is_active filtering in public booking**: Still deferred from Session 9 — `SlotGeneratorService` and `PublicBookingController::collaborators()` should filter out deactivated collaborators
+- **Onboarding fetch() migration**: Resolved — onboarding step-1 was already using `useHttp`, not `fetch()`
+- **Email template translations**: All templates use `__()` but only English keys exist. IT/DE/FR translations are pre-launch work per D-008

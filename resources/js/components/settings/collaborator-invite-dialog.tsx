@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { InputError } from '@/components/input-error';
+import { Field, FieldLabel, FieldError } from '@/components/ui/field';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import {
@@ -51,15 +51,15 @@ export function CollaboratorInviteDialog({ open, onOpenChange, services }: Colla
                             </DialogHeader>
                             <DialogPanel>
                                 <div className="flex flex-col gap-4">
-                                    <div className="flex flex-col gap-2">
-                                        <Label htmlFor="invite-email">{t('Email')}</Label>
-                                        <Input id="invite-email" name="email" type="email" required />
-                                        <InputError message={errors.email} />
-                                    </div>
+                                    <Field>
+                                        <FieldLabel>{t('Email')}</FieldLabel>
+                                        <Input name="email" type="email" required />
+                                        {errors.email && <FieldError match>{errors.email}</FieldError>}
+                                    </Field>
 
                                     {services.length > 0 && (
-                                        <div className="flex flex-col gap-2">
-                                            <Label>{t('Assign to services (optional)')}</Label>
+                                        <Field>
+                                            <FieldLabel>{t('Assign to services (optional)')}</FieldLabel>
                                             <div className="flex flex-col gap-2">
                                                 {services.map((s) => (
                                                     <Label key={s.id}>
@@ -74,7 +74,7 @@ export function CollaboratorInviteDialog({ open, onOpenChange, services }: Colla
                                             {selectedServices.map((id) => (
                                                 <input key={id} type="hidden" name="service_ids[]" value={id} />
                                             ))}
-                                        </div>
+                                        </Field>
                                     )}
                                 </div>
                             </DialogPanel>

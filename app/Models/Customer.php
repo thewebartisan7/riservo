@@ -9,6 +9,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/**
+ * @property-read int $bookings_count
+ * @property-read string|null $bookings_max_starts_at
+ */
 #[Fillable(['name', 'email', 'phone', 'user_id'])]
 class Customer extends Model
 {

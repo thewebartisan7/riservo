@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Dashboard\Settings\StoreSettingsServiceRequest;
 use App\Http\Requests\Dashboard\Settings\UpdateSettingsServiceRequest;
 use App\Models\Service;
+use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -31,7 +32,7 @@ class ServiceController extends Controller
                 'price' => $s->price,
                 'is_active' => $s->is_active,
                 'bookings_count' => $s->bookings_count,
-                'collaborators' => $s->collaborators->map(fn ($c) => [
+                'collaborators' => $s->collaborators->map(fn (User $c) => [
                     'id' => $c->id,
                     'name' => $c->name,
                 ]),
