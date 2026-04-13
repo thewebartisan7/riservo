@@ -8,12 +8,13 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-class BookingConfirmedNotification extends Notification implements ShouldQueue
+class BookingReminderNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
     public function __construct(
         public Booking $booking,
+        public int $hoursBefore,
     ) {
         $this->afterCommit();
     }
@@ -32,10 +33,10 @@ class BookingConfirmedNotification extends Notification implements ShouldQueue
         $startsAt = $this->booking->starts_at->setTimezone($business->timezone);
 
         return (new MailMessage)
-            ->subject(__('Booking Confirmed — :business', [
+            ->subject(__('Reminder: Your appointment at :business', [
                 'business' => $business->name,
             ]))
-            ->markdown('mail.booking-confirmed', [
+            ->markdown('mail.booking-reminder', [
                 'businessName' => $business->name,
                 'serviceName' => $this->booking->service->name,
                 'collaboratorName' => $this->booking->collaborator->name,

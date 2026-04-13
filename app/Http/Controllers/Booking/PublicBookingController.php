@@ -13,6 +13,7 @@ use App\Models\Customer;
 use App\Models\Service;
 use App\Models\User;
 use App\Notifications\BookingConfirmedNotification;
+use App\Notifications\BookingReceivedNotification;
 use App\Services\SlotGeneratorService;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
@@ -290,15 +291,33 @@ class PublicBookingController extends Controller
             'cancellation_token' => $cancellationToken,
         ]);
 
-        // Send placeholder confirmation email (Session 10 replaces)
-        Notification::route('mail', $customer->email)
-            ->notify(new BookingConfirmedNotification($booking));
+        // Send confirmation to customer only if auto-confirmed
+        if ($status === BookingStatus::Confirmed) {
+            Notification::route('mail', $customer->email)
+                ->notify(new BookingConfirmedNotification($booking));
+        }
+
+        // Notify business staff (admins + collaborator)
+        $this->notifyStaff($booking);
 
         return response()->json([
             'token' => $cancellationToken,
             'redirect_url' => route('bookings.show', $cancellationToken),
             'status' => $status->value,
         ], 201);
+    }
+
+    private function notifyStaff(Booking $booking): void
+    {
+        $booking->loadMissing(['business.admins', 'collaborator']);
+
+        $notification = new BookingReceivedNotification($booking, 'new');
+
+        $staffUsers = $booking->business->admins
+            ->merge([$booking->collaborator])
+            ->unique('id');
+
+        Notification::send($staffUsers, $notification);
     }
 
     private function resolveBusiness(string $slug): Business

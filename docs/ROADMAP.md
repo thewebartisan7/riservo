@@ -194,19 +194,19 @@ Full settings area for managing the business configuration.
 
 Transactional email system for all booking lifecycle events.
 
-- [ ] Configure Laravel Mail with Hostpoint SMTP for MVP (credentials via .env — provider is swappable with no code changes)
-- [ ] Email templates in React Email or Blade (consistent branding):
+- [x] Configure Laravel Mail with Hostpoint SMTP for MVP (credentials via .env — provider is swappable with no code changes)
+- [x] Email templates in React Email or Blade (consistent branding):
   - Booking confirmed (to customer)
   - Booking confirmed (to collaborator)
   - New booking received (to business/collaborator)
   - Booking cancelled by customer (to business + collaborator)
   - Booking cancelled by business (to customer)
   - Booking reminder (to customer — 24h before and/or 1h before, configurable)
-- [ ] Reminder scheduling via Laravel queues + scheduled jobs
-- [ ] Queue setup for async email delivery
-- [ ] Scheduled job: automatically transition confirmed bookings to `completed` status after their end time has passed
-- [ ] Test all email flows end-to-end using seeded data
-- [ ] Document server requirements in `docs/DEPLOYMENT.md`:
+- [x] Reminder scheduling via Laravel queues + scheduled jobs
+- [x] Queue setup for async email delivery
+- [x] Scheduled job: automatically transition confirmed bookings to `completed` status after their end time has passed
+- [x] Test all email flows end-to-end using seeded data
+- [x] Document server requirements in `docs/DEPLOYMENT.md`:
   scheduler setup (cron entry for `schedule:run`), queue worker
   setup and recommended supervisor config, required `.env` keys
   for mail, queue driver, and app URL

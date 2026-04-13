@@ -8,12 +8,13 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-class BookingConfirmedNotification extends Notification implements ShouldQueue
+class BookingReceivedNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
     public function __construct(
         public Booking $booking,
+        public string $context = 'new',
     ) {
         $this->afterCommit();
     }
@@ -26,22 +27,34 @@ class BookingConfirmedNotification extends Notification implements ShouldQueue
 
     public function toMail(object $notifiable): MailMessage
     {
-        $this->booking->loadMissing(['service', 'collaborator', 'business']);
+        $this->booking->loadMissing(['service', 'collaborator', 'business', 'customer']);
 
         $business = $this->booking->business;
         $startsAt = $this->booking->starts_at->setTimezone($business->timezone);
 
+        $subject = $this->context === 'confirmed'
+            ? __('Booking Confirmed — :service on :date', [
+                'service' => $this->booking->service->name,
+                'date' => $startsAt->format('d.m.Y'),
+            ])
+            : __('New Booking — :service on :date', [
+                'service' => $this->booking->service->name,
+                'date' => $startsAt->format('d.m.Y'),
+            ]);
+
         return (new MailMessage)
-            ->subject(__('Booking Confirmed — :business', [
-                'business' => $business->name,
-            ]))
-            ->markdown('mail.booking-confirmed', [
+            ->subject($subject)
+            ->markdown('mail.booking-received', [
+                'context' => $this->context,
                 'businessName' => $business->name,
+                'customerName' => $this->booking->customer->name,
                 'serviceName' => $this->booking->service->name,
                 'collaboratorName' => $this->booking->collaborator->name,
                 'date' => $startsAt->format('d.m.Y'),
                 'time' => $startsAt->format('H:i'),
-                'viewUrl' => route('bookings.show', $this->booking->cancellation_token),
+                'status' => $this->booking->status->label(),
+                'notes' => $this->booking->notes,
+                'dashboardUrl' => route('dashboard.bookings'),
             ]);
     }
 }

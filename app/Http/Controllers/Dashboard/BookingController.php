@@ -11,7 +11,9 @@ use App\Models\Booking;
 use App\Models\Customer;
 use App\Models\Service;
 use App\Models\User;
+use App\Notifications\BookingCancelledNotification;
 use App\Notifications\BookingConfirmedNotification;
+use App\Notifications\BookingReceivedNotification;
 use App\Services\SlotGeneratorService;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
@@ -180,6 +182,20 @@ class BookingController extends Controller
 
         $booking->update(['status' => $newStatus]);
 
+        $booking->loadMissing(['customer', 'business.admins', 'collaborator']);
+
+        if ($newStatus === BookingStatus::Confirmed) {
+            Notification::route('mail', $booking->customer->email)
+                ->notify(new BookingConfirmedNotification($booking));
+
+            $this->notifyStaff($booking, new BookingReceivedNotification($booking, 'confirmed'), $user->id);
+        }
+
+        if ($newStatus === BookingStatus::Cancelled) {
+            Notification::route('mail', $booking->customer->email)
+                ->notify(new BookingCancelledNotification($booking, 'business'));
+        }
+
         return back()->with('success', __('Booking status updated to :status.', [
             'status' => $newStatus->label(),
         ]));
@@ -295,9 +311,10 @@ class BookingController extends Controller
             'cancellation_token' => $cancellationToken,
         ]);
 
-        // Send placeholder confirmation email (Session 10 replaces)
         Notification::route('mail', $customer->email)
             ->notify(new BookingConfirmedNotification($booking));
+
+        $this->notifyStaff($booking, new BookingReceivedNotification($booking, 'new'), $user->id);
 
         return redirect()->route('dashboard.bookings')
             ->with('success', __('Booking created successfully.'));
@@ -382,5 +399,17 @@ class BookingController extends Controller
         $slots = array_map(fn (CarbonImmutable $slot) => $slot->format('H:i'), $slotTimes);
 
         return response()->json(['slots' => $slots, 'timezone' => $timezone]);
+    }
+
+    private function notifyStaff(Booking $booking, BookingReceivedNotification $notification, ?int $excludeUserId = null): void
+    {
+        $booking->loadMissing(['business.admins', 'collaborator']);
+
+        $staffUsers = $booking->business->admins
+            ->merge([$booking->collaborator])
+            ->unique('id')
+            ->when($excludeUserId, fn ($c) => $c->where('id', '!=', $excludeUserId));
+
+        Notification::send($staffUsers, $notification);
     }
 }

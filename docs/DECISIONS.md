@@ -528,3 +528,21 @@ Each decision has a stable ID that can be referenced in code comments (e.g., `//
 - **Context**: Settings pages need consistent left-side navigation across 7 sections without repeating the nav markup in each page.
 - **Decision**: `settings-layout.tsx` wraps `authenticated-layout.tsx` and renders a sub-navigation sidebar specific to settings. Each settings page uses `settings-layout` as its layout.
 - **Consequences**: Two levels of layout nesting: `authenticated-layout` (sidebar + header) > `settings-layout` (sub-nav + content area). This follows the existing layout composition pattern.
+
+---
+
+### D-056 — Reminder deduplication via booking_reminders table
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: The `bookings:send-reminders` command runs every 5 minutes. It needs to avoid sending duplicate reminders for the same booking and interval. Options considered: JSON column on bookings, separate table, or relying on narrow time windows.
+- **Decision**: A dedicated `booking_reminders` table with columns `booking_id`, `hours_before`, `sent_at` and a unique constraint on `(booking_id, hours_before)`. The command inserts a record before dispatching the notification; the unique constraint prevents races.
+- **Consequences**: Clean audit trail of sent reminders. DB-level deduplication is race-safe. Queryable for debugging. Does not bloat the bookings table.
+
+---
+
+### D-057 — Merged BookingReceivedNotification for staff
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: The roadmap listed "Booking confirmed (to collaborator)" and "New booking received (to business/collaborator)" as separate templates. These are near-identical in structure — both notify staff about a booking with its details.
+- **Decision**: A single `BookingReceivedNotification` class with a `$context` parameter ('new' | 'confirmed') adapts the subject line and heading. Sent to business admins + assigned collaborator on booking creation (context='new') and on admin confirmation of a pending booking (context='confirmed').
+- **Consequences**: One fewer notification class. Template reuse. The distinction between "new" and "confirmed" is still clear to the recipient via subject/heading.

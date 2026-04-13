@@ -8,12 +8,13 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-class BookingConfirmedNotification extends Notification implements ShouldQueue
+class BookingCancelledNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
     public function __construct(
         public Booking $booking,
+        public string $cancelledBy,
     ) {
         $this->afterCommit();
     }
@@ -26,22 +27,30 @@ class BookingConfirmedNotification extends Notification implements ShouldQueue
 
     public function toMail(object $notifiable): MailMessage
     {
-        $this->booking->loadMissing(['service', 'collaborator', 'business']);
+        $this->booking->loadMissing(['service', 'collaborator', 'business', 'customer']);
 
         $business = $this->booking->business;
         $startsAt = $this->booking->starts_at->setTimezone($business->timezone);
 
-        return (new MailMessage)
-            ->subject(__('Booking Confirmed — :business', [
+        $subject = $this->cancelledBy === 'customer'
+            ? __('Booking Cancelled — :service on :date', [
+                'service' => $this->booking->service->name,
+                'date' => $startsAt->format('d.m.Y'),
+            ])
+            : __('Your booking has been cancelled — :business', [
                 'business' => $business->name,
-            ]))
-            ->markdown('mail.booking-confirmed', [
+            ]);
+
+        return (new MailMessage)
+            ->subject($subject)
+            ->markdown('mail.booking-cancelled', [
+                'cancelledBy' => $this->cancelledBy,
                 'businessName' => $business->name,
+                'customerName' => $this->booking->customer->name,
                 'serviceName' => $this->booking->service->name,
                 'collaboratorName' => $this->booking->collaborator->name,
                 'date' => $startsAt->format('d.m.Y'),
                 'time' => $startsAt->format('H:i'),
-                'viewUrl' => route('bookings.show', $this->booking->cancellation_token),
             ]);
     }
 }

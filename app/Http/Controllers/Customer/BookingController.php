@@ -6,8 +6,10 @@ use App\Enums\BookingStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\Customer;
+use App\Notifications\BookingCancelledNotification;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Notification;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -58,6 +60,15 @@ class BookingController extends Controller
         }
 
         $booking->update(['status' => BookingStatus::Cancelled]);
+
+        $booking->loadMissing(['business.admins', 'collaborator']);
+
+        $notification = new BookingCancelledNotification($booking, 'customer');
+        $staffUsers = $booking->business->admins
+            ->merge([$booking->collaborator])
+            ->unique('id');
+
+        Notification::send($staffUsers, $notification);
 
         return back()->with('success', __('Booking cancelled successfully.'));
     }

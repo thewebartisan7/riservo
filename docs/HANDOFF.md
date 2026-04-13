@@ -1,6 +1,6 @@
 # Handoff
 
-**Session**: 9 — Business Settings  
+**Session**: 10 — Notifications (Email)  
 **Date**: 2026-04-13  
 **Status**: Complete
 
@@ -8,128 +8,109 @@
 
 ## What Was Built
 
-Session 9 implemented the full business settings area under `/dashboard/settings/*` — admin-only pages for managing all business configuration after onboarding.
+Session 10 implemented the complete transactional email notification system for all booking lifecycle events, two scheduled commands, and production deployment documentation.
 
 ### Migration
 
-- Added `is_active` boolean (default true) to `business_user` pivot table (D-053)
+- `booking_reminders` table: `booking_id` (FK), `hours_before`, `sent_at`, unique constraint on `(booking_id, hours_before)` — see D-056
 
-### Model Updates
+### Model
 
-- `BusinessUser`: added `is_active` to casts
-- `Business::users()`: updated `withPivot` to include `is_active`
-- `User::businesses()`: updated `withPivot` to include `is_active`
+- `BookingReminder`: belongs to Booking, used for reminder deduplication
+- `Booking`: added `reminders()` HasMany relationship
 
-### Backend (7 controllers, 11 form requests)
+### Notification Classes (4 total, all queued)
 
-**Controllers in `App\Http\Controllers\Dashboard\Settings\`:**
+1. **BookingConfirmedNotification** (rewritten) — sent to customer when booking is auto-confirmed or manually confirmed by admin
+2. **BookingReceivedNotification** (new) — sent to business admins + assigned collaborator on new booking creation or confirmation; `$context` param ('new' | 'confirmed') adapts subject/content (D-057)
+3. **BookingCancelledNotification** (new) — sent on cancellation; `$cancelledBy` param ('customer' | 'business') determines recipients and content
+4. **BookingReminderNotification** (new) — sent to customer by scheduled command based on `Business.reminder_hours`
 
-1. **ProfileController** — edit profile, upload logo, slug check (reuses SlugService)
-2. **BookingSettingsController** — confirmation mode, collaborator choice, cancellation window, payment mode, assignment strategy, reminder hours
-3. **WorkingHoursController** — weekly schedule editor (same pattern as onboarding)
-4. **BusinessExceptionController** — CRUD for business-level availability exceptions
-5. **ServiceController** — CRUD with collaborator assignment, auto-slug generation
-6. **CollaboratorController** — list, invite, schedule editing, exception CRUD, avatar upload, toggle active, invitation management (resend/cancel)
-7. **EmbedController** — embed settings page with snippet generation
+All use `implements ShouldQueue`, Blade markdown templates, business timezone for date formatting.
 
-**Form Requests in `App\Http\Requests\Dashboard\Settings\`:**
-- `UpdateProfileRequest`, `UpdateBookingSettingsRequest`, `UpdateWorkingHoursRequest`
-- `StoreBusinessExceptionRequest`, `UpdateBusinessExceptionRequest`
-- `StoreSettingsServiceRequest`, `UpdateSettingsServiceRequest`
-- `StoreCollaboratorInvitationRequest`, `UpdateCollaboratorScheduleRequest`
-- `StoreCollaboratorExceptionRequest`, `UpdateCollaboratorExceptionRequest`
+### Blade Email Templates (4 files)
 
-### Frontend (10 pages, 5 components, 1 layout)
+- `resources/views/mail/booking-confirmed.blade.php`
+- `resources/views/mail/booking-received.blade.php`
+- `resources/views/mail/booking-cancelled.blade.php`
+- `resources/views/mail/booking-reminder.blade.php`
 
-**Layout:**
-- `settings-layout.tsx` — wraps `authenticated-layout`, adds settings sub-navigation
+Published Laravel mail views in `resources/views/vendor/mail/` — customized header to remove Laravel-specific logo check.
 
-**Components in `components/settings/`:**
-- `settings-nav.tsx` — left sidebar navigation for 7 settings sections
-- `exception-dialog.tsx` — shared create/edit dialog for availability exceptions (business + collaborator)
-- `service-form.tsx` — shared form for service create/edit with collaborator assignment
-- `collaborator-invite-dialog.tsx` — invite form with service pre-assignment
-- `embed-snippet.tsx` — code snippet with copy-to-clipboard
+### Scheduled Commands (2)
 
-**Pages:**
-- `dashboard/settings/profile.tsx` — business profile editing
-- `dashboard/settings/booking.tsx` — booking configuration
-- `dashboard/settings/hours.tsx` — weekly schedule editor
-- `dashboard/settings/exceptions.tsx` — business exception list + dialog
-- `dashboard/settings/services/index.tsx` — service list
-- `dashboard/settings/services/create.tsx` — new service form
-- `dashboard/settings/services/edit.tsx` — edit service form
-- `dashboard/settings/collaborators/index.tsx` — collaborator list + pending invitations
-- `dashboard/settings/collaborators/show.tsx` — individual collaborator: schedule, exceptions, avatar
-- `dashboard/settings/embed.tsx` — embed snippets + preview iframe
+- `bookings:send-reminders` — every 5 minutes, `withoutOverlapping()`. Finds confirmed bookings starting within ±5 min of each configured reminder interval. Uses `booking_reminders` table for deduplication
+- `bookings:auto-complete` — every 15 minutes. Transitions confirmed bookings past `ends_at` to `completed` status
 
-### Embed Implementation
+### Controller Wiring (4 controllers modified)
 
-- `PublicBookingController::show()` now passes `embed` boolean from `?embed=1` query param
-- `booking-layout.tsx` conditionally strips header/footer in embed mode
-- `public/embed.js` — vanilla JS popup script (not Vite-bundled) that opens booking in a modal overlay
+- **PublicBookingController**: sends `BookingConfirmedNotification` to customer only when auto-confirmed (not for pending); always sends `BookingReceivedNotification` to staff
+- **Dashboard\BookingController**: on status change to confirmed → notifies customer + staff; on cancel → notifies customer. Manual booking creation → notifies customer + staff (excludes creating admin)
+- **BookingManagementController**: customer cancel via token → notifies admins + collaborator
+- **Customer\BookingController**: customer cancel via auth → notifies admins + collaborator
 
-### Routes (35+ new)
+### Queue Config
 
-All admin-only under `dashboard/settings` prefix. Includes CRUD routes for profile, booking settings, working hours, exceptions, services, collaborators, and embed.
+- `config/queue.php`: set `after_commit => true` for database connection — notifications only dispatch after DB commit
 
-### Tests (8 files, 52 tests)
+### Documentation
 
-- `ProfileTest` — edit, update, slug validation, logo upload, auth (7 tests)
-- `BookingSettingsTest` — edit, update, enum validation, reminders (5 tests)
-- `WorkingHoursTest` — edit, update, validation (4 tests)
-- `BusinessExceptionTest` — CRUD, validation, scoping (8 tests)
-- `ServiceTest` — CRUD, slug uniqueness, collaborator sync, scoping (9 tests)
-- `CollaboratorTest` — list, invite, schedule, exceptions, avatar, toggle, scoping (13 tests)
-- `EmbedTest` — page render, embed param (4 tests)
-- `SettingsAuthorizationTest` — role-based access (3 tests covering all routes)
+- `docs/DEPLOYMENT.md`: server requirements, scheduler cron, queue worker + Supervisor config, required `.env` keys, Hostpoint SMTP template
+- `.env.example`: added commented Hostpoint SMTP config block
+
+### Tests (6 files, 22 tests)
+
+- `BookingConfirmedNotificationTest` — auto-confirm dispatch, pending skips, dashboard confirm, subject check (4 tests)
+- `BookingReceivedNotificationTest` — staff dispatch, pending dispatch, manual booking, context-aware subject (4 tests)
+- `BookingCancelledNotificationTest` — token cancel, dashboard cancel, auth cancel, subjects (5 tests)
+- `BookingReminderNotificationTest` — subject check (1 test)
+- `SendBookingRemindersTest` — time window, dedup, per-business config, cancelled skip (4 tests)
+- `AutoCompleteBookingsTest` — confirmed past, pending skip, future skip, cancelled skip (4 tests)
 
 ---
 
 ## Current Project State
 
-- **Backend**: 21 migrations, 11 models, 4 services, 1 DTO, 23 controllers, 22 form requests, 3 notifications, 3 custom middleware
+- **Backend**: 22 migrations, 12 models, 4 services, 1 DTO, 23 controllers, 22 form requests, 5 notifications, 3 custom middleware, 2 scheduled commands
 - **Frontend**: 34 pages, 5 layouts, 55 COSS UI components, 4 onboarding components, 6 booking components, 3 dashboard components, 5 settings components
-- **Tests**: 346 passing (1238 assertions)
-- **Build**: `npm run build` succeeds (~811 KB JS), `npx tsc --noEmit` clean, `vendor/bin/pint` clean
+- **Tests**: 369 passing (1280 assertions)
+- **Build**: `npm run build` succeeds, `vendor/bin/pint` clean
 
 ---
 
 ## Key Conventions Established
 
-- **Settings controllers** in `App\Http\Controllers\Dashboard\Settings\` namespace — one per section
-- **Settings layout** (`settings-layout.tsx`) wraps `authenticated-layout` and adds sub-nav — all settings pages use this
-- **Settings routes** are admin-only within the existing dashboard middleware group, prefixed with `dashboard/settings`
-- **Collaborator deactivation** uses `is_active` boolean on pivot (D-053) — reversible, preserves data
-- **Exception dialog** is shared between business-level and collaborator-level exceptions — same component, different URLs
-- **Service form** is shared between create and edit pages — receives action prop
-- **Embed mode** via `?embed=1` — strips booking layout chrome; `public/embed.js` provides popup overlay for third-party sites
-- **Schedule editing** reuses `WeekScheduleEditor` component from onboarding — same component, different page context
+- **Notification pattern**: Customer notifications use `Notification::route('mail', $email)->notify(...)` (anonymous notifiable). Staff notifications use `Notification::send($userCollection, ...)` since User is Notifiable
+- **Staff notify helper**: Controllers that notify staff collect admins + collaborator, unique by ID, optionally exclude the acting user
+- **Blade markdown templates** in `resources/views/mail/` — all use `<x-mail::message>`, `<x-mail::panel>`, `<x-mail::button>` components
+- **Queued notifications**: all 4 booking notifications implement `ShouldQueue`. Queue `after_commit` is true — notifications dispatch only after DB transaction commits
+- **Reminder deduplication**: `booking_reminders` table with unique constraint prevents duplicate sends (D-056)
+- **Scheduled commands**: registered in `routes/console.php` using `Schedule::command()` facade
 
 ---
 
-## What Session 10 Needs to Know
+## What Session 11 Needs to Know
 
-Session 10 implements notifications (email).
+Session 11 implements billing (Laravel Cashier).
 
-- **Reminder hours setting** is already configurable in booking settings (`reminder_hours` JSON array on Business, D-019). Session 10 just needs to read this field for the scheduled reminder job
-- **Booking confirmation email** already exists as a placeholder from Session 7 — Session 10 replaces with styled templates
-- **Notification classes** exist: `BookingConfirmedNotification`, `InvitationNotification` — new notification classes for other events follow the same pattern
-- **`is_active` on pivot** (D-053): the scheduled job for auto-completing bookings should not be affected by collaborator active status — completed/no-show transitions apply to existing bookings regardless
+- **Queue worker** must be running for notifications to be processed — `php artisan queue:work` or Supervisor in production
+- **Scheduler** must be running for reminders and auto-complete — `php artisan schedule:run` via cron
+- **Business model** already has the `reminder_hours` JSON field — billing may need to gate reminder features behind paid plans
+- **`after_commit` is true** on the database queue — any new queued jobs in billing will also wait for DB commit before dispatching
+- **Existing notification classes** follow a consistent pattern — if billing needs email notifications (e.g., payment failed), follow the same `implements ShouldQueue` + Blade markdown template pattern
 
 ---
 
 ## Decisions Recorded
 
-- **D-052**: Settings controllers under Dashboard\Settings namespace
-- **D-053**: Collaborator is_active on pivot (not soft delete)
-- **D-054**: Embed mode via ?embed=1 query parameter
-- **D-055**: Settings sub-navigation via nested layout
+- **D-056**: Reminder deduplication via `booking_reminders` table
+- **D-057**: Merged BookingReceivedNotification for staff (covers "new booking" and "booking confirmed to collaborator")
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **Bundle size**: Vite build produces ~811 KB JS (up from ~675 KB). Code splitting should be considered before adding more pages
-- **is_active filtering in public booking**: The `SlotGeneratorService` and `PublicBookingController::collaborators()` should filter out deactivated collaborators (`is_active = false` on pivot). This was noted in D-053 but not implemented in Session 9 to avoid modifying scheduling engine code outside of scope. Should be addressed when next touching the booking flow
-- **Onboarding fetch() migration**: Onboarding step-1 still uses raw `fetch()` for slug check and logo upload. The equivalent settings forms use `useHttp` correctly. Migration deferred
+- **Bundle size**: unchanged from Session 9 (~811 KB JS) — no frontend changes in this session
+- **is_active filtering in public booking**: still deferred from Session 9 — `SlotGeneratorService` and `PublicBookingController::collaborators()` should filter out deactivated collaborators
+- **Onboarding fetch() migration**: still deferred — onboarding step-1 uses raw `fetch()` instead of `useHttp`
+- **Email template translations**: all templates use `__()` but only English keys exist. IT/DE/FR translations are pre-launch work per D-008
