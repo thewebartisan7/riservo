@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Card, CardPanel } from '@/components/ui/card';
 import { useTrans } from '@/hooks/use-trans';
+import { show } from '@/actions/App/Http/Controllers/Booking/BookingManagementController';
 import type { PublicService } from '@/types';
 
 interface BookingConfirmationProps {
@@ -65,7 +66,7 @@ export default function BookingConfirmation({
 
             <div className="flex w-full flex-col gap-2">
                 <a
-                    href={`/bookings/${token}`}
+                    href={show.url(token)}
                     className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
                 >
                     {t('View booking details')}

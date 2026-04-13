@@ -1,4 +1,6 @@
 import { Head, Link, usePage } from '@inertiajs/react';
+import { dashboard } from '@/routes/index';
+import { destroy } from '@/actions/App/Http/Controllers/Auth/LoginController';
 import type { PropsWithChildren } from 'react';
 import type { PageProps } from '@/types';
 import {
@@ -58,7 +60,7 @@ export default function AuthenticatedLayout({
                                 <SidebarMenu>
                                     <SidebarMenuItem>
                                         <SidebarMenuButton
-                                            render={<a href="/dashboard" />}
+                                            render={<a href={dashboard.url()} />}
                                         >
                                             {t('Dashboard')}
                                         </SidebarMenuButton>
@@ -91,7 +93,7 @@ export default function AuthenticatedLayout({
                                     <SidebarMenuButton
                                         render={
                                             <Link
-                                                href="/logout"
+                                                href={destroy()}
                                                 method="post"
                                                 as="button"
                                             />

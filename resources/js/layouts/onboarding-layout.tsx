@@ -1,4 +1,6 @@
 import { Head, Link, router } from '@inertiajs/react';
+import { destroy } from '@/actions/App/Http/Controllers/Auth/LoginController';
+import { show } from '@/actions/App/Http/Controllers/OnboardingController';
 import { Progress } from '@/components/ui/progress';
 import { useTrans } from '@/hooks/use-trans';
 import type { PropsWithChildren } from 'react';
@@ -32,7 +34,7 @@ export default function OnboardingLayout({
                 <header className="flex items-center justify-between border-b bg-background px-6 py-4">
                     <span className="text-xl font-bold">riservo</span>
                     <Link
-                        href="/logout"
+                        href={destroy()}
                         method="post"
                         as="button"
                         className="text-sm text-muted-foreground hover:text-foreground"
@@ -58,7 +60,7 @@ export default function OnboardingLayout({
                                 <button
                                     key={stepNum}
                                     type="button"
-                                    onClick={() => isCompleted && router.visit(`/onboarding/step/${stepNum}`)}
+                                    onClick={() => isCompleted && router.visit(show(stepNum))}
                                     disabled={!isCompleted}
                                     className={`flex-1 rounded-md px-2 py-1.5 text-xs transition-colors ${
                                         isCurrent

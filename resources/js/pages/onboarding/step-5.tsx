@@ -3,6 +3,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } f
 import { Button } from '@/components/ui/button';
 import { useTrans } from '@/hooks/use-trans';
 import { router } from '@inertiajs/react';
+import { store, show } from '@/actions/App/Http/Controllers/OnboardingController';
 import { useState } from 'react';
 import { CheckCircleIcon, ClipboardIcon, PencilIcon } from 'lucide-react';
 
@@ -42,7 +43,7 @@ export default function Step5({ business, logoUrl, hours, service, invitations, 
 
     function launch() {
         setProcessing(true);
-        router.post('/onboarding/step/5', {}, {
+        router.post(store(5), {}, {
             onFinish: () => setProcessing(false),
         });
     }
@@ -151,7 +152,7 @@ export default function Step5({ business, logoUrl, hours, service, invitations, 
                         <Button
                             type="button"
                             variant="outline"
-                            onClick={() => router.visit('/onboarding/step/4')}
+                            onClick={() => router.visit(show(4))}
                         >
                             {t('Back')}
                         </Button>
@@ -177,7 +178,7 @@ function SummarySection({ title, editStep, children }: { title: string; editStep
                     variant="ghost"
                     size="sm"
                     className="h-7 text-xs"
-                    onClick={() => router.visit(`/onboarding/step/${editStep}`)}
+                    onClick={() => router.visit(show(editStep))}
                 >
                     <PencilIcon className="mr-1 h-3 w-3" />
                     {t('Edit')}

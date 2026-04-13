@@ -1,6 +1,8 @@
 import { Head, Link } from '@inertiajs/react';
 import { Button } from '@/components/ui/button';
 import { useTrans } from '@/hooks/use-trans';
+import { create as loginCreate } from '@/actions/App/Http/Controllers/Auth/LoginController';
+import { create as registerCreate } from '@/actions/App/Http/Controllers/Auth/RegisterController';
 
 export default function Welcome() {
     const { t } = useTrans();
@@ -14,10 +16,10 @@ export default function Welcome() {
                     {t('Welcome to :app', { app: 'riservo' })}
                 </p>
                 <div className="flex gap-4">
-                    <Button variant="outline" render={<Link href="/login" />}>
+                    <Button variant="outline" render={<Link href={loginCreate()} />}>
                         {t('Log in')}
                     </Button>
-                    <Button render={<Link href="/register" />}>
+                    <Button render={<Link href={registerCreate()} />}>
                         {t('Register')}
                     </Button>
                 </div>

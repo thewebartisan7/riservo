@@ -2,19 +2,13 @@ import GuestLayout from '@/layouts/guest-layout';
 import { Card, CardHeader, CardTitle, CardPanel, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useTrans } from '@/hooks/use-trans';
-import { useForm, usePage } from '@inertiajs/react';
+import { Form, usePage } from '@inertiajs/react';
+import { cancel } from '@/actions/App/Http/Controllers/Booking/BookingManagementController';
 import type { BookingDetail, PageProps } from '@/types';
-import type { FormEvent } from 'react';
 
 export default function BookingShow() {
     const { t } = useTrans();
     const { booking, flash } = usePage<PageProps & { booking: BookingDetail }>().props;
-    const form = useForm({});
-
-    function cancelBooking(e: FormEvent) {
-        e.preventDefault();
-        form.post(`/bookings/${booking.token}/cancel`);
-    }
 
     const date = new Date(booking.starts_at);
     const endDate = new Date(booking.ends_at);
@@ -80,16 +74,18 @@ export default function BookingShow() {
                 </CardPanel>
                 {booking.can_cancel && (
                     <CardFooter>
-                        <form onSubmit={cancelBooking} className="w-full">
-                            <Button
-                                type="submit"
-                                variant="destructive"
-                                className="w-full"
-                                disabled={form.processing}
-                            >
-                                {t('Cancel booking')}
-                            </Button>
-                        </form>
+                        <Form action={cancel(booking.token)} className="w-full">
+                            {({ processing }) => (
+                                <Button
+                                    type="submit"
+                                    variant="destructive"
+                                    className="w-full"
+                                    disabled={processing}
+                                >
+                                    {t('Cancel booking')}
+                                </Button>
+                            )}
+                        </Form>
                     </CardFooter>
                 )}
             </Card>

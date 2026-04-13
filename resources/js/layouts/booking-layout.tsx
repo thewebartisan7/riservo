@@ -1,4 +1,5 @@
 import { Head } from '@inertiajs/react';
+import { home } from '@/routes/index';
 import type { PropsWithChildren } from 'react';
 import { useTrans } from '@/hooks/use-trans';
 
@@ -33,7 +34,7 @@ export default function BookingLayout({
                             <span className="font-semibold">{businessName}</span>
                         </div>
                         <a
-                            href="/"
+                            href={home.url()}
                             className="text-xs text-muted-foreground hover:text-foreground"
                         >
                             riservo
@@ -44,7 +45,7 @@ export default function BookingLayout({
                     {children}
                 </main>
                 <footer className="border-t bg-background py-4 text-center text-xs text-muted-foreground">
-                    <a href="/" className="hover:text-foreground">
+                    <a href={home.url()} className="hover:text-foreground">
                         {t('Powered by riservo.ch')}
                     </a>
                 </footer>

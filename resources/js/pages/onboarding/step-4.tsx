@@ -4,7 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { InputError } from '@/components/input-error';
 import { useTrans } from '@/hooks/use-trans';
-import { router } from '@inertiajs/react';
+import { router, useHttp } from '@inertiajs/react';
+import { store, show } from '@/actions/App/Http/Controllers/OnboardingController';
 import { type FormEvent, useState } from 'react';
 import { PlusIcon, Trash2Icon } from 'lucide-react';
 
@@ -29,28 +30,6 @@ interface Props {
     pendingInvitations: PendingInvitation[];
 }
 
-function getCsrfToken(): string {
-    return document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '';
-}
-
-function getInertiaVersion(): string {
-    return document.querySelector<HTMLMetaElement>('meta[name="inertia-version"]')?.content ?? '';
-}
-
-function postJson(url: string, data: unknown): Promise<Response> {
-    return fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-TOKEN': getCsrfToken(),
-            'X-Inertia': 'true',
-            'X-Inertia-Version': getInertiaVersion(),
-            Accept: 'text/html, application/xhtml+xml',
-        },
-        body: JSON.stringify(data),
-    });
-}
-
 export default function Step4({ services, pendingInvitations }: Props) {
     const { t } = useTrans();
     const [invitations, setInvitations] = useState<InvitationRow[]>(
@@ -58,8 +37,7 @@ export default function Step4({ services, pendingInvitations }: Props) {
             ? pendingInvitations.map((inv) => ({ email: inv.email, service_ids: inv.service_ids ?? [] }))
             : [{ email: '', service_ids: [] }],
     );
-    const [processing, setProcessing] = useState(false);
-    const [errors, setErrors] = useState<Record<string, string>>({});
+    const http = useHttp({ invitations: [] as InvitationRow[] });
 
     function addRow() {
         setInvitations([...invitations, { email: '', service_ids: [] }]);
@@ -87,31 +65,23 @@ export default function Step4({ services, pendingInvitations }: Props) {
         setInvitations(updated);
     }
 
-    function submitData(data: unknown) {
-        setProcessing(true);
-        setErrors({});
-
-        postJson('/onboarding/step/4', data).then((response) => {
-            if (response.status === 422) {
-                return response.json().then((json) => {
-                    setErrors(json.errors ?? {});
-                    setProcessing(false);
-                });
-            }
-            router.visit('/onboarding/step/5');
-        }).catch(() => {
-            setProcessing(false);
+    function submitData(rows: InvitationRow[]) {
+        http.setData('invitations', rows);
+        http.post(store.url(4), {
+            onSuccess: () => {
+                router.visit(show(5));
+            },
         });
     }
 
     function submit(e: FormEvent) {
         e.preventDefault();
         const validInvitations = invitations.filter((inv) => inv.email.trim() !== '');
-        submitData({ invitations: validInvitations });
+        submitData(validInvitations);
     }
 
     function skip() {
-        submitData({ invitations: [] });
+        submitData([]);
     }
 
     return (
@@ -134,7 +104,7 @@ export default function Step4({ services, pendingInvitations }: Props) {
                                             onChange={(e) => updateEmail(index, e.target.value)}
                                             placeholder={t('collaborator@example.com')}
                                         />
-                                        <InputError message={errors[`invitations.${index}.email`]} />
+                                        <InputError message={(http.errors as Record<string, string>)[`invitations.${index}.email`]} />
                                     </div>
                                     {invitations.length > 1 && (
                                         <Button
@@ -187,7 +157,7 @@ export default function Step4({ services, pendingInvitations }: Props) {
                             <Button
                                 type="button"
                                 variant="outline"
-                                onClick={() => router.visit('/onboarding/step/3')}
+                                onClick={() => router.visit(show(3))}
                             >
                                 {t('Back')}
                             </Button>
@@ -195,12 +165,12 @@ export default function Step4({ services, pendingInvitations }: Props) {
                                 type="button"
                                 variant="ghost"
                                 onClick={skip}
-                                disabled={processing}
+                                disabled={http.processing}
                             >
                                 {t('Skip this step')}
                             </Button>
                         </div>
-                        <Button type="submit" disabled={processing}>
+                        <Button type="submit" disabled={http.processing}>
                             {t('Continue')}
                         </Button>
                     </CardFooter>

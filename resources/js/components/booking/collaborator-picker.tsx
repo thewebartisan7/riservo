@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useHttp } from '@inertiajs/react';
+import { collaborators as collaboratorsAction } from '@/actions/App/Http/Controllers/Booking/PublicBookingController';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useTrans } from '@/hooks/use-trans';
 import type { PublicCollaborator } from '@/types';
@@ -29,7 +30,7 @@ export default function CollaboratorPicker({
     const http = useHttp({});
 
     useEffect(() => {
-        http.get(`/booking/${slug}/collaborators?service_id=${serviceId}`, {
+        http.get(collaboratorsAction.url(slug, { query: { service_id: serviceId } }), {
             onSuccess: (response: unknown) => {
                 const data = response as { collaborators: PublicCollaborator[] };
                 setCollaborators(data.collaborators);

@@ -19,6 +19,9 @@
 /storage/*.key
 /storage/pail
 /vendor
+/resources/js/actions
+/resources/js/routes
+/resources/js/wayfinder
 _ide_helper.php
 Homestead.json
 Homestead.yaml

@@ -2,20 +2,15 @@ import GuestLayout from '@/layouts/guest-layout';
 import { Card, CardHeader, CardTitle, CardPanel } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useTrans } from '@/hooks/use-trans';
-import { Link, useForm, usePage } from '@inertiajs/react';
+import { Form, Link, usePage } from '@inertiajs/react';
+import { cancel } from '@/actions/App/Http/Controllers/Customer/BookingController';
+import { destroy } from '@/actions/App/Http/Controllers/Auth/LoginController';
 import type { BookingSummary, PageProps } from '@/types';
-import type { FormEvent } from 'react';
 
 function BookingItem({ booking }: { booking: BookingSummary }) {
     const { t } = useTrans();
-    const form = useForm({});
     const date = new Date(booking.starts_at);
     const endDate = new Date(booking.ends_at);
-
-    function cancel(e: FormEvent) {
-        e.preventDefault();
-        form.post(`/my-bookings/${booking.id}/cancel`);
-    }
 
     return (
         <div className="flex items-center justify-between rounded-lg border p-4">
@@ -33,11 +28,13 @@ function BookingItem({ booking }: { booking: BookingSummary }) {
                 <span className="text-xs capitalize text-muted-foreground">{booking.status}</span>
             </div>
             {booking.can_cancel && (
-                <form onSubmit={cancel}>
-                    <Button type="submit" variant="outline" size="sm" disabled={form.processing}>
-                        {t('Cancel')}
-                    </Button>
-                </form>
+                <Form action={cancel(booking.id)}>
+                    {({ processing }) => (
+                        <Button type="submit" variant="outline" size="sm" disabled={processing}>
+                            {t('Cancel')}
+                        </Button>
+                    )}
+                </Form>
             )}
         </div>
     );
@@ -88,7 +85,7 @@ export default function CustomerBookings() {
                 </Card>
 
                 <div className="flex justify-center">
-                    <Link href="/logout" method="post" as="button" className="text-sm text-muted-foreground hover:underline">
+                    <Link href={destroy()} method="post" as="button" className="text-sm text-muted-foreground hover:underline">
                         {t('Log out')}
                     </Link>
                 </div>

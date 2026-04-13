@@ -3,6 +3,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardPanel } from '@/compo
 import { Button } from '@/components/ui/button';
 import { useTrans } from '@/hooks/use-trans';
 import { Link } from '@inertiajs/react';
+import { dashboard } from '@/routes/index';
 import { useState } from 'react';
 import { CheckCircleIcon, ClipboardIcon, PartyPopperIcon, SettingsIcon, UsersIcon, BellIcon } from 'lucide-react';
 
@@ -74,7 +75,7 @@ export default function Welcome({ publicUrl, businessName }: Props) {
                 </div>
 
                 <div className="text-center">
-                    <Link href="/dashboard">
+                    <Link href={dashboard()}>
                         <Button>{t('Go to Dashboard')}</Button>
                     </Link>
                 </div>

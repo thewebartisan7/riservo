@@ -5,7 +5,8 @@ import { InputError } from '@/components/input-error';
 import { WeekScheduleEditor } from '@/components/onboarding/week-schedule-editor';
 import type { DaySchedule } from '@/components/onboarding/day-row';
 import { useTrans } from '@/hooks/use-trans';
-import { router } from '@inertiajs/react';
+import { router, useHttp } from '@inertiajs/react';
+import { store, show } from '@/actions/App/Http/Controllers/OnboardingController';
 import type { FormEvent } from 'react';
 import { useState } from 'react';
 
@@ -16,38 +17,15 @@ interface Props {
 export default function Step2({ hours: initialHours }: Props) {
     const { t } = useTrans();
     const [hours, setHours] = useState<DaySchedule[]>(initialHours);
-    const [processing, setProcessing] = useState(false);
-    const [errors, setErrors] = useState<Record<string, string>>({});
+    const http = useHttp({ hours: [] as DaySchedule[] });
 
     function submit(e: FormEvent) {
         e.preventDefault();
-        setProcessing(true);
-        setErrors({});
-
-        // Use fetch for complex nested data to avoid Inertia v2 type constraints
-        const csrfToken = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '';
-
-        fetch('/onboarding/step/2', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRF-TOKEN': csrfToken,
-                'X-Inertia': 'true',
-                'X-Inertia-Version': document.querySelector<HTMLMetaElement>('meta[name="inertia-version"]')?.content ?? '',
-                Accept: 'text/html, application/xhtml+xml',
+        http.setData('hours', hours);
+        http.post(store.url(2), {
+            onSuccess: () => {
+                router.visit(show(3));
             },
-            body: JSON.stringify({ hours }),
-        }).then((response) => {
-            if (response.status === 422) {
-                return response.json().then((data) => {
-                    setErrors(data.errors ?? {});
-                    setProcessing(false);
-                });
-            }
-            // Inertia redirect response — reload via router visit
-            router.visit('/onboarding/step/3');
-        }).catch(() => {
-            setProcessing(false);
         });
     }
 
@@ -61,9 +39,9 @@ export default function Step2({ hours: initialHours }: Props) {
                 <form onSubmit={submit}>
                     <CardPanel>
                         <WeekScheduleEditor hours={hours} onChange={setHours} />
-                        {Object.keys(errors).length > 0 && (
+                        {http.hasErrors && (
                             <div className="mt-4">
-                                {Object.values(errors).map((error, i) => (
+                                {Object.values(http.errors).map((error: string, i: number) => (
                                     <InputError key={i} message={error} />
                                 ))}
                             </div>
@@ -73,11 +51,11 @@ export default function Step2({ hours: initialHours }: Props) {
                         <Button
                             type="button"
                             variant="outline"
-                            onClick={() => router.visit('/onboarding/step/1')}
+                            onClick={() => router.visit(show(1))}
                         >
                             {t('Back')}
                         </Button>
-                        <Button type="submit" disabled={processing}>
+                        <Button type="submit" disabled={http.processing}>
                             {t('Continue')}
                         </Button>
                     </CardFooter>

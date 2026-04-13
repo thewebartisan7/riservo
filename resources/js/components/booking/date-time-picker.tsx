@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useHttp } from '@inertiajs/react';
+import { availableDates as availableDatesAction, slots as slotsAction } from '@/actions/App/Http/Controllers/Booking/PublicBookingController';
 import { Calendar } from '@/components/ui/calendar';
 import { Button } from '@/components/ui/button';
 import { useTrans } from '@/hooks/use-trans';
@@ -43,8 +44,10 @@ export default function DateTimePicker({
     useEffect(() => {
         const month = formatMonth(currentMonth);
         const collabParam = collaboratorId ? `&collaborator_id=${collaboratorId}` : '';
+        const datesQuery: Record<string, string | number> = { service_id: serviceId, month };
+        if (collaboratorId) datesQuery.collaborator_id = collaboratorId;
         datesHttp.get(
-            `/booking/${slug}/available-dates?service_id=${serviceId}&month=${month}${collabParam}`,
+            availableDatesAction.url(slug, { query: datesQuery }),
             {
                 onSuccess: (response: unknown) => {
                     const data = response as { dates: Record<string, boolean> };
@@ -61,9 +64,10 @@ export default function DateTimePicker({
             return;
         }
         const dateStr = formatDate(selectedDate);
-        const collabParam = collaboratorId ? `&collaborator_id=${collaboratorId}` : '';
+        const slotsQuery: Record<string, string | number> = { service_id: serviceId, date: dateStr };
+        if (collaboratorId) slotsQuery.collaborator_id = collaboratorId;
         slotsHttp.get(
-            `/booking/${slug}/slots?service_id=${serviceId}&date=${dateStr}${collabParam}`,
+            slotsAction.url(slug, { query: slotsQuery }),
             {
                 onSuccess: (response: unknown) => {
                     const data = response as { slots: string[] };

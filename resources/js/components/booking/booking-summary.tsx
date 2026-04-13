@@ -1,4 +1,5 @@
 import { useHttp } from '@inertiajs/react';
+import { store } from '@/actions/App/Http/Controllers/Booking/PublicBookingController';
 import { Button } from '@/components/ui/button';
 import { Card, CardPanel } from '@/components/ui/card';
 import { useTrans } from '@/hooks/use-trans';
@@ -59,7 +60,7 @@ export default function BookingSummary({
 
     function handleConfirm() {
         http.setData('website', getHoneypotValue());
-        http.post(`/booking/${slug}/book`, {
+        http.post(store.url(slug), {
             onSuccess: (response: unknown) => {
                 const result = response as { token: string; status: string };
                 onSuccess(result);
