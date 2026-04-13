@@ -147,17 +147,17 @@ The main authenticated view for business owners and collaborators. Calendar view
 > - **Booking detail**: slide-over or modal panel.
 > - The UI does not need to be pixel-perfect at this stage — the visual refinement pass will happen later with Pencil.dev. Focus on the right component foundations and data flow.
 
-- [ ] Dashboard home: today's appointments summary, quick stats (bookings this week, upcoming)
-- [ ] Bookings list view with filters (date range, collaborator, service, status)
+- [x] Dashboard home: today's appointments summary, quick stats (bookings this week, upcoming)
+- [x] Bookings list view with filters (date range, collaborator, service, status)
   - Server-side sorting and pagination for past bookings
-- [ ] Booking detail panel (slide-over or modal): full booking info, status actions
-- [ ] Change booking status: confirm, cancel, no-show, complete
-- [ ] Add internal note to a booking
-- [ ] Manual booking creation from dashboard:
+- [x] Booking detail panel (slide-over or modal): full booking info, status actions
+- [x] Change booking status: confirm, cancel, no-show, complete
+- [x] Add internal note to a booking
+- [x] Manual booking creation from dashboard:
   - Search and select existing customer or create new
   - Select service, collaborator, date, time slot (using AvailabilityService)
   - Confirm and notify customer
-- [ ] Customer Directory (CRM):
+- [x] Customer Directory (CRM):
   - List all customers with at least one booking
   - Search by name, email, phone
   - Server-side search and pagination

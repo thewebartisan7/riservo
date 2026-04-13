@@ -465,3 +465,30 @@ Each decision has a stable ID that can be referenced in code comments (e.g., `//
 - **Context**: The Inertia server adapter is already v3 (`inertiajs/inertia-laravel@3`). The client (`@inertiajs/react`) was v2. Session 7 needs standalone HTTP requests for slot availability and booking creation APIs. The `useHttp` hook (v3 only) provides reactive state management, automatic validation error parsing, and a consistent HTTP layer.
 - **Decision**: Upgrade `@inertiajs/react` from ^2 to ^3. Remove the `bootstrap.js` file (axios setup, no longer needed). All new AJAX calls use `useHttp`. Existing `fetch()` calls in onboarding pages are outside scope but noted for future migration.
 - **Consequences**: Access to `useHttp` with reactive `processing`, `errors`, `wasSuccessful` state. Axios dependency removed. React 19 requirement already met.
+
+---
+
+### D-049 — Internal notes as single column on bookings
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: SPEC §7.3 requires "Add internal notes to a booking." The existing `notes` column stores customer-provided notes from the booking form. Staff internal notes are a separate concept. Two approaches: a single `internal_notes` text column, or a `booking_notes` table with author tracking.
+- **Decision**: Add a nullable `internal_notes` text column to the `bookings` table. One note per booking, editable by any staff member with access.
+- **Consequences**: Simple and sufficient for MVP. Can be upgraded to a multi-note table with author/timestamp tracking post-MVP if needed. No extra table or join required.
+
+---
+
+### D-050 — Status transitions encoded on BookingStatus enum
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: Dashboard booking management requires changing booking status (confirm, cancel, no-show, complete). Valid transitions must be enforced to prevent invalid state changes (e.g., cancelled → confirmed).
+- **Decision**: `BookingStatus` enum gets an `allowedTransitions()` method returning valid target statuses: pending → confirmed/cancelled; confirmed → cancelled/completed/no_show; cancelled/completed/no_show → none (terminal). A `canTransitionTo()` convenience method wraps this.
+- **Consequences**: Transition logic is centralized on the enum, not scattered across controllers. Both dashboard and any future status-change code use the same rules.
+
+---
+
+### D-051 — Manual bookings: multi-step dialog, source=manual, status=confirmed
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: Business staff create manual bookings from the dashboard for phone/walk-in customers. The UI pattern and default status need to be defined.
+- **Decision**: Manual booking creation uses a multi-step dialog (customer → service → collaborator → date/time → confirm) that keeps the user in context on the dashboard. Manual bookings are created with `source: manual` and always `status: confirmed` — there is no pending state for staff-created bookings since the business is already aware of them.
+- **Consequences**: The `confirmation_mode` setting does not affect manual bookings. The dialog reuses the same AvailabilityService for slot calculation. Placeholder notification (from Session 7) is sent to the customer.

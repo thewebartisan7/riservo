@@ -47,6 +47,8 @@ class BusinessSeeder extends Seeder
             'timezone' => 'Europe/Zurich',
             'cancellation_window_hours' => 24,
             'reminder_hours' => [24, 1],
+            'onboarding_step' => 5,
+            'onboarding_completed_at' => now(),
         ]);
     }
 
@@ -365,7 +367,7 @@ class BusinessSeeder extends Seeder
             'email' => 'sara.fontana@example.com',
         ]);
 
-        return [
+        $named = [
             Customer::create(['name' => 'Anna Mueller', 'email' => 'anna.mueller@example.com', 'phone' => '+41 79 100 00 01']),
             Customer::create(['name' => 'Elena Bernasconi', 'email' => 'elena.bernasconi@example.com', 'phone' => '+41 79 100 00 02']),
             Customer::create(['name' => 'Thomas Keller', 'email' => 'thomas.keller@example.com', 'phone' => '+41 79 100 00 03', 'user_id' => $registeredUser1->id]),
@@ -373,6 +375,10 @@ class BusinessSeeder extends Seeder
             Customer::create(['name' => 'Peter Widmer', 'email' => 'peter.widmer@example.com', 'phone' => '+41 79 100 00 05']),
             Customer::create(['name' => 'Sara Fontana', 'email' => 'sara.fontana@example.com', 'phone' => '+41 79 100 00 06', 'user_id' => $registeredUser2->id]),
         ];
+
+        $generated = Customer::factory()->count(100)->create()->all();
+
+        return array_merge($named, $generated);
     }
 
     /**
@@ -382,9 +388,46 @@ class BusinessSeeder extends Seeder
      */
     private function createBookings(Business $business, array $users, array $services, array $customers): void
     {
+        $today = Carbon::today('Europe/Zurich');
         $nextMonday = Carbon::now()->next(Carbon::MONDAY);
 
-        // 3 confirmed future bookings
+        // --- TODAY's bookings (visible on dashboard home) ---
+        Booking::create([
+            'business_id' => $business->id,
+            'collaborator_id' => $users['luca']->id,
+            'service_id' => $services['taglioUomo']->id,
+            'customer_id' => $customers[1]->id,
+            'starts_at' => $today->copy()->setTime(10, 0)->utc(),
+            'ends_at' => $today->copy()->setTime(10, 30)->utc(),
+            'status' => BookingStatus::Confirmed,
+            'cancellation_token' => Str::uuid()->toString(),
+        ]);
+
+        Booking::create([
+            'business_id' => $business->id,
+            'collaborator_id' => $users['sofia']->id,
+            'service_id' => $services['colore']->id,
+            'customer_id' => $customers[2]->id,
+            'starts_at' => $today->copy()->setTime(14, 0)->utc(),
+            'ends_at' => $today->copy()->setTime(15, 30)->utc(),
+            'status' => BookingStatus::Confirmed,
+            'internal_notes' => 'VIP customer — always offer coffee',
+            'cancellation_token' => Str::uuid()->toString(),
+        ]);
+
+        Booking::create([
+            'business_id' => $business->id,
+            'collaborator_id' => $users['marco']->id,
+            'service_id' => $services['piega']->id,
+            'customer_id' => $customers[3]->id,
+            'starts_at' => $today->copy()->setTime(15, 30)->utc(),
+            'ends_at' => $today->copy()->setTime(16, 0)->utc(),
+            'status' => BookingStatus::Pending,
+            'cancellation_token' => Str::uuid()->toString(),
+        ]);
+
+        // --- Next Monday bookings (used by SlotGenerationIntegrationTest) ---
+        // Maria: Taglio Donna at 09:00 UTC = 11:00 CEST
         Booking::create([
             'business_id' => $business->id,
             'collaborator_id' => $users['maria']->id,
@@ -396,6 +439,21 @@ class BusinessSeeder extends Seeder
             'cancellation_token' => Str::uuid()->toString(),
         ]);
 
+        // Maria: Piega at 11:00 UTC = 13:00 CEST
+        Booking::create([
+            'business_id' => $business->id,
+            'collaborator_id' => $users['maria']->id,
+            'service_id' => $services['piega']->id,
+            'customer_id' => $customers[1]->id,
+            'starts_at' => $nextMonday->copy()->setTime(11, 0),
+            'ends_at' => $nextMonday->copy()->setTime(11, 30),
+            'status' => BookingStatus::Confirmed,
+            'source' => BookingSource::Manual,
+            'notes' => 'Prenotazione telefonica',
+            'cancellation_token' => Str::uuid()->toString(),
+        ]);
+
+        // --- More future bookings ---
         Booking::create([
             'business_id' => $business->id,
             'collaborator_id' => $users['luca']->id,
@@ -418,7 +476,6 @@ class BusinessSeeder extends Seeder
             'cancellation_token' => Str::uuid()->toString(),
         ]);
 
-        // 2 pending future bookings
         Booking::create([
             'business_id' => $business->id,
             'collaborator_id' => $users['marco']->id,
@@ -427,6 +484,7 @@ class BusinessSeeder extends Seeder
             'starts_at' => $nextMonday->copy()->addDays(2)->setTime(9, 30),
             'ends_at' => $nextMonday->copy()->addDays(2)->setTime(10, 0),
             'status' => BookingStatus::Pending,
+            'notes' => 'Wants to discuss a full colour change',
             'cancellation_token' => Str::uuid()->toString(),
         ]);
 
@@ -441,7 +499,7 @@ class BusinessSeeder extends Seeder
             'cancellation_token' => Str::uuid()->toString(),
         ]);
 
-        // 2 completed past bookings
+        // --- Past bookings ---
         $lastMonday = Carbon::now()->previous(Carbon::MONDAY);
 
         Booking::create([
@@ -468,19 +526,17 @@ class BusinessSeeder extends Seeder
             'cancellation_token' => Str::uuid()->toString(),
         ]);
 
-        // 1 cancelled booking
         Booking::create([
             'business_id' => $business->id,
             'collaborator_id' => $users['maria']->id,
             'service_id' => $services['taglioDonna']->id,
             'customer_id' => $customers[3]->id,
-            'starts_at' => $nextMonday->copy()->addDays(4)->setTime(15, 0),
-            'ends_at' => $nextMonday->copy()->addDays(4)->setTime(15, 45),
+            'starts_at' => $lastMonday->copy()->addDays(4)->setTime(15, 0),
+            'ends_at' => $lastMonday->copy()->addDays(4)->setTime(15, 45),
             'status' => BookingStatus::Cancelled,
             'cancellation_token' => Str::uuid()->toString(),
         ]);
 
-        // 1 no-show booking
         Booking::create([
             'business_id' => $business->id,
             'collaborator_id' => $users['marco']->id,
@@ -489,21 +545,31 @@ class BusinessSeeder extends Seeder
             'starts_at' => $lastMonday->copy()->addDays(2)->setTime(9, 0),
             'ends_at' => $lastMonday->copy()->addDays(2)->setTime(9, 30),
             'status' => BookingStatus::NoShow,
+            'internal_notes' => 'Second no-show — consider requiring deposit',
             'cancellation_token' => Str::uuid()->toString(),
         ]);
 
-        // 1 manual booking
-        Booking::create([
-            'business_id' => $business->id,
-            'collaborator_id' => $users['maria']->id,
-            'service_id' => $services['piega']->id,
-            'customer_id' => $customers[1]->id,
-            'starts_at' => $nextMonday->copy()->setTime(11, 0),
-            'ends_at' => $nextMonday->copy()->setTime(11, 30),
-            'status' => BookingStatus::Confirmed,
-            'source' => BookingSource::Manual,
-            'notes' => 'Prenotazione telefonica',
-            'cancellation_token' => Str::uuid()->toString(),
-        ]);
+        // --- Bookings for factory-generated customers (for pagination) ---
+        $collaborators = [$users['maria'], $users['luca'], $users['sofia'], $users['marco']];
+        $serviceList = [$services['taglioDonna'], $services['taglioUomo'], $services['colore'], $services['piega']];
+        $statuses = [BookingStatus::Completed, BookingStatus::Confirmed, BookingStatus::Pending];
+
+        foreach (array_slice($customers, 6) as $i => $customer) {
+            $collab = $collaborators[$i % count($collaborators)];
+            $service = $serviceList[$i % count($serviceList)];
+            $day = $lastMonday->copy()->subDays($i % 30);
+            $hour = 9 + ($i % 8);
+
+            Booking::create([
+                'business_id' => $business->id,
+                'collaborator_id' => $collab->id,
+                'service_id' => $service->id,
+                'customer_id' => $customer->id,
+                'starts_at' => $day->copy()->setTime($hour, 0)->utc(),
+                'ends_at' => $day->copy()->setTime($hour, $service->duration_minutes)->utc(),
+                'status' => $statuses[$i % count($statuses)],
+                'cancellation_token' => Str::uuid()->toString(),
+            ]);
+        }
     }
 }

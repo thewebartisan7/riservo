@@ -1,5 +1,7 @@
 import { Head, Link, usePage } from '@inertiajs/react';
-import { dashboard } from '@/routes/index';
+import { index as dashboardIndex } from '@/actions/App/Http/Controllers/Dashboard/DashboardController';
+import { index as bookingsIndex } from '@/actions/App/Http/Controllers/Dashboard/BookingController';
+import { index as customersIndex } from '@/actions/App/Http/Controllers/Dashboard/CustomerController';
 import { destroy } from '@/actions/App/Http/Controllers/Auth/LoginController';
 import type { PropsWithChildren } from 'react';
 import type { PageProps } from '@/types';
@@ -42,6 +44,16 @@ export default function AuthenticatedLayout({
 }: PropsWithChildren<AuthenticatedLayoutProps>) {
     const { auth } = usePage<PageProps>().props;
     const { t } = useTrans();
+    const isAdmin = auth.role === 'admin';
+    const currentPath = window.location.pathname;
+
+    const navItems = [
+        { label: t('Dashboard'), href: dashboardIndex.url(), active: currentPath === '/dashboard' },
+        { label: t('Bookings'), href: bookingsIndex.url(), active: currentPath.startsWith('/dashboard/bookings') },
+        ...(isAdmin
+            ? [{ label: t('Customers'), href: customersIndex.url(), active: currentPath.startsWith('/dashboard/customers') }]
+            : []),
+    ];
 
     return (
         <>
@@ -58,13 +70,21 @@ export default function AuthenticatedLayout({
                             </SidebarGroupLabel>
                             <SidebarGroupContent>
                                 <SidebarMenu>
-                                    <SidebarMenuItem>
-                                        <SidebarMenuButton
-                                            render={<a href={dashboard.url()} />}
-                                        >
-                                            {t('Dashboard')}
-                                        </SidebarMenuButton>
-                                    </SidebarMenuItem>
+                                    {navItems.map((item) => (
+                                        <SidebarMenuItem key={item.href}>
+                                            <SidebarMenuButton
+                                                isActive={item.active}
+                                                render={
+                                                    <Link
+                                                        href={item.href}
+                                                        prefetch
+                                                    />
+                                                }
+                                            >
+                                                {item.label}
+                                            </SidebarMenuButton>
+                                        </SidebarMenuItem>
+                                    ))}
                                 </SidebarMenu>
                             </SidebarGroupContent>
                         </SidebarGroup>

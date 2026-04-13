@@ -72,6 +72,76 @@ export interface PublicCollaborator {
     avatar_url: string | null;
 }
 
+// Dashboard types
+export interface DashboardBooking {
+    id: number;
+    starts_at: string;
+    ends_at: string;
+    status: string;
+    source: string;
+    notes: string | null;
+    internal_notes: string | null;
+    created_at: string;
+    cancellation_token: string;
+    service: { id: number; name: string; duration_minutes: number; price: number | null };
+    collaborator: { id: number; name: string; avatar_url: string | null };
+    customer: { id: number; name: string; email: string; phone: string | null };
+}
+
+export interface TodayBooking {
+    id: number;
+    starts_at: string;
+    ends_at: string;
+    status: string;
+    service: { name: string; duration_minutes: number };
+    collaborator: { id: number; name: string };
+    customer: { name: string };
+}
+
+export interface DashboardStats {
+    today_count: number;
+    week_count: number;
+    upcoming_count: number;
+    pending_count: number;
+}
+
+export interface DashboardCustomer {
+    id: number;
+    name: string;
+    email: string;
+    phone: string | null;
+    bookings_count: number;
+    last_booking_at: string | null;
+}
+
+export interface DashboardCustomerDetail {
+    id: number;
+    name: string;
+    email: string;
+    phone: string | null;
+}
+
+export interface CustomerBookingHistory {
+    id: number;
+    starts_at: string;
+    ends_at: string;
+    status: string;
+    source: string;
+    service: { name: string; duration_minutes: number; price: number | null };
+    collaborator: { id: number; name: string };
+}
+
+export interface FilterOption {
+    id: number;
+    name: string;
+}
+
+export interface ServiceWithCollaborators extends FilterOption {
+    duration_minutes: number;
+    price: number | null;
+    collaborators: FilterOption[];
+}
+
 export interface PageProps {
     auth: {
         user: User | null;

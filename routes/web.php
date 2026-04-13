@@ -10,6 +10,9 @@ use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Booking\BookingManagementController;
 use App\Http\Controllers\Booking\PublicBookingController;
 use App\Http\Controllers\Customer\BookingController as CustomerBookingController;
+use App\Http\Controllers\Dashboard\BookingController as DashboardBookingController;
+use App\Http\Controllers\Dashboard\CustomerController as DashboardCustomerController;
+use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\OnboardingController;
 use App\Http\Controllers\WelcomeController;
 use Illuminate\Support\Facades\Route;
@@ -76,8 +79,25 @@ Route::middleware('auth')->group(function () {
 
     // Business dashboard (auth + verified + business role + onboarded)
     Route::middleware(['verified', 'role:admin,collaborator', 'onboarded'])->group(function () {
-        Route::get('/dashboard', fn () => Inertia::render('dashboard'))->name('dashboard');
+        Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
         Route::get('/dashboard/welcome', [WelcomeController::class, 'show'])->name('dashboard.welcome');
+
+        // Bookings
+        Route::get('/dashboard/bookings', [DashboardBookingController::class, 'index'])->name('dashboard.bookings');
+        Route::post('/dashboard/bookings', [DashboardBookingController::class, 'store'])->name('dashboard.bookings.store');
+        Route::patch('/dashboard/bookings/{booking}/status', [DashboardBookingController::class, 'updateStatus'])->name('dashboard.bookings.update-status');
+        Route::patch('/dashboard/bookings/{booking}/notes', [DashboardBookingController::class, 'updateNotes'])->name('dashboard.bookings.update-notes');
+
+        // Dashboard API (JSON)
+        Route::get('/dashboard/api/available-dates', [DashboardBookingController::class, 'availableDates'])->name('dashboard.api.available-dates');
+        Route::get('/dashboard/api/slots', [DashboardBookingController::class, 'slots'])->name('dashboard.api.slots');
+
+        // Customers (admin only)
+        Route::middleware('role:admin')->group(function () {
+            Route::get('/dashboard/customers', [DashboardCustomerController::class, 'index'])->name('dashboard.customers');
+            Route::get('/dashboard/customers/{customer}', [DashboardCustomerController::class, 'show'])->name('dashboard.customers.show');
+            Route::get('/dashboard/api/customers/search', [DashboardCustomerController::class, 'search'])->name('dashboard.api.customers.search');
+        });
     });
 
     // Customer area (auth + customer role)

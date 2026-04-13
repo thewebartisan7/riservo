@@ -15,8 +15,8 @@ test('seeder runs without errors', function () {
     expect(Business::count())->toBe(1)
         ->and(User::count())->toBe(7)  // 1 test user + 4 staff + 2 registered customers
         ->and(Service::count())->toBe(5)
-        ->and(Customer::count())->toBe(6)
-        ->and(Booking::count())->toBe(10)
+        ->and(Customer::count())->toBe(106)
+        ->and(Booking::count())->toBe(113)
         ->and(BusinessHour::count())->toBe(11)
         ->and(AvailabilityRule::count())->toBe(36)
         ->and(AvailabilityException::count())->toBe(5);

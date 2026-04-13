@@ -31,6 +31,7 @@ use Illuminate\Support\Carbon;
     'external_calendar_id',
     'payment_status',
     'notes',
+    'internal_notes',
     'cancellation_token',
 ])]
 class Booking extends Model
