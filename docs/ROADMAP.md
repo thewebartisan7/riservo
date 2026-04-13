@@ -62,13 +62,15 @@ Core service that calculates available booking slots. Built test-first.
 
 ---
 
-## Session 4 — Frontend Foundation (Inertia + React + VenaUI)
+## Session 4 — Frontend Foundation (Inertia + React + COSS UI)
 
 - [ ] Install and configure Inertia.js (server-side Laravel adapter)
 - [ ] Install and configure React + TypeScript
-- [ ] Install `vena-ui` via npm (Base UI component library with vanilla CSS)
+- [x] Install COSS UI skill: `pnpm dlx skills add cosscom/coss` (already installed — `.agents/skills/coss` + `.agents/skills/coss-particles`)
+- [ ] Set up Tailwind CSS v4 (required by COSS UI)
+- [ ] Copy initial COSS UI components into the project (copy-paste approach — no npm install)
 - [ ] Set up Vite with HMR for local development
-- [ ] Create root layout shell (authenticated and guest variants) using VenaUI components
+- [ ] Create root layout shell (authenticated and guest variants) using COSS UI components
 - [ ] Set up shared Inertia page props (auth user, flash messages, etc.)
 - [ ] Create placeholder pages: `/`, `/login`, `/register`, `/dashboard`
 - [ ] Confirm Inertia routing works end-to-end with a basic page render
@@ -89,7 +91,7 @@ Custom auth implementation — **no Laravel Fortify, no Jetstream**.
 - [ ] Role middleware: `admin`, `collaborator` (business-scoped), `customer` (separate auth context, own bookings only) — owner/admin distinction deferred to v2
 - [ ] Guest booking management via signed URL token (no login required)
 - [ ] Route protection and redirect logic per role
-- [ ] All auth pages built in React with VenaUI components
+- [ ] All auth pages built in React with COSS UI components
 
 ---
 

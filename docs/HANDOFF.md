@@ -76,7 +76,7 @@ Session 3 built the scheduling engine — the core service that calculates avail
 
 ## What Session 4 Needs to Know
 
-Session 4 installs the frontend foundation (Inertia + React + VenaUI). No direct dependency on the scheduling engine, but good to know:
+Session 4 installs the frontend foundation (Inertia + React + COSS UI). No direct dependency on the scheduling engine, but good to know:
 
 - The scheduling engine has no controllers or API endpoints yet — Session 7 (Public Booking Flow) will wire these up
 - `SlotGeneratorService` is the public API for slot calculation. It is injectable via Laravel's container.
@@ -98,6 +98,6 @@ Session 4 installs the frontend foundation (Inertia + React + VenaUI). No direct
 ## Open Questions / Deferred Items
 
 - **P-002**: React i18n approach — for Session 4
-- VenaUI (`vena-ui`) npm package: confirm availability before Session 4
+- COSS UI skill is already installed (`.agents/skills/coss` and `.agents/skills/coss-particles`). Before proceeding with Session 4, verify the skill is loading correctly by asking Claude to describe a COSS UI component or pattern — if it answers with COSS-specific knowledge, the skill is active.
 - Hostpoint deployment details: needed before production
 - `getAvailableDates()` convenience method: not built in Session 3 — Session 7 should add it when building the calendar UI

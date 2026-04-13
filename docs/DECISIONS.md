@@ -307,6 +307,15 @@ Each decision has a stable ID that can be referenced in code comments (e.g., `//
 
 ---
 
+### D-032 — UI Library: COSS UI replaces VenaUI
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: VenaUI (`vena-ui`) availability could not be confirmed. The project needed a reliable, production-tested UI component library for the React/Inertia frontend.
+- **Decision**: Use COSS UI (copy-paste, Tailwind CSS) instead of VenaUI (vanilla CSS, npm package). COSS UI is production-tested (used at Cal.com and coss.com), ships 60+ components built on Base UI primitives, and has first-class AI agent skill support (`pnpm dlx skills add cosscom/coss`). Tailwind CSS v4 is adopted as a consequence of this choice.
+- **Consequences**: Tailwind CSS is now part of the frontend stack. Components are copied into the project rather than installed via npm — no UI library version to pin or upgrade. The "No Tailwind CSS" rule is reversed. Session 4 must install the COSS UI skill and set up Tailwind v4 before building any UI.
+
+---
+
 ### P-002 — React i18n approach (Open Proposal)
 - **Date**: 2026-04-12
 - **Status**: open — for Session 4 agent to investigate
