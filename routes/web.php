@@ -8,6 +8,7 @@ use App\Http\Controllers\Auth\MagicLinkController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Booking\BookingManagementController;
+use App\Http\Controllers\Booking\PublicBookingController;
 use App\Http\Controllers\Customer\BookingController as CustomerBookingController;
 use App\Http\Controllers\OnboardingController;
 use App\Http\Controllers\WelcomeController;
@@ -89,3 +90,17 @@ Route::middleware('auth')->group(function () {
 // Guest booking management (no auth, via cancellation token)
 Route::get('/bookings/{token}', [BookingManagementController::class, 'show'])->name('bookings.show');
 Route::post('/bookings/{token}/cancel', [BookingManagementController::class, 'cancel'])->name('bookings.cancel');
+
+// Public booking API (JSON) — rate limited
+Route::prefix('booking/{slug}')->middleware('throttle:booking-api')->group(function () {
+    Route::get('/collaborators', [PublicBookingController::class, 'collaborators'])->name('booking.collaborators');
+    Route::get('/available-dates', [PublicBookingController::class, 'availableDates'])->name('booking.available-dates');
+    Route::get('/slots', [PublicBookingController::class, 'slots'])->name('booking.slots');
+});
+
+Route::post('/booking/{slug}/book', [PublicBookingController::class, 'store'])
+    ->middleware('throttle:booking-create')
+    ->name('booking.store');
+
+// Public booking page — catch-all (MUST BE LAST — see D-013, D-043)
+Route::get('/{slug}/{serviceSlug?}', [PublicBookingController::class, 'show'])->name('booking.show');

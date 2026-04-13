@@ -18,6 +18,7 @@ class SlugService
         'admin',
         'api',
         'billing',
+        'booking',
         'bookings',
         'customer',
         'dashboard',

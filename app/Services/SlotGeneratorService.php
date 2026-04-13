@@ -178,8 +178,18 @@ class SlotGeneratorService
             $bookingBufferBefore = $booking->service->buffer_before ?? 0;
             $bookingBufferAfter = $booking->service->buffer_after ?? 0;
 
-            $bookingOccupiedStart = CarbonImmutable::parse($booking->starts_at)->subMinutes($bookingBufferBefore);
-            $bookingOccupiedEnd = CarbonImmutable::parse($booking->ends_at)->addMinutes($bookingBufferAfter);
+            // Use raw DB values with explicit UTC to avoid timezone issues
+            // when Carbon's testNow has a non-UTC timezone (see D-030)
+            $bookingOccupiedStart = CarbonImmutable::createFromFormat(
+                'Y-m-d H:i:s',
+                $booking->getRawOriginal('starts_at'),
+                'UTC',
+            )->subMinutes($bookingBufferBefore);
+            $bookingOccupiedEnd = CarbonImmutable::createFromFormat(
+                'Y-m-d H:i:s',
+                $booking->getRawOriginal('ends_at'),
+                'UTC',
+            )->addMinutes($bookingBufferAfter);
 
             // Two intervals overlap if start1 < end2 AND end1 > start2
             if ($occupiedStart->lt($bookingOccupiedEnd) && $occupiedEnd->gt($bookingOccupiedStart)) {

@@ -44,6 +44,34 @@ export interface InvitationData {
     business_name: string;
 }
 
+export interface PublicBusiness {
+    name: string;
+    slug: string;
+    description: string | null;
+    logo_url: string | null;
+    phone: string | null;
+    email: string | null;
+    address: string | null;
+    timezone: string;
+    allow_collaborator_choice: boolean;
+    confirmation_mode: 'auto' | 'manual';
+}
+
+export interface PublicService {
+    id: number;
+    name: string;
+    slug: string;
+    description: string | null;
+    duration_minutes: number;
+    price: number | null;
+}
+
+export interface PublicCollaborator {
+    id: number;
+    name: string;
+    avatar_url: string | null;
+}
+
 export interface PageProps {
     auth: {
         user: User | null;

@@ -1,6 +1,6 @@
 # Handoff
 
-**Session**: 6 — Business Onboarding Wizard  
+**Session**: 7 — Public Booking Flow  
 **Date**: 2026-04-13  
 **Status**: Complete
 
@@ -8,118 +8,128 @@
 
 ## What Was Built
 
-Session 6 implemented a 5-step onboarding wizard that new business admins must complete before accessing the dashboard. The wizard covers business profile setup, working hours, first service creation, collaborator invitations, and a summary/launch step.
+Session 7 implemented the complete public booking flow at `riservo.ch/{slug}` — a single Inertia page with client-side step transitions, backed by JSON API endpoints for slot data. Also upgraded the Inertia client from v2 to v3 and fixed a timezone bug in the slot generator.
+
+### Inertia v3 Upgrade
+
+- Upgraded `@inertiajs/react` from `^2.3.21` to `^3.0.3`
+- Removed `resources/js/bootstrap.js` (axios setup, no longer needed)
+- Removed `import './bootstrap'` from `resources/js/app.tsx`
+- All new AJAX calls use `useHttp` hook from Inertia v3
+- Existing `fetch()` calls in onboarding pages are outside scope but noted for future migration
+- Bundle size decreased from 642 KB to 660 KB (net increase from new booking pages, but axios removal saved ~70 KB)
+
+### Bug Fix: SlotGeneratorService timezone issue
+
+- Fixed `app/Services/SlotGeneratorService.php` `conflictsWithBookings` method
+- When Carbon's `setTestNow` is active with a non-UTC timezone, `CarbonImmutable::parse($booking->starts_at)` loses the UTC timezone. The booking time `08:00 UTC` was interpreted as `08:00 CEST` (= `06:00 UTC`), causing conflict checks to miss overlapping bookings.
+- Fix: use `$booking->getRawOriginal('starts_at')` with explicit `CarbonImmutable::createFromFormat(..., 'UTC')` to bypass Eloquent's datetime cast
+- This fix is also relevant in production if the app timezone ever differs from UTC
 
 ### Backend
 
-**2 migrations:**
-- `add_onboarding_fields_to_businesses_table` — `onboarding_step` (default 1), `onboarding_completed_at` (nullable)
-- `add_service_ids_to_business_invitations_table` — `service_ids` JSON nullable
+**1 controller:**
+- `PublicBookingController` — 5 methods: `show`, `collaborators`, `availableDates`, `slots`, `store`
 
-**1 middleware:**
-- `EnsureOnboardingComplete` — redirects unboarded admins to `/onboarding/step/{step}`, registered as `onboarded` alias
+**1 form request:**
+- `StorePublicBookingRequest` — validates booking creation (service_id, date, time, name, email, phone, notes, honeypot)
 
-**2 controllers:**
-- `OnboardingController` — `show(step)`, `store(step)`, `checkSlug()`, `uploadLogo()` — central hub for all 5 wizard steps
-- `WelcomeController` — renders `/dashboard/welcome` after onboarding
+**1 notification:**
+- `BookingConfirmedNotification` — queued placeholder email (Session 10 replaces)
 
-**4 form requests** in `App\Http\Requests\Onboarding\`:
-- `StoreProfileRequest` — validates business profile with slug uniqueness/reserved check
-- `StoreHoursRequest` — validates nested array of days with time windows
-- `StoreServiceRequest` — validates service fields including slot interval allowlist
-- `StoreInvitationsRequest` — validates invitation emails and service_ids
+**Rate limiters:**
+- `booking-api`: 60 requests/min per IP (read endpoints)
+- `booking-create`: 5 requests/min per IP (booking creation)
 
-**Model updates:**
-- `Business` — added fillable `onboarding_step`, `onboarding_completed_at`; added `isOnboarded()` helper, `invitations()` relationship
-- `BusinessInvitation` — added fillable `service_ids` with array cast
-- `BusinessFactory` — added `onboarded()` state
-
-**Other backend changes:**
-- `SlugService` — added `onboarding` to reserved slugs, added `isTakenExcluding()` method
-- `InvitationController@accept` — auto-assigns services from `service_ids` on invitation acceptance
-- `bootstrap/app.php` — registered `onboarded` middleware alias
-- `routes/web.php` — added 4 onboarding routes (show, store, slug-check, logo-upload), welcome route, added `onboarded` middleware to dashboard group
+**Modified files:**
+- `SlugService` — added `'booking'` to reserved slugs
+- `AppServiceProvider` — registered rate limiters
+- `routes/web.php` — 5 new routes + catch-all (must remain last)
 
 ### Frontend
 
 **1 layout:**
-- `onboarding-layout.tsx` — minimal chrome with logo, logout, progress bar, clickable step navigation
+- `booking-layout.tsx` — minimal riservo branding, business name prominent
 
-**6 pages:**
-- `onboarding/step-1.tsx` — business profile with live slug check and logo upload
-- `onboarding/step-2.tsx` — working hours editor (7-day schedule with multiple time windows)
-- `onboarding/step-3.tsx` — first service creation (name, duration, price, buffers, slot interval)
-- `onboarding/step-4.tsx` — collaborator invitations with service assignment chips
-- `onboarding/step-5.tsx` — summary view with edit links and launch button
-- `dashboard/welcome.tsx` — celebration page with public URL and next-step cards
+**1 page:**
+- `booking/show.tsx` — single-page booking flow with 6 steps managed by `useState`
 
-**3 components** in `components/onboarding/`:
-- `week-schedule-editor.tsx` — manages 7 day rows
-- `day-row.tsx` — toggle + time windows per day
-- `time-window-row.tsx` — open/close time selects + remove button
+**6 components in `components/booking/`:**
+- `service-list.tsx` — grid of service cards (name, duration, price)
+- `collaborator-picker.tsx` — avatar list with "Any available" option (uses `useHttp` GET)
+- `date-time-picker.tsx` — COSS Calendar + time slot grid (uses `useHttp` for available-dates and slots)
+- `customer-form.tsx` — name/email/phone/notes form with hidden honeypot field
+- `booking-summary.tsx` — review + confirm (uses `useHttp` POST to create booking)
+- `booking-confirmation.tsx` — success/pending message with management link
 
-**Updated:**
-- `lang/en.json` — 60+ new translation keys
-- `tests/Feature/Auth/MiddlewareTest.php` — updated to use `onboarded()` factory state
-
-### Routes (4 new)
+### Routes (5 new + 1 catch-all)
 
 | Route | Purpose |
 |-------|---------|
-| GET/POST `/onboarding/step/{step}` | Wizard step show/store (1-5) |
-| POST `/onboarding/slug-check` | Live slug availability check (JSON) |
-| POST `/onboarding/logo-upload` | Immediate logo upload (JSON) |
-| GET `/dashboard/welcome` | Post-onboarding welcome page |
+| GET `/booking/{slug}/collaborators` | JSON: collaborators for a service |
+| GET `/booking/{slug}/available-dates` | JSON: month availability map |
+| GET `/booking/{slug}/slots` | JSON: time slots for a date |
+| POST `/booking/{slug}/book` | JSON: create booking |
+| GET `/{slug}/{serviceSlug?}` | Inertia: public booking page (CATCH-ALL, LAST) |
+
+### Tests (5 new test files, 36 tests)
+
+- `PublicBookingPageTest` — page rendering, pre-selection, customer prefill
+- `CollaboratorsApiTest` — collaborator list, service filtering, avatars
+- `AvailableDatesApiTest` — month availability, past dates, collaborator filter
+- `SlotsApiTest` — slot times, collaborator filter, past dates
+- `BookingCreationTest` — happy path, auto/manual confirm, find-or-create customer, slot conflict 409, honeypot 422, auto-assignment, notification
 
 ---
 
 ## Current Project State
 
-- **Backend**: 19 migrations, 11 models, 4 services, 1 DTO, 12 controllers, 8 form requests, 2 notifications, 3 custom middleware
-- **Frontend**: 20 pages, 3 layouts, 55 COSS UI components, 4 helper/onboarding components
-- **Tests**: 215 passing (566 assertions)
+- **Backend**: 19 migrations, 11 models, 4 services, 1 DTO, 13 controllers, 9 form requests, 3 notifications, 3 custom middleware
+- **Frontend**: 21 pages, 4 layouts, 55 COSS UI components, 4 onboarding components, 6 booking components
+- **Tests**: 251 passing (704 assertions)
 - **Build**: `npm run build` succeeds, `npx tsc --noEmit` clean, `vendor/bin/pint` clean
 
 ---
 
 ## Key Conventions Established
 
-- **Onboarding controller** in `App\Http\Controllers\OnboardingController` — single controller with step-dispatch pattern
-- **Onboarding form requests** in `App\Http\Requests\Onboarding\` namespace
-- **Onboarding layout**: `resources/js/layouts/onboarding-layout.tsx` — no sidebar, progress indicator
-- **Onboarding components**: `resources/js/components/onboarding/` — reusable schedule editor
-- **BusinessFactory `onboarded()` state**: use in tests where business must be fully onboarded
-- **JSON API endpoints**: slug check and logo upload return JSON, not Inertia responses; consumed via `fetch()` (see note below about useHttp)
-- **Step data saves immediately**: each wizard step persists to real models, not temporary storage
-- **Step tracking**: `onboarding_step` only advances forward, never backwards
-- **Logo storage**: `Storage::disk('public')` under `logos/` directory
+- **Public booking controller** at `App\Http\Controllers\Booking\PublicBookingController` — resolves business by slug, checks onboarding
+- **Booking components** in `resources/js/components/booking/` — each step is a separate component
+- **useHttp for AJAX**: All new standalone HTTP requests use Inertia v3's `useHttp` hook. GET requests use URL query params directly. POST requests use form data via `useHttp`.
+- **Catch-all route**: `/{slug}/{serviceSlug?}` is the LAST route in `web.php` — all new routes must be registered BEFORE it
+- **Rate limiting**: `booking-api` and `booking-create` rate limiters defined in `AppServiceProvider`
+- **Honeypot field**: hidden `website` field rendered off-screen in `customer-form.tsx`, checked in controller
+- **Customer find-or-create**: `Customer::firstOrCreate(['email' => ...])` with name/phone update on each booking
 
 ---
 
-## What Session 7 Needs to Know
+## What Session 8 Needs to Know
 
-Session 7 implements the public booking flow at `riservo.ch/{slug}`.
+Session 8 implements the business dashboard (calendar view, booking management, manual booking creation, customer directory).
 
-- **Business is fully set up after onboarding**: after Session 6, a business has a profile, working hours, and at least one service. The public booking page can rely on this data existing.
-- **Business hours exist**: `business_hours` table has records for open days. Use `AvailabilityService` from Session 3 for slot calculation.
-- **Service has a slug**: auto-generated from name during onboarding. Used in `/{slug}/{service-slug}` URL routing.
-- **Auth context**: the booking flow is public (no auth required). Guest customers create a Customer record at booking time.
-- **Onboarding middleware**: the `onboarded` middleware is on the dashboard route group. Public routes at `/{slug}` should NOT have this middleware.
-- **Existing rate limiting**: no rate limiting on public routes yet — Session 7 must add it per the roadmap.
+- **Booking creation exists**: the `store` method in `PublicBookingController` handles public bookings. Dashboard manual booking should follow a similar flow but with `source: manual`.
+- **BookingManagementController**: already handles `/bookings/{token}` for guest management. Dashboard booking actions (confirm, cancel, no-show, complete) are separate.
+- **Business model**: `confirmation_mode` affects whether public bookings are `confirmed` or `pending`. Dashboard bookings can be created directly as `confirmed`.
+- **Customer model**: global by email, not per-business. CRM queries filter via `Customer::whereHas('bookings', fn($q) => $q->where('business_id', $id))`.
+- **Inertia v3**: the client is now v3. Use `useHttp` for standalone HTTP requests, `useForm` for Inertia form submissions.
+- **SlotGeneratorService**: use for manual booking creation to verify slot availability. The `assignCollaborator` method is available for auto-assignment.
 
 ---
 
 ## Decisions Recorded
 
-- **D-040**: Onboarding state via `onboarding_step` + `onboarding_completed_at` on Business
-- **D-041**: Service pre-assignment via `service_ids` JSON on `business_invitations`
-- **D-042**: Logo uploaded immediately to `Storage::disk('public')`, path stored on Business
+- **D-043**: Public booking uses single Inertia page with client-side steps
+- **D-044**: Available dates API returns month-level availability map
+- **D-045**: Honeypot field rejects with 422
+- **D-046**: `booking` added to reserved slugs
+- **D-047**: Booking layout with minimal riservo branding
+- **D-048**: Upgrade Inertia client to v3 for useHttp hook
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **Inertia client v3 upgrade**: The project has `@inertiajs/react@2.3.21` (v2). The server adapter is v3 (`inertiajs/inertia-laravel@3`). Upgrading the client to v3 would enable the `useHttp` hook for standalone HTTP requests (currently using `fetch()`). This upgrade should be done carefully as it may have breaking changes — consider doing it as a dedicated task.
-- **Chunk size warning**: Vite build produces a ~641 KB JS bundle (up from 607 KB in Session 5). Code splitting should be considered before adding many more pages.
-- **Working hours edge cases**: The UI allows saving hours where a day has windows but the day is marked as disabled (the controller handles this correctly by filtering). No overlap detection between windows — if a user sets 09:00-17:00 and 10:00-14:00, both are saved. The `AvailabilityService` from Session 3 handles overlapping windows correctly by merging them.
-- **CSRF meta tag**: The `fetch()` calls in step-1 rely on a `<meta name="csrf-token">` tag. Verify this is present in the root Blade template — Laravel includes it by default.
+- **Onboarding `fetch()` migration**: The onboarding pages (step-1.tsx) still use raw `fetch()` for slug check and logo upload. These should be migrated to `useHttp` — could be done in Session 9 when business settings are built.
+- **Chunk size**: Vite build produces ~660 KB JS bundle. Code splitting should be considered before adding many more pages.
+- **COSS calendar particles**: The roadmap suggested evaluating `@coss/p-calendar-19` and `@coss/p-calendar-24`. The built-in COSS Calendar (`react-day-picker`) was used instead — it provides the needed functionality. The particles could be evaluated for a UX polish pass.
+- **Booking flow URL history**: Currently, page refresh returns to step 1. Browser back/forward doesn't track steps. This could be improved with `pushState` for each step.

@@ -411,3 +411,57 @@ Each decision has a stable ID that can be referenced in code comments (e.g., `//
 - **Context**: The onboarding wizard step 1 includes a logo upload. Two approaches: (a) upload the file with the form submission, or (b) upload immediately via a separate endpoint and store the path.
 - **Decision**: Logo is uploaded immediately via `POST /onboarding/logo-upload`, which stores the file to `Storage::disk('public')` under `logos/`, updates `business.logo` with the relative path, and returns the path and public URL as JSON. The main profile form stores only the path string, not the file.
 - **Consequences**: Instant preview feedback for the user. Old logos are deleted on replacement. The endpoint returns JSON, not an Inertia response — consumed via `fetch()` on the frontend (will use `useHttp` after upgrading to Inertia client v3).
+
+---
+
+### D-043 — Public booking uses single Inertia page with client-side steps
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: The public booking flow has 5-6 steps (service, collaborator, date/time, details, summary, confirmation). Using separate Inertia pages per step would cause server roundtrips and require server-side state management between steps.
+- **Decision**: A single Inertia page at `booking/show` renders all steps. Client-side `useState` manages the current step and accumulated selections. Slot data is fetched via JSON API endpoints using Inertia v3's `useHttp` hook. The final booking creation is a `useHttp` POST returning JSON.
+- **Consequences**: Single server-rendered page load. Step transitions are instant. Back-button behavior requires care. Page refresh returns to step 1 (with service pre-selected if URL has service slug).
+
+---
+
+### D-044 — Available dates API returns month-level availability map
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: The calendar must grey out days with no available slots. Checking each day individually from the frontend would cause 28-31 API calls per month.
+- **Decision**: `GET /booking/{slug}/available-dates` accepts `service_id`, optional `collaborator_id`, and `month` (YYYY-MM). Returns `{ dates: { "2026-04-14": true, "2026-04-15": false, ... } }` for the entire month. The backend calls `getAvailableSlots()` for each day.
+- **Consequences**: One request per month navigation. Simple for MVP. If performance becomes an issue, the service can be optimized to short-circuit after finding the first slot per day.
+
+---
+
+### D-045 — Honeypot field rejects with 422
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: Public booking forms need bot prevention. Options: CAPTCHA (friction), honeypot (invisible), rate limiting (already added separately).
+- **Decision**: A hidden `website` field is included in the booking form. If it contains any value, the server returns 422 with a generic validation error. The field is positioned off-screen via CSS (not `display:none`, which bots detect).
+- **Consequences**: Simple, zero-friction bot prevention. Does not stop sophisticated bots. Combined with rate limiting (5 bookings/min/IP) for layered protection.
+
+---
+
+### D-046 — `booking` added to reserved slug blocklist
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: Session 7 adds JSON API routes under `/booking/{slug}/...` prefix. If a business registers the slug "booking", the URL `/booking` would be ambiguous between the catch-all route and the API prefix.
+- **Decision**: Add `'booking'` to the `SlugService::RESERVED_SLUGS` array.
+- **Consequences**: No business can use "booking" as their slug. The blocklist now includes both `booking` and `bookings`.
+
+---
+
+### D-047 — Booking layout with minimal riservo branding
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: The public booking page needs its own layout distinct from guest-layout, authenticated-layout, and onboarding-layout. The question was how much riservo branding to show.
+- **Decision**: New `booking-layout.tsx` with a small riservo logo in the header and "Powered by riservo.ch" link in the footer. Business name and logo are displayed prominently. No navigation links, no sidebar.
+- **Consequences**: Clean, professional customer-facing page. Business branding is primary. Similar to Cal.com and Calendly's approach.
+
+---
+
+### D-048 — Upgrade Inertia client to v3 for useHttp hook
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: The Inertia server adapter is already v3 (`inertiajs/inertia-laravel@3`). The client (`@inertiajs/react`) was v2. Session 7 needs standalone HTTP requests for slot availability and booking creation APIs. The `useHttp` hook (v3 only) provides reactive state management, automatic validation error parsing, and a consistent HTTP layer.
+- **Decision**: Upgrade `@inertiajs/react` from ^2 to ^3. Remove the `bootstrap.js` file (axios setup, no longer needed). All new AJAX calls use `useHttp`. Existing `fetch()` calls in onboarding pages are outside scope but noted for future migration.
+- **Consequences**: Access to `useHttp` with reactive `processing`, `errors`, `wasSuccessful` state. Axios dependency removed. React 19 requirement already met.
