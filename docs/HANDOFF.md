@@ -1,103 +1,112 @@
 # Handoff
 
-**Session**: 3 — Scheduling Engine (TDD)  
-**Date**: 2026-04-12  
+**Session**: 4 — Frontend Foundation (Inertia + React + COSS UI)  
+**Date**: 2026-04-13  
 **Status**: Complete
 
 ---
 
 ## What Was Built
 
-Session 3 built the scheduling engine — the core service that calculates available booking slots. Built entirely test-first.
+Session 4 set up the complete frontend foundation: Inertia.js, React 19, TypeScript 6, and COSS UI with all 55 primitives.
 
-### TimeWindow DTO (`app/DTOs/TimeWindow.php`)
-- Value object with `CarbonImmutable` start/end
-- Instance methods: `durationInMinutes()`, `overlaps()`, `contains()`
-- Static collection operations: `intersect()`, `subtract()`, `merge()`, `union()`
-- Used throughout both services for all time range calculations
+### Server-Side
 
-### AvailabilityService (`app/Services/AvailabilityService.php`)
-- `getAvailableWindows(Business, User collaborator, CarbonImmutable date)` → `TimeWindow[]`
-- Computes effective available time windows by:
-  1. Getting business hours for the weekday → TimeWindow[]
-  2. Applying business-level exceptions (blocks subtract, opens add)
-  3. Getting collaborator availability rules for the weekday → TimeWindow[]
-  4. Applying collaborator-level exceptions (blocks subtract, opens add)
-  5. Intersecting the two sets (business hours bound collaborator availability)
-- Exception query uses `whereDate()` for SQLite/MariaDB compatibility (D-030)
+- **Inertia Laravel adapter** (`inertiajs/inertia-laravel` v3) installed
+- **Root Blade template** (`resources/views/app.blade.php`) with `@viteReactRefresh`, `@vite()`, `@inertia`
+- **HandleInertiaRequests middleware** sharing: `auth.user`, `flash.success/error`, `locale`, `translations` (lazy-loaded from `lang/{locale}.json`)
+- **Middleware registered** in `bootstrap/app.php` (appended to web group)
+- **Base translation file** (`lang/en.json`) with initial English strings
 
-### SlotGeneratorService (`app/Services/SlotGeneratorService.php`)
-- `getAvailableSlots(Business, Service, CarbonImmutable date, ?User collaborator)` → `CarbonImmutable[]`
-  - If collaborator specified: generates slots for that collaborator
-  - If null: unions slots across all eligible collaborators (assigned to service)
-- `assignCollaborator(Business, Service, CarbonImmutable startsAt)` → `?User`
-  - `first_available`: first collaborator (by ID) with an open slot
-  - `round_robin`: least-busy — fewest upcoming confirmed/pending bookings (D-028)
-- Slot generation logic:
-  - Iterates available windows at `slot_interval_minutes`
-  - Checks buffer fit: `(slot - buffer_before)` to `(slot + duration + buffer_after)` must fit in window
-  - Checks booking conflicts: existing booking occupied windows (with their service's buffers) must not overlap
-  - Only `pending`/`confirmed` bookings block (D-031)
+### Frontend Stack
 
-### Tests (53 new tests, 110 total)
-| File | Tests | Coverage |
-|------|-------|----------|
-| `tests/Unit/Services/TimeWindowTest.php` | 14 | intersect, subtract, merge, union, overlaps, contains, duration |
-| `tests/Feature/Services/AvailabilityServiceTest.php` | 13 | Weekly schedule, business hours intersection, exceptions (block/open, full/partial, both levels), multi-day, compose |
-| `tests/Feature/Services/SlotGeneratorServiceTest.php` | 15 | Slot intervals, buffers, booking conflicts, cancelled/completed don't block, back-to-back, edge cases, timezone |
-| `tests/Feature/Services/CollaboratorAssignmentTest.php` | 7 | First-available, least-busy round-robin, eligibility, tie-breaking, null collaborator union |
-| `tests/Feature/Services/SlotGenerationIntegrationTest.php` | 4 | Seeded data, Swiss National Day block, timezone UTC↔CEST, DST spring forward |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `react` + `react-dom` | ^19 | UI framework |
+| `@inertiajs/react` | ^2 | Inertia React adapter |
+| `@base-ui-components/react` | * | Base UI primitives (COSS dependency) |
+| `typescript` | ^6.0 | Type checking |
+| `@vitejs/plugin-react` | * | Vite React/JSX support |
+| `@fontsource-variable/inter` | * | Inter font (COSS default) |
+
+### COSS UI (`resources/js/components/ui/`)
+
+All 55 COSS primitives installed via `npx shadcn@latest init @coss/style --template laravel`. Includes: Button, Sidebar, Avatar, Card, Input, Dialog, Select, Form, Table, Toast, and 45 more. Configuration in `components.json`.
+
+### Translation Hook — `useTrans()` (`resources/js/hooks/use-trans.ts`)
+
+Resolves P-002. `const { t } = useTrans()` mirrors PHP's `__()`:
+- Reads translations from Inertia shared props
+- Falls back to the key itself when no translation found
+- Supports `:placeholder` replacements: `t('Welcome to :app', { app: 'riservo' })`
+
+### Layouts
+
+- **GuestLayout** (`resources/js/layouts/guest-layout.tsx`): centered card layout with riservo logo. Used for `/login`, `/register`.
+- **AuthenticatedLayout** (`resources/js/layouts/authenticated-layout.tsx`): COSS Sidebar with navigation, user avatar in footer, SidebarTrigger in header. Used for `/dashboard`.
+
+### Pages
+
+| Route | Page Component | Layout |
+|-------|---------------|--------|
+| `/` | `pages/welcome.tsx` | None (full-page) |
+| `/login` | `pages/auth/login.tsx` | GuestLayout |
+| `/register` | `pages/auth/register.tsx` | GuestLayout |
+| `/dashboard` | `pages/dashboard.tsx` | AuthenticatedLayout |
+
+### Routes (`routes/web.php`)
+
+4 Inertia routes using `Inertia::render()`. Named routes: `login`, `register`, `dashboard`.
 
 ---
 
 ## Current Project State
 
-- Database: 14 migrations, all SQLite-compatible (unchanged from Session 2)
-- Models: 10 Eloquent models (unchanged from Session 2)
-- **Services**: 2 new — `AvailabilityService`, `SlotGeneratorService`
-- **DTOs**: 1 new — `TimeWindow`
-- Tests: 110 passing (236 assertions)
-- Code quality: Pint passes with 0 issues
-- No controllers, routes, or views yet
-- No frontend installed yet
+- **Backend**: 14 migrations, 10 models, 2 services (AvailabilityService, SlotGeneratorService), 1 DTO (TimeWindow)
+- **Frontend**: Inertia + React 19 + TypeScript 6 + COSS UI (55 components) + Tailwind CSS v4
+- **Tests**: 110 passing (236 assertions)
+- **Build**: `npm run build` succeeds, `npx tsc --noEmit` passes
+- **All 4 routes** return HTTP 200
 
 ---
 
 ## Key Conventions Established
 
-- **TimeWindow DTO**: all time range operations go through `TimeWindow` static methods (intersect, subtract, merge, union)
-- **Business timezone throughout**: `AvailabilityService` and `SlotGeneratorService` operate in the business's local timezone. Booking queries convert date boundaries to UTC. Slot start times are returned in business timezone.
-- **Exception date queries**: use `whereDate()` instead of `where()` for date comparison — avoids SQLite string comparison issues with the `'date'` cast storing datetime strings
-- **Exception application order**: full-day blocks wipe all → partial blocks subtract → open exceptions add back
-- **Booking conflict check**: each existing booking's occupied window uses that booking's own service buffers (not the requested service's buffers)
-- **Only pending/confirmed block**: cancelled, completed, and no_show bookings are completely ignored during slot calculation
+- **TypeScript config**: single `tsconfig.json` with `@/*` path alias to `./resources/js/*`. No `baseUrl` (deprecated in TS 6).
+- **Page resolution**: `import.meta.glob('./pages/**/*.tsx', { eager: true })` — page name in `Inertia::render('auth/login')` maps to `resources/js/pages/auth/login.tsx`
+- **Translations**: `useTrans()` hook in React, `__()` in PHP. Keys stored in `lang/en.json`.
+- **Layouts**: components that wrap page content. Each page imports its layout and renders as children.
+- **COSS UI**: uses `render` prop for composition (not `asChild`). Example: `<Button render={<Link href="/login" />}>`
+- **Vite**: React plugin + Tailwind v4 plugin + Laravel plugin. Entry: `resources/js/app.tsx`.
+- **Fonts**: Inter via `@fontsource-variable/inter`. Geist Mono removed (Next.js only package). Monospace falls back to system fonts.
+- **`withoutVite()`**: required in feature tests that hit routes rendering Inertia pages (Vite manifest not present in test environment)
 
 ---
 
-## What Session 4 Needs to Know
+## What Session 5 Needs to Know
 
-Session 4 installs the frontend foundation (Inertia + React + COSS UI). No direct dependency on the scheduling engine, but good to know:
+Session 5 implements authentication. Key things:
 
-- The scheduling engine has no controllers or API endpoints yet — Session 7 (Public Booking Flow) will wire these up
-- `SlotGeneratorService` is the public API for slot calculation. It is injectable via Laravel's container.
-- Slot times are `CarbonImmutable` instances in the business timezone
-- P-002 (React i18n approach) is still open for Session 4 to resolve
+- **Routes exist** for `/login`, `/register`, `/dashboard` but have no auth logic — they're placeholder Inertia renders
+- **HandleInertiaRequests** already shares `auth.user` (currently always null since no auth yet)
+- **GuestLayout** is ready for login/register forms
+- **AuthenticatedLayout** shows user avatar/name from `auth.user` prop
+- **No auth middleware** on `/dashboard` yet — Session 5 must add it
+- **Form handling**: Inertia's `useForm()` hook should be used for auth forms. The placeholder pages currently use plain `<Input>` without form state.
+- **COSS Form/Field primitives** are installed and available for building proper form fields with labels and validation errors
+- **Named routes**: `login` is already named (Laravel's default redirect target for unauthenticated users)
 
 ---
 
 ## Decisions Recorded
 
-- **D-028**: Round-robin uses least-busy strategy (fewest upcoming bookings, stateless)
-- **D-029**: TimeWindow DTO for internal availability calculations
-- **D-030**: Slot calculation works entirely in business timezone; booking queries convert to UTC
-- **D-031**: Only pending and confirmed bookings block availability
-- **P-001**: Resolved — both strategies implemented per D-028
+- **D-033**: React i18n uses `useTrans()` hook with Laravel JSON translations via Inertia props (resolves P-002)
+- **D-034**: COSS UI initialized via shadcn CLI, all 55 primitives copied into project
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **P-002**: React i18n approach — for Session 4
-- COSS UI skill is already installed (`.agents/skills/coss` and `.agents/skills/coss-particles`). Before proceeding with Session 4, verify the skill is loading correctly by asking Claude to describe a COSS UI component or pattern — if it answers with COSS-specific knowledge, the skill is active.
-- Hostpoint deployment details: needed before production
-- `getAvailableDates()` convenience method: not built in Session 3 — Session 7 should add it when building the calendar UI
+- **Geist Mono font**: removed because the npm package is Next.js-only. If monospace font styling matters, consider adding Geist Mono via CDN or `@fontsource/geist-mono` in a future session.
+- **Code splitting**: Vite build warning about chunk size (582 KB JS). Not a problem for MVP but `import.meta.glob` with `eager: false` + `resolveComponent` can be used later for lazy loading.
+- **Dark mode**: COSS theme includes `.dark` variant CSS. No toggle implemented yet — all pages render in light mode.

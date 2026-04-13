@@ -8,9 +8,8 @@
         "esModuleInterop": true,
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
-        "baseUrl": ".",
         "paths": {
-            "@/*": ["resources/js/*"]
+            "@/*": ["./resources/js/*"]
         },
         "types": ["vite/client"],
         "isolatedModules": true,

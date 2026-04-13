@@ -316,8 +316,26 @@ Each decision has a stable ID that can be referenced in code comments (e.g., `//
 
 ---
 
-### P-002 — React i18n approach (Open Proposal)
+### P-002 — React i18n approach (Resolved)
 - **Date**: 2026-04-12
-- **Status**: open — for Session 4 agent to investigate
+- **Status**: resolved — see D-033
 - **Context**: SPEC §14 says all user-facing strings use `__()` in PHP and React. `__()` is PHP-only — the React side needs a JS mechanism. A common pattern with Laravel + Inertia is passing a JSON translation file via shared props.
-- **Proposal**: The Session 4 agent should research the best practice for translations with Laravel 13 + Inertia + React and decide the approach during planning. The decision should cover: how translations are loaded, how they're accessed in components, and whether a JS i18n library is needed or if a simple helper function suffices.
+- **Resolution**: Simple `useTrans()` hook implemented in Session 4. See D-033.
+
+---
+
+### D-033 — React i18n: useTrans() hook with Laravel JSON translations
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: P-002 asked how to handle translations in React. Options considered: react-i18next (full library) vs. a lightweight custom hook. The project uses Laravel's `__()` for PHP and needs an equivalent in React.
+- **Decision**: `HandleInertiaRequests` middleware shares the current locale's JSON translation file (`lang/{locale}.json`) as an Inertia prop. A `useTrans()` hook reads translations from page props and returns a `t(key, replacements?)` function. `t()` mirrors `__()` behavior: falls back to the key itself, uses `:placeholder` replacement syntax. No i18n library dependency.
+- **Consequences**: All React components use `const { t } = useTrans()` for translated strings. New translation keys are added to `lang/en.json`. Pre-launch, `lang/it.json`, `lang/de.json`, `lang/fr.json` provide translations per D-008.
+
+---
+
+### D-034 — COSS UI via shadcn CLI, components copied into project
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: COSS UI components need to be installed into the project. The CLI (`npx shadcn@latest`) handles dependency resolution, file placement, and transitive component imports.
+- **Decision**: COSS UI was initialized with `npx shadcn@latest init @coss/style --template laravel`. This installed all 55 primitives into `resources/js/components/ui/`, the `cn()` utility into `resources/js/lib/utils.ts`, theme tokens into `resources/css/app.css`, and Inter font via `@fontsource-variable/inter`. The `components.json` config file maps aliases to the Laravel project structure.
+- **Consequences**: Components are local files — no npm UI package to version. Future COSS updates can be applied by re-running `npx shadcn@latest add @coss/<component>` to overwrite individual files. The `geist` mono font package was removed (Next.js-only) — monospace font falls back to system defaults.

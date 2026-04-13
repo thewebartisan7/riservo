@@ -64,16 +64,16 @@ Core service that calculates available booking slots. Built test-first.
 
 ## Session 4 — Frontend Foundation (Inertia + React + COSS UI)
 
-- [ ] Install and configure Inertia.js (server-side Laravel adapter)
-- [ ] Install and configure React + TypeScript
+- [x] Install and configure Inertia.js (server-side Laravel adapter)
+- [x] Install and configure React + TypeScript
 - [x] Install COSS UI skill: `pnpm dlx skills add cosscom/coss` (already installed — `.agents/skills/coss` + `.agents/skills/coss-particles`)
-- [ ] Set up Tailwind CSS v4 (required by COSS UI)
-- [ ] Copy initial COSS UI components into the project (copy-paste approach — no npm install)
-- [ ] Set up Vite with HMR for local development
-- [ ] Create root layout shell (authenticated and guest variants) using COSS UI components
-- [ ] Set up shared Inertia page props (auth user, flash messages, etc.)
-- [ ] Create placeholder pages: `/`, `/login`, `/register`, `/dashboard`
-- [ ] Confirm Inertia routing works end-to-end with a basic page render
+- [x] Set up Tailwind CSS v4 (required by COSS UI)
+- [x] Copy initial COSS UI components into the project (via `npx shadcn@latest init @coss/style` — all 55 primitives installed)
+- [x] Set up Vite with HMR for local development
+- [x] Create root layout shell (authenticated and guest variants) using COSS UI components
+- [x] Set up shared Inertia page props (auth user, flash messages, etc.)
+- [x] Create placeholder pages: `/`, `/login`, `/register`, `/dashboard`
+- [x] Confirm Inertia routing works end-to-end with a basic page render
 
 ---
 
