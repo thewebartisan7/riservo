@@ -4,10 +4,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Field, FieldLabel, FieldError } from '@/components/ui/field';
 import { useTrans } from '@/hooks/use-trans';
-import { router, useHttp } from '@inertiajs/react';
+import { router, usePage } from '@inertiajs/react';
 import { store, show } from '@/actions/App/Http/Controllers/OnboardingController';
 import { type FormEvent, useState } from 'react';
 import { PlusIcon, Trash2Icon } from 'lucide-react';
+import type { PageProps } from '@/types';
 
 interface ServiceOption {
     id: number;
@@ -37,7 +38,8 @@ export default function Step4({ services, pendingInvitations }: Props) {
             ? pendingInvitations.map((inv) => ({ email: inv.email, service_ids: inv.service_ids ?? [] }))
             : [{ email: '', service_ids: [] }],
     );
-    const http = useHttp({ invitations: [] as InvitationRow[] });
+    const [processing, setProcessing] = useState(false);
+    const pageErrors = usePage<PageProps>().props.errors as Record<string, string> | undefined;
 
     function addRow() {
         setInvitations([...invitations, { email: '', service_ids: [] }]);
@@ -66,11 +68,11 @@ export default function Step4({ services, pendingInvitations }: Props) {
     }
 
     function submitData(rows: InvitationRow[]) {
-        http.setData('invitations', rows);
-        http.post(store.url(4), {
-            onSuccess: () => {
-                router.visit(show(5));
-            },
+        router.post(store.url(4), { invitations: rows } as Record<string, unknown>, {
+            preserveState: true,
+            preserveScroll: true,
+            onStart: () => setProcessing(true),
+            onFinish: () => setProcessing(false),
         });
     }
 
@@ -94,7 +96,7 @@ export default function Step4({ services, pendingInvitations }: Props) {
                 <form onSubmit={submit}>
                     <CardPanel className="flex flex-col gap-4">
                         {invitations.map((invitation, index) => {
-                            const emailError = (http.errors as Record<string, string>)[`invitations.${index}.email`];
+                            const emailError = pageErrors?.[`invitations.${index}.email`];
                             return (
                             <div key={index} className="rounded-lg border p-4">
                                 <div className="flex items-start gap-2">
@@ -168,12 +170,12 @@ export default function Step4({ services, pendingInvitations }: Props) {
                                 type="button"
                                 variant="ghost"
                                 onClick={skip}
-                                disabled={http.processing}
+                                disabled={processing}
                             >
                                 {t('Skip this step')}
                             </Button>
                         </div>
-                        <Button type="submit" disabled={http.processing}>
+                        <Button type="submit" disabled={processing}>
                             {t('Continue')}
                         </Button>
                     </CardFooter>

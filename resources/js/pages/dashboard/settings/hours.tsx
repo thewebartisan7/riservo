@@ -3,12 +3,13 @@ import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } f
 import { Button } from '@/components/ui/button';
 import { InputError } from '@/components/input-error';
 import { useTrans } from '@/hooks/use-trans';
-import { router, useHttp } from '@inertiajs/react';
+import { router, usePage } from '@inertiajs/react';
 import { update } from '@/actions/App/Http/Controllers/Dashboard/Settings/WorkingHoursController';
 import { WeekScheduleEditor } from '@/components/onboarding/week-schedule-editor';
 import type { DaySchedule } from '@/components/onboarding/day-row';
 import type { FormEvent } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
+import type { PageProps } from '@/types';
 
 interface Props {
     hours: DaySchedule[];
@@ -17,25 +18,18 @@ interface Props {
 export default function WorkingHours({ hours: initialHours }: Props) {
     const { t } = useTrans();
     const [hours, setHours] = useState<DaySchedule[]>(initialHours);
-    const http = useHttp({ hours: [] as DaySchedule[] });
-    const pendingSubmit = useRef(false);
+    const [processing, setProcessing] = useState(false);
+    const pageErrors = usePage<PageProps>().props.errors as Record<string, string> | undefined;
 
     function submit(e: FormEvent) {
         e.preventDefault();
-        http.setData('hours', hours);
-        pendingSubmit.current = true;
+        router.put(update.url(), { hours } as Record<string, unknown>, {
+            preserveState: true,
+            preserveScroll: true,
+            onStart: () => setProcessing(true),
+            onFinish: () => setProcessing(false),
+        });
     }
-
-    useEffect(() => {
-        if (pendingSubmit.current && http.data.hours.length > 0) {
-            pendingSubmit.current = false;
-            http.put(update.url(), {
-                onSuccess: () => {
-                    router.reload();
-                },
-            });
-        }
-    }, [http.data.hours]);
 
     return (
         <SettingsLayout title={t('Working Hours')}>
@@ -47,16 +41,16 @@ export default function WorkingHours({ hours: initialHours }: Props) {
                 <form onSubmit={submit}>
                     <CardPanel>
                         <WeekScheduleEditor hours={hours} onChange={setHours} />
-                        {http.hasErrors && (
+                        {pageErrors && Object.keys(pageErrors).length > 0 && (
                             <div className="mt-4">
-                                {Object.values(http.errors).map((error: string, i: number) => (
+                                {Object.values(pageErrors).map((error: string, i: number) => (
                                     <InputError key={i} message={error} />
                                 ))}
                             </div>
                         )}
                     </CardPanel>
                     <CardFooter className="flex justify-end">
-                        <Button type="submit" disabled={http.processing}>{t('Save changes')}</Button>
+                        <Button type="submit" disabled={processing}>{t('Save changes')}</Button>
                     </CardFooter>
                 </form>
             </Card>
