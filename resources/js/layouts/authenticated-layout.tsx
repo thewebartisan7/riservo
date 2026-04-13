@@ -1,4 +1,4 @@
-import { Head, usePage } from '@inertiajs/react';
+import { Head, Link, usePage } from '@inertiajs/react';
 import type { PropsWithChildren } from 'react';
 import type { PageProps } from '@/types';
 import {
@@ -85,6 +85,19 @@ export default function AuthenticatedLayout({
                                             </AvatarFallback>
                                         </Avatar>
                                         <span>{auth.user.name}</span>
+                                    </SidebarMenuButton>
+                                </SidebarMenuItem>
+                                <SidebarMenuItem>
+                                    <SidebarMenuButton
+                                        render={
+                                            <Link
+                                                href="/logout"
+                                                method="post"
+                                                as="button"
+                                            />
+                                        }
+                                    >
+                                        {t('Log out')}
                                     </SidebarMenuButton>
                                 </SidebarMenuItem>
                             </SidebarMenu>

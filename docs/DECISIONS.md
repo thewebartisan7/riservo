@@ -339,3 +339,48 @@ Each decision has a stable ID that can be referenced in code comments (e.g., `//
 - **Context**: COSS UI components need to be installed into the project. The CLI (`npx shadcn@latest`) handles dependency resolution, file placement, and transitive component imports.
 - **Decision**: COSS UI was initialized with `npx shadcn@latest init @coss/style --template laravel`. This installed all 55 primitives into `resources/js/components/ui/`, the `cn()` utility into `resources/js/lib/utils.ts`, theme tokens into `resources/css/app.css`, and Inter font via `@fontsource-variable/inter`. The `components.json` config file maps aliases to the Laravel project structure.
 - **Consequences**: Components are local files — no npm UI package to version. Future COSS updates can be applied by re-running `npx shadcn@latest add @coss/<component>` to overwrite individual files. The `geist` mono font package was removed (Next.js-only) — monospace font falls back to system defaults.
+
+---
+
+### D-035 — Same web guard for all user types, role-based middleware
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: D-014 established three roles (admin, collaborator, customer). The question was whether customers should use a separate auth guard with their own session cookie, or share the `web` guard with business users.
+- **Decision**: All user types share the single `web` guard. A custom `EnsureUserHasRole` middleware checks the user's role (admin/collaborator via BusinessUser pivot, customer via Customer record). After login, users are redirected based on role: business users → `/dashboard`, customers → `/my-bookings`. A user can satisfy multiple roles simultaneously (e.g., a business admin who also has a Customer record).
+- **Consequences**: Simpler implementation — one guard, one login page, one session. A user who is both a business admin and a customer gets redirected to the dashboard (business takes priority) but can navigate to `/my-bookings` manually.
+
+---
+
+### D-036 — business_invitations table for collaborator invites
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: Collaborators are invited by email. The invite must be stored until accepted. Two approaches were considered: (a) pre-create a User record with null password, or (b) use a dedicated invitations table.
+- **Decision**: A `business_invitations` table stores pending invites (business_id, email, role, token, expires_at, accepted_at). No User record is created until the collaborator accepts the invite and sets their password. Invitations expire after 48 hours.
+- **Consequences**: No orphan User records for unaccepted invites. The acceptance flow creates both the User and BusinessUser pivot atomically. Session 9 builds the admin UI for sending invites; Session 5 builds the backend and acceptance page.
+
+---
+
+### D-037 — Magic link one-time use via token column on users table
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: D-006 requires magic links to be one-time use. `URL::temporarySignedRoute()` handles expiry and tamper protection but does not enforce single use. A mechanism is needed to invalidate a link after it's been clicked.
+- **Decision**: A `magic_link_token` nullable string column on the users table. When a magic link is requested, a random token is generated, stored on the user, and included as a parameter in the signed URL. On verification, the controller checks the token matches, then clears it. Requesting a new magic link overwrites the old token, invalidating previous links.
+- **Consequences**: One active magic link per user at a time. Simple and stateless — no extra table needed. The signed URL handles expiry (15 min) and integrity; the token column handles one-time use.
+
+---
+
+### D-038 — Email verification required for business dashboard access
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: Business owners register with email + password. The question was whether email verification should be required before accessing the dashboard or just encouraged.
+- **Decision**: Email verification is required. The `verified` middleware is applied to all dashboard routes. Unverified users are redirected to a "verify your email" page with a resend button. Collaborators who accept an invite are automatically marked as verified (they proved email ownership by clicking the invite link). Customers authenticated via magic link are also auto-verified. Customer routes (`/my-bookings`) do not require email verification.
+- **Consequences**: Prevents fake signups from accessing business features. Adds a verification step to the registration flow but is standard SaaS practice.
+
+---
+
+### D-039 — Reserved slug blocklist for business registration
+- **Date**: 2026-04-13
+- **Status**: accepted
+- **Context**: D-003 and D-013 established catch-all `/{slug}` routing. Business slugs must not collide with system routes. A blocklist is needed to prevent registration of slugs like `login`, `dashboard`, `api`, etc.
+- **Decision**: A `SlugService` maintains a constant array of reserved slugs (all current and planned system route prefixes). Business registration generates a slug from the business name via `Str::slug()`, checks against the blocklist and existing slugs, and appends an incrementing number if taken.
+- **Consequences**: The blocklist must be maintained as new routes are added. Slug generation is centralized in `SlugService` — used by registration (Session 5) and business settings (Session 9).

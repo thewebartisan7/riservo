@@ -1,6 +1,6 @@
 # Handoff
 
-**Session**: 4 — Frontend Foundation (Inertia + React + COSS UI)  
+**Session**: 5 — Authentication  
 **Date**: 2026-04-13  
 **Status**: Complete
 
@@ -8,105 +8,137 @@
 
 ## What Was Built
 
-Session 4 set up the complete frontend foundation: Inertia.js, React 19, TypeScript 6, and COSS UI with all 55 primitives.
+Session 5 implemented the complete custom authentication system (no Fortify, no Jetstream) covering three user types: business admins, collaborators, and customers.
 
-### Server-Side
+### Backend
 
-- **Inertia Laravel adapter** (`inertiajs/inertia-laravel` v3) installed
-- **Root Blade template** (`resources/views/app.blade.php`) with `@viteReactRefresh`, `@vite()`, `@inertia`
-- **HandleInertiaRequests middleware** sharing: `auth.user`, `flash.success/error`, `locale`, `translations` (lazy-loaded from `lang/{locale}.json`)
-- **Middleware registered** in `bootstrap/app.php` (appended to web group)
-- **Base translation file** (`lang/en.json`) with initial English strings
+**3 migrations:**
+- `make_password_nullable_on_users_table` — allows magic-link-only users
+- `add_magic_link_token_to_users_table` — one-time-use magic link enforcement
+- `create_business_invitations_table` — collaborator invite storage
 
-### Frontend Stack
+**Models:**
+- `BusinessInvitation` — new model with factory, helpers: `isExpired()`, `isAccepted()`, `isPending()`
+- `User` updated — implements `MustVerifyEmail`, added `magic_link_token` to fillable/hidden, added helpers: `hasBusinessRole()`, `isCustomer()`, `currentBusiness()`, `currentBusinessRole()`
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `react` + `react-dom` | ^19 | UI framework |
-| `@inertiajs/react` | ^2 | Inertia React adapter |
-| `@base-ui-components/react` | * | Base UI primitives (COSS dependency) |
-| `typescript` | ^6.0 | Type checking |
-| `@vitejs/plugin-react` | * | Vite React/JSX support |
-| `@fontsource-variable/inter` | * | Inter font (COSS default) |
+**9 controllers:**
+- `Auth\RegisterController` — business owner registration (creates User + Business + admin pivot)
+- `Auth\LoginController` — email/password login, logout, role-based redirect
+- `Auth\MagicLinkController` — magic link request + verify (for business users and customers, auto-creates User for guest customers)
+- `Auth\EmailVerificationController` — notice, verify, resend
+- `Auth\PasswordResetController` — forgot password + reset password
+- `Auth\InvitationController` — collaborator invite acceptance (creates User + BusinessUser pivot)
+- `Auth\CustomerRegisterController` — customer password registration (links to existing Customer record)
+- `Booking\BookingManagementController` — guest booking view/cancel via cancellation_token
+- `Customer\BookingController` — authenticated customer bookings list + cancel
 
-### COSS UI (`resources/js/components/ui/`)
+**4 form requests** with validation and rate limiting:
+- `RegisterRequest`, `LoginRequest` (with rate limiting), `AcceptInvitationRequest`, `CustomerRegisterRequest`
 
-All 55 COSS primitives installed via `npx shadcn@latest init @coss/style --template laravel`. Includes: Button, Sidebar, Avatar, Card, Input, Dialog, Select, Form, Table, Toast, and 45 more. Configuration in `components.json`.
+**1 middleware:**
+- `EnsureUserHasRole` — checks admin/collaborator via BusinessUser pivot, customer via Customer record
 
-### Translation Hook — `useTrans()` (`resources/js/hooks/use-trans.ts`)
+**1 service:**
+- `SlugService` — generates unique business slugs with reserved slug blocklist
 
-Resolves P-002. `const { t } = useTrans()` mirrors PHP's `__()`:
-- Reads translations from Inertia shared props
-- Falls back to the key itself when no translation found
-- Supports `:placeholder` replacements: `t('Welcome to :app', { app: 'riservo' })`
+**2 notifications:**
+- `MagicLinkNotification`, `InvitationNotification` — plain email (Session 10 adds templates)
 
-### Layouts
+### Frontend
 
-- **GuestLayout** (`resources/js/layouts/guest-layout.tsx`): centered card layout with riservo logo. Used for `/login`, `/register`.
-- **AuthenticatedLayout** (`resources/js/layouts/authenticated-layout.tsx`): COSS Sidebar with navigation, user avatar in footer, SidebarTrigger in header. Used for `/dashboard`.
+**10 React pages** (2 rewrites + 8 new) using COSS UI + Inertia `useForm()`:
+- `auth/register.tsx` — business registration with business_name field
+- `auth/login.tsx` — email/password with remember me, links to magic-link and forgot-password
+- `auth/magic-link.tsx` — email input for magic link request
+- `auth/verify-email.tsx` — verification notice with resend button
+- `auth/forgot-password.tsx` — password reset request
+- `auth/reset-password.tsx` — new password form
+- `auth/accept-invitation.tsx` — collaborator invite acceptance
+- `auth/customer-register.tsx` — customer password registration
+- `bookings/show.tsx` — guest booking details + cancel button
+- `customer/bookings.tsx` — authenticated customer bookings list (upcoming + past)
 
-### Pages
+**Updated:**
+- `authenticated-layout.tsx` — added logout button
+- `types/index.d.ts` — added Business, BookingDetail, BookingSummary, InvitationData interfaces
+- `HandleInertiaRequests` — shares `auth.role`, `auth.business`, `auth.email_verified`
+- `lang/en.json` — 60+ new translation keys
+- `components/input-error.tsx` — reusable validation error display
 
-| Route | Page Component | Layout |
-|-------|---------------|--------|
-| `/` | `pages/welcome.tsx` | None (full-page) |
-| `/login` | `pages/auth/login.tsx` | GuestLayout |
-| `/register` | `pages/auth/register.tsx` | GuestLayout |
-| `/dashboard` | `pages/dashboard.tsx` | AuthenticatedLayout |
+### Routes (25 total)
 
-### Routes (`routes/web.php`)
-
-4 Inertia routes using `Inertia::render()`. Named routes: `login`, `register`, `dashboard`.
+| Route | Purpose |
+|-------|---------|
+| GET/POST `/register` | Business registration |
+| GET/POST `/login` | Login |
+| POST `/logout` | Logout |
+| GET/POST `/magic-link` | Magic link request |
+| GET `/magic-link/verify/{user}` | Magic link verification (signed) |
+| GET/POST `/forgot-password` | Password reset request |
+| GET `/reset-password/{token}`, POST `/reset-password` | Password reset |
+| GET `/email/verify` | Verification notice |
+| GET `/email/verify/{id}/{hash}` | Verify email (signed) |
+| POST `/email/verification-notification` | Resend verification |
+| GET/POST `/invite/{token}` | Collaborator invite acceptance |
+| GET/POST `/customer/register` | Customer registration |
+| GET `/dashboard` | Dashboard (auth + verified + role:admin,collaborator) |
+| GET `/my-bookings`, POST `/my-bookings/{booking}/cancel` | Customer bookings |
+| GET `/bookings/{token}`, POST `/bookings/{token}/cancel` | Guest booking management |
 
 ---
 
 ## Current Project State
 
-- **Backend**: 14 migrations, 10 models, 2 services (AvailabilityService, SlotGeneratorService), 1 DTO (TimeWindow)
-- **Frontend**: Inertia + React 19 + TypeScript 6 + COSS UI (55 components) + Tailwind CSS v4
-- **Tests**: 110 passing (236 assertions)
-- **Build**: `npm run build` succeeds, `npx tsc --noEmit` passes
-- **All 4 routes** return HTTP 200
+- **Backend**: 17 migrations, 11 models, 3 services, 1 DTO, 9 controllers, 4 form requests, 2 notifications, 2 custom middleware
+- **Frontend**: 14 pages, 2 layouts, 55 COSS UI components, 1 helper component
+- **Tests**: 163 passing (349 assertions)
+- **Build**: `npm run build` succeeds, `npx tsc --noEmit` clean, `vendor/bin/pint` clean
 
 ---
 
 ## Key Conventions Established
 
-- **TypeScript config**: single `tsconfig.json` with `@/*` path alias to `./resources/js/*`. No `baseUrl` (deprecated in TS 6).
-- **Page resolution**: `import.meta.glob('./pages/**/*.tsx', { eager: true })` — page name in `Inertia::render('auth/login')` maps to `resources/js/pages/auth/login.tsx`
-- **Translations**: `useTrans()` hook in React, `__()` in PHP. Keys stored in `lang/en.json`.
-- **Layouts**: components that wrap page content. Each page imports its layout and renders as children.
-- **COSS UI**: uses `render` prop for composition (not `asChild`). Example: `<Button render={<Link href="/login" />}>`
-- **Vite**: React plugin + Tailwind v4 plugin + Laravel plugin. Entry: `resources/js/app.tsx`.
-- **Fonts**: Inter via `@fontsource-variable/inter`. Geist Mono removed (Next.js only package). Monospace falls back to system fonts.
-- **`withoutVite()`**: required in feature tests that hit routes rendering Inertia pages (Vite manifest not present in test environment)
+- **Auth controllers** in `App\Http\Controllers\Auth\` namespace
+- **Form requests** in `App\Http\Requests\Auth\` namespace
+- **Notifications** in `App\Notifications\` namespace
+- **Role middleware**: `role:admin,collaborator` on dashboard routes, `role:customer` on customer routes
+- **Email verification**: `verified` middleware on dashboard routes; collaborators verified on invite acceptance, customers verified via magic link or on password registration
+- **Magic link one-time use**: Token stored on User, cleared after use, new request invalidates old
+- **Business creation at registration**: minimal Business (name + slug) — onboarding wizard (Session 6) completes the profile
+- **Reserved slugs**: maintained in `SlugService::RESERVED_SLUGS` constant
+- **InputError component**: `resources/js/components/input-error.tsx` for displaying validation errors
+- **Inertia useForm**: all auth forms use `useForm()` with typed form data
 
 ---
 
-## What Session 5 Needs to Know
+## What Session 6 Needs to Know
 
-Session 5 implements authentication. Key things:
+Session 6 implements the business onboarding wizard shown after registration.
 
-- **Routes exist** for `/login`, `/register`, `/dashboard` but have no auth logic — they're placeholder Inertia renders
-- **HandleInertiaRequests** already shares `auth.user` (currently always null since no auth yet)
-- **GuestLayout** is ready for login/register forms
-- **AuthenticatedLayout** shows user avatar/name from `auth.user` prop
-- **No auth middleware** on `/dashboard` yet — Session 5 must add it
-- **Form handling**: Inertia's `useForm()` hook should be used for auth forms. The placeholder pages currently use plain `<Input>` without form state.
-- **COSS Form/Field primitives** are installed and available for building proper form fields with labels and validation errors
-- **Named routes**: `login` is already named (Laravel's default redirect target for unauthenticated users)
+- **After registration**, users are redirected to `/email/verify`. After verification, they go to `/dashboard`. Session 6 should intercept unboarded users and redirect to the wizard instead.
+- **Minimal Business created at registration**: only `name` and `slug` are set. The wizard must fill in: description, logo, contact info (phone, email, address), timezone (if not Europe/Zurich).
+- **Business hours**: the wizard sets up weekly working hours (BusinessHour model already exists from Session 2).
+- **First service**: wizard creates at least one Service (model exists from Session 2).
+- **Invite collaborators**: wizard uses the `BusinessInvitation` model and `InvitationNotification` built in Session 5.
+- **Slug is already generated**: the wizard's slug field should allow editing with live availability check. Use `SlugService` for validation.
+- **Auth context**: `auth.user`, `auth.role` ('admin'), `auth.business` are available via Inertia shared props.
+- **User is always the admin**: the wizard runs in the context of a verified admin user.
 
 ---
 
 ## Decisions Recorded
 
-- **D-033**: React i18n uses `useTrans()` hook with Laravel JSON translations via Inertia props (resolves P-002)
-- **D-034**: COSS UI initialized via shadcn CLI, all 55 primitives copied into project
+- **D-035**: Same `web` guard for all user types with role-based middleware
+- **D-036**: `business_invitations` table for collaborator invites (no pre-created users)
+- **D-037**: Magic link one-time use via `magic_link_token` column on users table
+- **D-038**: Email verification required for business dashboard access
+- **D-039**: Reserved slug blocklist for business registration
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **Geist Mono font**: removed because the npm package is Next.js-only. If monospace font styling matters, consider adding Geist Mono via CDN or `@fontsource/geist-mono` in a future session.
-- **Code splitting**: Vite build warning about chunk size (582 KB JS). Not a problem for MVP but `import.meta.glob` with `eager: false` + `resolveComponent` can be used later for lazy loading.
-- **Dark mode**: COSS theme includes `.dark` variant CSS. No toggle implemented yet — all pages render in light mode.
+- **Chunk size warning**: Vite build produces a 607 KB JS bundle. Not a problem for MVP but code splitting can be added later.
+- **Customer bookings page layout**: currently uses `GuestLayout` (centered card). Could benefit from a dedicated `CustomerLayout` in a future session.
+- **Admin UI for sending invites**: backend is built (model, notification, factory) but no admin-facing UI. Session 9 builds the collaborator management settings.
+- **Custom email templates**: all notifications use plain Laravel mail. Session 10 replaces with branded templates.

@@ -4,46 +4,33 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { InputError } from '@/components/input-error';
 import { useTrans } from '@/hooks/use-trans';
-import { Link, useForm } from '@inertiajs/react';
+import { useForm, usePage } from '@inertiajs/react';
 import type { FormEvent } from 'react';
 
-export default function Register() {
+export default function ResetPassword() {
     const { t } = useTrans();
+    const { token, email } = usePage<{ token: string; email: string }>().props;
     const form = useForm({
-        name: '',
-        email: '',
-        business_name: '',
+        token,
+        email,
         password: '',
         password_confirmation: '',
     });
 
     function submit(e: FormEvent) {
         e.preventDefault();
-        form.post('/register');
+        form.post('/reset-password');
     }
 
     return (
-        <GuestLayout title={t('Register')}>
+        <GuestLayout title={t('Reset password')}>
             <Card>
                 <CardHeader>
-                    <CardTitle>{t('Register')}</CardTitle>
-                    <CardDescription>{t('Create your business account')}</CardDescription>
+                    <CardTitle>{t('Reset password')}</CardTitle>
+                    <CardDescription>{t('Enter your new password below.')}</CardDescription>
                 </CardHeader>
                 <form onSubmit={submit}>
                     <CardPanel className="flex flex-col gap-4">
-                        <div className="flex flex-col gap-2">
-                            <label htmlFor="name" className="text-sm font-medium">{t('Name')}</label>
-                            <Input
-                                id="name"
-                                type="text"
-                                value={form.data.name}
-                                onChange={(e) => form.setData('name', e.target.value)}
-                                required
-                                autoFocus
-                            />
-                            <InputError message={form.errors.name} />
-                        </div>
-
                         <div className="flex flex-col gap-2">
                             <label htmlFor="email" className="text-sm font-medium">{t('Email')}</label>
                             <Input
@@ -51,31 +38,20 @@ export default function Register() {
                                 type="email"
                                 value={form.data.email}
                                 onChange={(e) => form.setData('email', e.target.value)}
-                                required
+                                readOnly
                             />
                             <InputError message={form.errors.email} />
                         </div>
 
                         <div className="flex flex-col gap-2">
-                            <label htmlFor="business_name" className="text-sm font-medium">{t('Business name')}</label>
-                            <Input
-                                id="business_name"
-                                type="text"
-                                value={form.data.business_name}
-                                onChange={(e) => form.setData('business_name', e.target.value)}
-                                required
-                            />
-                            <InputError message={form.errors.business_name} />
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                            <label htmlFor="password" className="text-sm font-medium">{t('Password')}</label>
+                            <label htmlFor="password" className="text-sm font-medium">{t('New password')}</label>
                             <Input
                                 id="password"
                                 type="password"
                                 value={form.data.password}
                                 onChange={(e) => form.setData('password', e.target.value)}
                                 required
+                                autoFocus
                             />
                             <InputError message={form.errors.password} />
                         </div>
@@ -91,12 +67,9 @@ export default function Register() {
                             />
                         </div>
                     </CardPanel>
-                    <CardFooter className="flex items-center justify-between">
-                        <Link href="/login" className="text-sm text-muted-foreground hover:underline">
-                            {t('Already have an account?')}
-                        </Link>
+                    <CardFooter className="flex justify-end">
                         <Button type="submit" disabled={form.processing}>
-                            {t('Register')}
+                            {t('Reset password')}
                         </Button>
                     </CardFooter>
                 </form>

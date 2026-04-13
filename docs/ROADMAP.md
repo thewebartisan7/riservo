@@ -81,17 +81,17 @@ Core service that calculates available booking slots. Built test-first.
 
 Custom auth implementation — **no Laravel Fortify, no Jetstream**.
 
-- [ ] Business owner registration (name, email, password, business name) + email verification
-- [ ] Email + password login and logout for business owners and collaborators
-- [ ] Magic link login for business owners and collaborators (alternative to password, `URL::temporarySignedRoute()`, one-time use, 15–30 min expiry)
-- [ ] Magic link as default auth for customers (no password required)
-- [ ] Optional password-based registration for customers who prefer it
-- [ ] Password reset via email
-- [ ] Collaborator invite flow: owner sends invite link → collaborator sets password on first login
-- [ ] Role middleware: `admin`, `collaborator` (business-scoped), `customer` (separate auth context, own bookings only) — owner/admin distinction deferred to v2
-- [ ] Guest booking management via signed URL token (no login required)
-- [ ] Route protection and redirect logic per role
-- [ ] All auth pages built in React with COSS UI components
+- [x] Business owner registration (name, email, password, business name) + email verification
+- [x] Email + password login and logout for business owners and collaborators
+- [x] Magic link login for business owners and collaborators (alternative to password, `URL::temporarySignedRoute()`, one-time use, 15–30 min expiry)
+- [x] Magic link as default auth for customers (no password required)
+- [x] Optional password-based registration for customers who prefer it
+- [x] Password reset via email
+- [x] Collaborator invite flow: owner sends invite link → collaborator sets password on first login
+- [x] Role middleware: `admin`, `collaborator` (business-scoped), `customer` (separate auth context, own bookings only) — owner/admin distinction deferred to v2
+- [x] Guest booking management via signed URL token (no login required)
+- [x] Route protection and redirect logic per role
+- [x] All auth pages built in React with COSS UI components
 
 ---
 

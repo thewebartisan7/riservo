@@ -41,6 +41,9 @@ class HandleInertiaRequests extends Middleware
             ...parent::share($request),
             'auth' => [
                 'user' => $request->user()?->only('id', 'name', 'email', 'avatar'),
+                'role' => fn () => $this->resolveRole($request),
+                'business' => fn () => $this->resolveBusiness($request),
+                'email_verified' => fn () => $request->user()?->hasVerifiedEmail() ?? false,
             ],
             'flash' => [
                 'success' => $request->session()->get('success'),
@@ -48,6 +51,51 @@ class HandleInertiaRequests extends Middleware
             ],
             'locale' => $locale,
             'translations' => fn () => $this->getTranslations($locale),
+        ];
+    }
+
+    private function resolveRole(Request $request): ?string
+    {
+        $user = $request->user();
+
+        if (! $user) {
+            return null;
+        }
+
+        $businessRole = $user->currentBusinessRole();
+
+        if ($businessRole) {
+            return $businessRole->value;
+        }
+
+        if ($user->isCustomer()) {
+            return 'customer';
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array{id: int, name: string, slug: string}|null
+     */
+    private function resolveBusiness(Request $request): ?array
+    {
+        $user = $request->user();
+
+        if (! $user) {
+            return null;
+        }
+
+        $business = $user->currentBusiness();
+
+        if (! $business) {
+            return null;
+        }
+
+        return [
+            'id' => $business->id,
+            'name' => $business->name,
+            'slug' => $business->slug,
         ];
     }
 

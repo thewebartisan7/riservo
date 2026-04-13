@@ -7,27 +7,28 @@ import { useTrans } from '@/hooks/use-trans';
 import { Link, useForm } from '@inertiajs/react';
 import type { FormEvent } from 'react';
 
-export default function Register() {
+export default function CustomerRegister() {
     const { t } = useTrans();
     const form = useForm({
         name: '',
         email: '',
-        business_name: '',
         password: '',
         password_confirmation: '',
     });
 
     function submit(e: FormEvent) {
         e.preventDefault();
-        form.post('/register');
+        form.post('/customer/register');
     }
 
     return (
-        <GuestLayout title={t('Register')}>
+        <GuestLayout title={t('Create customer account')}>
             <Card>
                 <CardHeader>
-                    <CardTitle>{t('Register')}</CardTitle>
-                    <CardDescription>{t('Create your business account')}</CardDescription>
+                    <CardTitle>{t('Create customer account')}</CardTitle>
+                    <CardDescription>
+                        {t('Register with the email you used when booking to manage all your appointments.')}
+                    </CardDescription>
                 </CardHeader>
                 <form onSubmit={submit}>
                     <CardPanel className="flex flex-col gap-4">
@@ -57,18 +58,6 @@ export default function Register() {
                         </div>
 
                         <div className="flex flex-col gap-2">
-                            <label htmlFor="business_name" className="text-sm font-medium">{t('Business name')}</label>
-                            <Input
-                                id="business_name"
-                                type="text"
-                                value={form.data.business_name}
-                                onChange={(e) => form.setData('business_name', e.target.value)}
-                                required
-                            />
-                            <InputError message={form.errors.business_name} />
-                        </div>
-
-                        <div className="flex flex-col gap-2">
                             <label htmlFor="password" className="text-sm font-medium">{t('Password')}</label>
                             <Input
                                 id="password"
@@ -92,8 +81,8 @@ export default function Register() {
                         </div>
                     </CardPanel>
                     <CardFooter className="flex items-center justify-between">
-                        <Link href="/login" className="text-sm text-muted-foreground hover:underline">
-                            {t('Already have an account?')}
+                        <Link href="/magic-link" className="text-sm text-muted-foreground hover:underline">
+                            {t('Or use a magic link')}
                         </Link>
                         <Button type="submit" disabled={form.processing}>
                             {t('Register')}

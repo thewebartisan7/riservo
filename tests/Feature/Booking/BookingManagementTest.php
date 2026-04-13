@@ -1,0 +1,96 @@
+<?php
+
+use App\Enums\BookingStatus;
+use App\Models\Booking;
+use App\Models\Business;
+use App\Models\Customer;
+use App\Models\Service;
+use App\Models\User;
+
+test('booking can be viewed by cancellation token', function () {
+    $this->withoutVite();
+    $business = Business::factory()->create();
+    $collaborator = User::factory()->create();
+    $service = Service::factory()->create(['business_id' => $business->id]);
+    $customer = Customer::factory()->create();
+
+    $booking = Booking::factory()->create([
+        'business_id' => $business->id,
+        'collaborator_id' => $collaborator->id,
+        'service_id' => $service->id,
+        'customer_id' => $customer->id,
+        'cancellation_token' => 'test-token-123',
+    ]);
+
+    $response = $this->get('/bookings/test-token-123');
+
+    $response->assertStatus(200);
+});
+
+test('invalid token returns 404', function () {
+    $response = $this->get('/bookings/non-existent-token');
+
+    $response->assertStatus(404);
+});
+
+test('booking can be cancelled via token', function () {
+    $business = Business::factory()->create(['cancellation_window_hours' => 0]);
+    $collaborator = User::factory()->create();
+    $service = Service::factory()->create(['business_id' => $business->id]);
+    $customer = Customer::factory()->create();
+
+    $booking = Booking::factory()->future()->confirmed()->create([
+        'business_id' => $business->id,
+        'collaborator_id' => $collaborator->id,
+        'service_id' => $service->id,
+        'customer_id' => $customer->id,
+        'cancellation_token' => 'cancel-token-123',
+    ]);
+
+    $response = $this->post('/bookings/cancel-token-123/cancel');
+
+    expect($booking->fresh()->status)->toBe(BookingStatus::Cancelled);
+    $response->assertSessionHas('success');
+});
+
+test('already cancelled booking cannot be cancelled again', function () {
+    $business = Business::factory()->create(['cancellation_window_hours' => 0]);
+    $collaborator = User::factory()->create();
+    $service = Service::factory()->create(['business_id' => $business->id]);
+    $customer = Customer::factory()->create();
+
+    $booking = Booking::factory()->cancelled()->create([
+        'business_id' => $business->id,
+        'collaborator_id' => $collaborator->id,
+        'service_id' => $service->id,
+        'customer_id' => $customer->id,
+        'cancellation_token' => 'cancel-token-456',
+    ]);
+
+    $response = $this->post('/bookings/cancel-token-456/cancel');
+
+    $response->assertSessionHas('error');
+});
+
+test('cancellation within window is blocked', function () {
+    $business = Business::factory()->create(['cancellation_window_hours' => 24]);
+    $collaborator = User::factory()->create();
+    $service = Service::factory()->create(['business_id' => $business->id]);
+    $customer = Customer::factory()->create();
+
+    // Booking starts in 2 hours (within 24h window)
+    $booking = Booking::factory()->confirmed()->create([
+        'business_id' => $business->id,
+        'collaborator_id' => $collaborator->id,
+        'service_id' => $service->id,
+        'customer_id' => $customer->id,
+        'starts_at' => now()->addHours(2),
+        'ends_at' => now()->addHours(3),
+        'cancellation_token' => 'cancel-token-789',
+    ]);
+
+    $response = $this->post('/bookings/cancel-token-789/cancel');
+
+    expect($booking->fresh()->status)->toBe(BookingStatus::Confirmed);
+    $response->assertSessionHas('error');
+});
