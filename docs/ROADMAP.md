@@ -255,6 +255,7 @@ Two-way synchronization between riservo.ch bookings and collaborator Google Cale
 - [ ] Webhook channel renewal (Google webhooks expire after ~7 days — auto-renew via scheduled job)
 - [ ] Connect/disconnect UI in collaborator profile settings
 - [ ] Sync status indicator in dashboard (connected, last synced, error state)
+- [ ] Add any relevant info about calendar sync deployments on server in the `docs/DEPLOYMENT.md`
 
 ---
 
