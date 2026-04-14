@@ -7,6 +7,7 @@ import DateTimePicker from '@/components/booking/date-time-picker';
 import CustomerForm, { type CustomerData } from '@/components/booking/customer-form';
 import BookingSummary from '@/components/booking/booking-summary';
 import BookingConfirmation from '@/components/booking/booking-confirmation';
+import StepIndicator from '@/components/booking/step-indicator';
 import { useTrans } from '@/hooks/use-trans';
 import type { PageProps, PublicBusiness, PublicCollaborator, PublicService } from '@/types';
 
@@ -101,54 +102,61 @@ export default function BookingShow() {
         }
     }
 
+    const totalSteps = business.allow_collaborator_choice ? 5 : 4;
+    const stepOrder: BookingStep[] = business.allow_collaborator_choice
+        ? ['service', 'collaborator', 'datetime', 'details', 'summary', 'confirmation']
+        : ['service', 'datetime', 'details', 'summary', 'confirmation'];
+    const stepIndex = stepOrder.indexOf(step);
+    const stepLabels: Record<BookingStep, string> = {
+        service: t('Service'),
+        collaborator: t('Specialist'),
+        datetime: t('Date & time'),
+        details: t('Your details'),
+        summary: t('Review'),
+        confirmation: t('Done'),
+    };
+
+    const showIndicator = step !== 'confirmation';
+    const indicator = showIndicator ? (
+        <StepIndicator
+            current={Math.min(stepIndex + 1, totalSteps)}
+            total={totalSteps}
+            stepLabel={stepLabels[step]}
+            onBack={step !== 'service' ? goBack : undefined}
+        />
+    ) : null;
+
     return (
         <BookingLayout
-            title={`${t('Book')} - ${business.name}`}
+            title={`${t('Book')} · ${business.name}`}
             businessName={business.name}
             businessLogoUrl={business.logo_url}
+            businessDescription={business.description}
+            businessAddress={business.address}
+            businessPhone={business.phone}
+            businessTimezone={business.timezone}
+            stepIndicator={indicator}
             embed={embed}
         >
-            {business.description && step === 'service' && (
-                <p className="mb-4 text-sm text-muted-foreground">{business.description}</p>
-            )}
-
             {step === 'service' && (
                 <ServiceList services={services} onSelect={handleServiceSelect} />
             )}
 
             {step === 'collaborator' && selectedService && (
-                <>
-                    <CollaboratorPicker
-                        slug={business.slug}
-                        serviceId={selectedService.id}
-                        onSelect={handleCollaboratorSelect}
-                    />
-                    <button
-                        type="button"
-                        onClick={goBack}
-                        className="mt-3 text-sm text-muted-foreground hover:text-foreground"
-                    >
-                        {t('Back')}
-                    </button>
-                </>
+                <CollaboratorPicker
+                    slug={business.slug}
+                    serviceId={selectedService.id}
+                    onSelect={handleCollaboratorSelect}
+                />
             )}
 
             {step === 'datetime' && selectedService && (
-                <>
-                    <DateTimePicker
-                        slug={business.slug}
-                        serviceId={selectedService.id}
-                        collaboratorId={selectedCollaborator?.id ?? null}
-                        onSelect={handleDateTimeSelect}
-                    />
-                    <button
-                        type="button"
-                        onClick={goBack}
-                        className="mt-3 text-sm text-muted-foreground hover:text-foreground"
-                    >
-                        {t('Back')}
-                    </button>
-                </>
+                <DateTimePicker
+                    slug={business.slug}
+                    serviceId={selectedService.id}
+                    collaboratorId={selectedCollaborator?.id ?? null}
+                    onSelect={handleDateTimeSelect}
+                />
             )}
 
             {step === 'details' && (
@@ -177,8 +185,10 @@ export default function BookingShow() {
                     status={bookingResult.status}
                     token={bookingResult.token}
                     service={selectedService}
+                    collaborator={selectedCollaborator}
                     date={selectedDate}
                     time={selectedTime}
+                    businessName={business.name}
                     onBookAnother={handleBookAnother}
                 />
             )}

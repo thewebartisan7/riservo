@@ -1,78 +1,132 @@
-import { Button } from '@/components/ui/button';
-import { Card, CardPanel } from '@/components/ui/card';
 import { useTrans } from '@/hooks/use-trans';
 import { show } from '@/actions/App/Http/Controllers/Booking/BookingManagementController';
-import type { PublicService } from '@/types';
+import type { PublicCollaborator, PublicService } from '@/types';
+import { Button } from '@/components/ui/button';
+import { Display } from '@/components/ui/display';
+import {
+    formatDateLong,
+    formatDay,
+    formatMonthShort,
+} from '@/lib/booking-format';
 
 interface BookingConfirmationProps {
     status: string;
     token: string;
     service: PublicService;
+    collaborator: PublicCollaborator | null;
     date: string;
     time: string;
+    businessName: string;
     onBookAnother: () => void;
-}
-
-function formatDate(dateStr: string): string {
-    const [y, m, d] = dateStr.split('-');
-    return `${d}.${m}.${y}`;
 }
 
 export default function BookingConfirmation({
     status,
     token,
     service,
+    collaborator,
     date,
     time,
+    businessName,
     onBookAnother,
 }: BookingConfirmationProps) {
     const { t } = useTrans();
-
     const isConfirmed = status === 'confirmed';
 
     return (
-        <div className="flex flex-col items-center gap-4 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-3xl">
-                {isConfirmed ? '\u2713' : '\u231B'}
-            </div>
-
-            <div>
-                <h2 className="text-lg font-semibold">
-                    {isConfirmed
-                        ? t('Booking confirmed!')
-                        : t('Booking received!')}
-                </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                    {isConfirmed
-                        ? t('Your appointment has been confirmed. A confirmation email has been sent.')
-                        : t('Your booking is pending confirmation. You will receive an email once confirmed.')}
-                </p>
-            </div>
-
-            <Card className="w-full">
-                <CardPanel className="text-sm">
-                    <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-                        <span className="text-muted-foreground">{t('Service')}</span>
-                        <span className="font-medium">{service.name}</span>
-
-                        <span className="text-muted-foreground">{t('Date')}</span>
-                        <span>{formatDate(date)}</span>
-
-                        <span className="text-muted-foreground">{t('Time')}</span>
-                        <span>{time}</span>
-                    </div>
-                </CardPanel>
-            </Card>
-
-            <div className="flex w-full flex-col gap-2">
-                <a
-                    href={show.url(token)}
-                    className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+        <div className="flex flex-col gap-8">
+            {/* Hand-drawn check / stamp — not a generic checkmark circle */}
+            <div className="flex items-center gap-4">
+                <svg
+                    width="56"
+                    height="56"
+                    viewBox="0 0 56 56"
+                    fill="none"
+                    aria-hidden
+                    className="shrink-0 stroke-primary"
                 >
-                    {t('View booking details')}
-                </a>
-                <Button variant="outline" onClick={onBookAnother}>
-                    {t('Book another appointment')}
+                    <circle
+                        cx="28"
+                        cy="28"
+                        r="26"
+                        strokeWidth="1.5"
+                        strokeDasharray="3 4"
+                        className="animate-confirm-circle"
+                    />
+                    <path
+                        d="M17 29 L25 37 L40 20"
+                        strokeWidth="2.25"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeDasharray="60"
+                        className="animate-confirm-check"
+                    />
+                </svg>
+                <div>
+                    <p className="text-xs uppercase tracking-widest text-primary">
+                        {isConfirmed ? t('Confirmed') : t('Received')}
+                    </p>
+                    <Display
+                        render={<h2 />}
+                        className="mt-0.5 text-2xl font-semibold leading-tight text-foreground"
+                    >
+                        {isConfirmed
+                            ? t("You're booked in.")
+                            : t("We've got it.")}
+                    </Display>
+                </div>
+            </div>
+
+            <p className="max-w-[40ch] text-sm leading-relaxed text-secondary-foreground">
+                {isConfirmed
+                    ? t('A confirmation is on its way to your inbox. See you soon at :business.', { business: businessName })
+                    : t("We'll email you as soon as :business confirms.", { business: businessName })}
+            </p>
+
+            {/* Hero date block */}
+            <div className="flex items-center gap-5 rounded-xl border border-ring bg-honey-soft px-5 py-5">
+                <div className="flex flex-col items-center justify-center">
+                    <span className="tabular-nums text-xs font-semibold uppercase tracking-widest text-primary">
+                        {formatMonthShort(date)}
+                    </span>
+                    <Display className="tabular-nums text-5xl font-semibold leading-none text-primary-foreground">
+                        {formatDay(date)}
+                    </Display>
+                </div>
+                <div className="h-10 w-px bg-ring" aria-hidden />
+                <div className="min-w-0">
+                    <Display
+                        render={<p />}
+                        className="text-lg font-semibold leading-tight text-primary-foreground"
+                    >
+                        {service.name}
+                    </Display>
+                    <p className="tabular-nums mt-1 text-sm text-primary-foreground opacity-80">
+                        {formatDateLong(date)} · {time}
+                    </p>
+                    {collaborator && (
+                        <p className="mt-0.5 text-xs text-primary-foreground opacity-70">
+                            {t('with :name', { name: collaborator.name })}
+                        </p>
+                    )}
+                </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+                <Button
+                    variant="ghost"
+                    render={<a href={show.url(token)} />}
+                    className="h-12 sm:h-12 bg-foreground text-background hover:bg-foreground hover:[filter:brightness(1.15)]"
+                >
+                    <Display>{t('View booking details')}</Display>
+                </Button>
+                <Button
+                    variant="ghost"
+                    size="lg"
+                    className="h-11 sm:h-11 text-sm"
+                    onClick={onBookAnother}
+                >
+                    <Display>{t('Book another appointment')}</Display>
                 </Button>
             </div>
         </div>

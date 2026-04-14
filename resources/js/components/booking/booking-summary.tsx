@@ -1,10 +1,16 @@
 import { useHttp } from '@inertiajs/react';
 import { store } from '@/actions/App/Http/Controllers/Booking/PublicBookingController';
-import { Button } from '@/components/ui/button';
-import { Card, CardPanel } from '@/components/ui/card';
 import { useTrans } from '@/hooks/use-trans';
 import type { BookingStoreResponse, PublicCollaborator, PublicService } from '@/types';
 import type { CustomerData } from './customer-form';
+import { Button } from '@/components/ui/button';
+import { Card, CardPanel } from '@/components/ui/card';
+import { Display } from '@/components/ui/display';
+import {
+    formatDateLongWithYear,
+    formatDurationFull,
+    formatPrice,
+} from '@/lib/booking-format';
 
 interface BookingSummaryProps {
     slug: string;
@@ -17,17 +23,6 @@ interface BookingSummaryProps {
     onSuccess: (result: { token: string; status: string }) => void;
 }
 
-function formatPrice(price: number | null, t: (key: string) => string): string {
-    if (price === null) return t('Price on request');
-    if (price === 0) return t('Free');
-    return `CHF ${Number(price).toFixed(2)}`;
-}
-
-function formatDate(dateStr: string): string {
-    const [y, m, d] = dateStr.split('-');
-    return `${d}.${m}.${y}`;
-}
-
 export default function BookingSummary({
     slug,
     service,
@@ -35,12 +30,10 @@ export default function BookingSummary({
     date,
     time,
     customer,
-    onBack,
     onSuccess,
 }: BookingSummaryProps) {
     const { t } = useTrans();
 
-    // Read honeypot value
     const getHoneypotValue = () => {
         const el = document.getElementById('booking-hp') as HTMLInputElement | null;
         return el?.value ?? '';
@@ -68,59 +61,99 @@ export default function BookingSummary({
         });
     }
 
+    const rows: [string, string][] = [
+        [t('Service'), service.name],
+        [t('Duration'), formatDurationFull(service.duration_minutes, t)],
+        [t('Price'), formatPrice(service.price, t)],
+        [t('Specialist'), collaborator?.name ?? t('Any available')],
+        [t('Date'), formatDateLongWithYear(date)],
+        [t('Time'), time],
+    ];
+
     return (
-        <div className="flex flex-col gap-4">
-            <h2 className="text-lg font-semibold">{t('Confirm your booking')}</h2>
+        <div className="flex flex-col gap-7">
+            <div>
+                <Display
+                    render={<h2 />}
+                    className="text-2xl font-semibold leading-tight text-foreground"
+                >
+                    {t('Everything in order?')}
+                </Display>
+                <p className="mt-1.5 text-sm text-muted-foreground">
+                    {t('One final look before we send it through.')}
+                </p>
+            </div>
 
+            {/* Receipt-like summary */}
             <Card>
-                <CardPanel className="flex flex-col gap-2 text-sm">
-                    <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-                        <span className="text-muted-foreground">{t('Service')}</span>
-                        <span className="font-medium">{service.name}</span>
+                <CardPanel className="p-0">
+                    <dl>
+                        {rows.map(([label, value], i) => (
+                            <div
+                                key={label}
+                                className={`flex items-baseline justify-between gap-4 px-5 py-3.5 ${
+                                    i > 0 ? 'border-t border-border' : ''
+                                }`}
+                            >
+                                <dt className="text-xs uppercase tracking-widest text-muted-foreground">
+                                    {label}
+                                </dt>
+                                <dd className="tabular-nums text-right text-sm text-foreground">
+                                    {value}
+                                </dd>
+                            </div>
+                        ))}
+                    </dl>
+                </CardPanel>
+            </Card>
 
-                        <span className="text-muted-foreground">{t('Duration')}</span>
-                        <span>{service.duration_minutes} {t('min')}</span>
-
-                        <span className="text-muted-foreground">{t('Price')}</span>
-                        <span>{formatPrice(service.price, t)}</span>
-
-                        <span className="text-muted-foreground">{t('With')}</span>
-                        <span>{collaborator?.name ?? t('To be assigned')}</span>
-
-                        <span className="text-muted-foreground">{t('Date')}</span>
-                        <span>{formatDate(date)}</span>
-
-                        <span className="text-muted-foreground">{t('Time')}</span>
-                        <span>{time}</span>
-                    </div>
-
-                    <div className="mt-2 border-t pt-2">
-                        <p className="font-medium">{customer.name}</p>
-                        <p className="text-muted-foreground">{customer.email}</p>
-                        {customer.phone && (
-                            <p className="text-muted-foreground">{customer.phone}</p>
-                        )}
-                        {customer.notes && (
-                            <p className="mt-1 text-muted-foreground">{customer.notes}</p>
-                        )}
-                    </div>
+            {/* Customer summary */}
+            <Card className="bg-muted">
+                <CardPanel className="p-5">
+                    <p className="text-xs uppercase tracking-widest text-muted-foreground">
+                        {t('Contact')}
+                    </p>
+                    <Display
+                        render={<p />}
+                        className="mt-2 text-base font-semibold text-foreground"
+                    >
+                        {customer.name}
+                    </Display>
+                    <p className="tabular-nums mt-0.5 text-sm text-secondary-foreground">
+                        {customer.email}
+                    </p>
+                    {customer.phone && (
+                        <p className="tabular-nums text-sm text-secondary-foreground">
+                            {customer.phone}
+                        </p>
+                    )}
+                    {customer.notes && (
+                        <p className="mt-3 border-t border-border pt-3 text-sm italic leading-normal text-secondary-foreground">
+                            "{customer.notes}"
+                        </p>
+                    )}
                 </CardPanel>
             </Card>
 
             {http.hasErrors && (
-                <p className="text-sm text-destructive">
+                <div className="rounded-lg border border-primary bg-honey-soft px-4 py-3 text-sm text-primary-foreground">
                     {t('This time slot is no longer available. Please select another time.')}
-                </p>
+                </div>
             )}
 
-            <div className="flex gap-3">
-                <Button variant="outline" onClick={onBack}>
-                    {t('Back')}
-                </Button>
-                <Button className="flex-1" onClick={handleConfirm} disabled={http.processing}>
-                    {http.processing ? t('Booking...') : t('Confirm booking')}
-                </Button>
-            </div>
+            <Button
+                variant="default"
+                size="xl"
+                className="h-12 sm:h-12 text-sm"
+                loading={http.processing}
+                onClick={handleConfirm}
+            >
+                <Display className="tracking-tight">{t('Confirm booking')} →</Display>
+            </Button>
+
+            <p className="text-center text-xs leading-normal text-muted-foreground">
+                {t('You will receive a confirmation by email. You can reschedule or cancel from that message.')}
+            </p>
         </div>
     );
 }
