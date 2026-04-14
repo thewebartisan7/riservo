@@ -14,9 +14,14 @@ import {
     isSameMonth,
     isSameDay,
 } from 'date-fns';
+import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
 import type { DashboardBooking } from '@/types';
 import type { CollaboratorColor } from '@/lib/calendar-colors';
-import { CalendarEvent, getBookingGridPosition, layoutOverlappingEvents } from './calendar-event';
+import {
+    CalendarEvent,
+    getBookingGridPosition,
+    layoutOverlappingEvents,
+} from './calendar-event';
 import { CurrentTimeIndicator } from './current-time-indicator';
 
 interface DayViewProps {
@@ -30,18 +35,18 @@ interface DayViewProps {
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
 const DEFAULT_COLOR: CollaboratorColor = {
-    bg: 'bg-gray-50',
-    hoverBg: 'hover:bg-gray-100',
-    text: 'text-gray-700',
-    accent: 'text-gray-500',
-    dot: 'bg-gray-400',
+    bg: 'bg-muted',
+    hoverBg: 'hover:bg-muted/80',
+    text: 'text-foreground',
+    accent: 'text-muted-foreground',
+    dot: 'bg-muted-foreground',
 };
 
 function formatHourLabel(hour: number): string {
-    if (hour === 0) return '12AM';
-    if (hour < 12) return `${hour}AM`;
-    if (hour === 12) return '12PM';
-    return `${hour - 12}PM`;
+    if (hour === 0) return '12 AM';
+    if (hour < 12) return `${hour} AM`;
+    if (hour === 12) return '12 PM';
+    return `${hour - 12} PM`;
 }
 
 export function DayView({ bookings, date, timezone, colorMap, onBookingClick }: DayViewProps) {
@@ -50,7 +55,6 @@ export function DayView({ bookings, date, timezone, colorMap, onBookingClick }: 
     const showTimeIndicator = isToday(parsedDate);
     const layoutEvents = layoutOverlappingEvents(bookings);
 
-    // Auto-scroll to 7 AM on mount
     useEffect(() => {
         if (containerRef.current) {
             const hourHeight = containerRef.current.scrollHeight / 24;
@@ -67,27 +71,27 @@ export function DayView({ bookings, date, timezone, colorMap, onBookingClick }: 
     }
 
     return (
-        <div className="isolate flex h-full flex-auto overflow-hidden bg-white">
+        <div className="isolate flex min-h-0 flex-1 overflow-hidden bg-background">
             <div className="flex flex-auto flex-col overflow-auto" ref={containerRef}>
                 {/* Mobile day strip */}
-                <div className="sticky top-0 z-10 grid flex-none grid-cols-7 bg-white text-xs text-gray-500 shadow-sm ring-1 ring-black/5 md:hidden">
+                <div className="sticky top-0 z-10 grid flex-none grid-cols-7 border-b border-border/80 bg-background/95 text-xs text-muted-foreground backdrop-blur-sm md:hidden">
                     <MobileDayStrip date={parsedDate} onSelectDay={navigateToDay} />
                 </div>
 
                 {/* Time grid */}
                 <div className="flex w-full flex-auto">
-                    <div className="w-14 flex-none bg-white ring-1 ring-gray-100" />
+                    <div className="w-14 flex-none border-r border-border/60 bg-background" />
                     <div className="grid flex-auto grid-cols-1 grid-rows-1">
                         {/* Hour lines */}
                         <div
                             style={{ gridTemplateRows: 'repeat(48, minmax(3.5rem, 1fr))' }}
-                            className="col-start-1 col-end-2 row-start-1 grid divide-y divide-gray-100"
+                            className="col-start-1 col-end-2 row-start-1 grid divide-y divide-border/50"
                         >
                             <div className="row-end-1 h-7" />
                             {HOURS.map((hour) => (
                                 <Fragment key={hour}>
                                     <div>
-                                        <div className="-mt-2.5 -ml-14 w-14 pr-2 text-right text-xs/5 text-gray-400">
+                                        <div className="-mt-2.5 -ml-14 w-14 pr-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground tabular-nums">
                                             {formatHourLabel(hour)}
                                         </div>
                                     </div>
@@ -99,7 +103,7 @@ export function DayView({ bookings, date, timezone, colorMap, onBookingClick }: 
                         {/* Events */}
                         <ol
                             style={{ gridTemplateRows: '1.75rem repeat(288, minmax(0, 1fr)) auto' }}
-                            className="col-start-1 col-end-2 row-start-1 grid grid-cols-1"
+                            className="col-start-1 col-end-2 row-start-1 grid grid-cols-1 pr-4"
                         >
                             {layoutEvents.map((booking) => {
                                 const { gridRow, gridSpan } = getBookingGridPosition(
@@ -115,19 +119,23 @@ export function DayView({ bookings, date, timezone, colorMap, onBookingClick }: 
                                         className="relative mt-px flex"
                                         style={{
                                             gridRow: `${gridRow} / span ${gridSpan}`,
-                                            width: booking.totalColumns > 1
-                                                ? `${100 / booking.totalColumns}%`
-                                                : undefined,
-                                            marginLeft: booking.totalColumns > 1
-                                                ? `${(booking.column * 100) / booking.totalColumns}%`
-                                                : undefined,
+                                            width:
+                                                booking.totalColumns > 1
+                                                    ? `${100 / booking.totalColumns}%`
+                                                    : undefined,
+                                            marginLeft:
+                                                booking.totalColumns > 1
+                                                    ? `${(booking.column * 100) / booking.totalColumns}%`
+                                                    : undefined,
                                         }}
                                     >
                                         <CalendarEvent
                                             booking={booking}
                                             color={color}
+                                            timezone={timezone}
                                             onClick={onBookingClick}
-                                            compact={gridSpan < 6}
+                                            compact={gridSpan < 8}
+                                            tight={gridSpan < 4}
                                         />
                                     </li>
                                 );
@@ -135,9 +143,7 @@ export function DayView({ bookings, date, timezone, colorMap, onBookingClick }: 
 
                             {/* Current time indicator */}
                             {showTimeIndicator && (
-                                <li className="relative flex" style={{ gridRow: '1 / -1' }}>
-                                    <CurrentTimeIndicator timezone={timezone} />
-                                </li>
+                                <CurrentTimeIndicator timezone={timezone} />
                             )}
                         </ol>
                     </div>
@@ -145,7 +151,7 @@ export function DayView({ bookings, date, timezone, colorMap, onBookingClick }: 
             </div>
 
             {/* Sidebar mini calendar (desktop only) */}
-            <div className="hidden w-1/2 max-w-md flex-none border-l border-gray-100 px-8 py-10 md:block">
+            <div className="hidden w-80 flex-none border-l border-border/70 bg-background px-6 py-8 md:block">
                 <MiniCalendar date={parsedDate} onSelectDay={navigateToDay} />
             </div>
         </div>
@@ -158,27 +164,33 @@ function MobileDayStrip({ date, onSelectDay }: { date: Date; onSelectDay: (d: Da
 
     return (
         <>
-            {days.map((day) => (
-                <button
-                    key={day.toISOString()}
-                    type="button"
-                    onClick={() => onSelectDay(day)}
-                    className="flex flex-col items-center pt-3 pb-1.5"
-                >
-                    <span>{format(day, 'EEEEE')}</span>
-                    <span
-                        className={`mt-3 flex size-8 items-center justify-center rounded-full text-base font-semibold ${
-                            isSameDay(day, date)
-                                ? 'bg-gray-900 text-white'
-                                : isToday(day)
-                                    ? 'text-indigo-600'
-                                    : 'text-gray-900'
-                        }`}
+            {days.map((day) => {
+                const isSelectedDay = isSameDay(day, date);
+                const todayDay = isToday(day);
+                return (
+                    <button
+                        key={day.toISOString()}
+                        type="button"
+                        onClick={() => onSelectDay(day)}
+                        className="flex flex-col items-center gap-1 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                     >
-                        {format(day, 'd')}
-                    </span>
-                </button>
-            ))}
+                        <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                            {format(day, 'EEEEE')}
+                        </span>
+                        <span
+                            className={`flex size-7 items-center justify-center rounded-full text-sm font-semibold tabular-nums ${
+                                isSelectedDay
+                                    ? 'bg-foreground text-background'
+                                    : todayDay
+                                        ? 'bg-primary text-primary-foreground'
+                                        : 'text-foreground'
+                            }`}
+                        >
+                            {format(day, 'd')}
+                        </span>
+                    </button>
+                );
+            })}
         </>
     );
 }
@@ -194,30 +206,32 @@ function MiniCalendar({ date, onSelectDay }: { date: Date; onSelectDay: (d: Date
 
     return (
         <div>
-            <div className="flex items-center text-center text-gray-900">
+            <div className="flex items-center text-foreground">
                 <button
                     type="button"
-                    onClick={() => setDisplayMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
-                    className="-m-1.5 flex flex-none items-center justify-center p-1.5 text-gray-400 hover:text-gray-500"
+                    onClick={() =>
+                        setDisplayMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))
+                    }
+                    className="-m-1.5 inline-flex size-7 flex-none items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                     <span className="sr-only">Previous month</span>
-                    <svg className="size-5" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M11.78 5.22a.75.75 0 0 1 0 1.06L8.06 10l3.72 3.72a.75.75 0 1 1-1.06 1.06l-4.25-4.25a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0Z" clipRule="evenodd" />
-                    </svg>
+                    <ChevronLeftIcon className="size-4" strokeWidth={1.75} aria-hidden="true" />
                 </button>
-                <div className="flex-auto text-sm font-semibold">{format(displayMonth, 'MMMM yyyy')}</div>
+                <div className="flex-auto text-center font-display text-sm font-semibold tracking-tight">
+                    {format(displayMonth, 'MMMM yyyy')}
+                </div>
                 <button
                     type="button"
-                    onClick={() => setDisplayMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
-                    className="-m-1.5 flex flex-none items-center justify-center p-1.5 text-gray-400 hover:text-gray-500"
+                    onClick={() =>
+                        setDisplayMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))
+                    }
+                    className="-m-1.5 inline-flex size-7 flex-none items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                     <span className="sr-only">Next month</span>
-                    <svg className="size-5" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
-                    </svg>
+                    <ChevronRightIcon className="size-4" strokeWidth={1.75} aria-hidden="true" />
                 </button>
             </div>
-            <div className="mt-6 grid grid-cols-7 text-center text-xs/6 text-gray-500">
+            <div className="mt-5 grid grid-cols-7 text-center text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
                 <div>M</div>
                 <div>T</div>
                 <div>W</div>
@@ -226,8 +240,8 @@ function MiniCalendar({ date, onSelectDay }: { date: Date; onSelectDay: (d: Date
                 <div>S</div>
                 <div>S</div>
             </div>
-            <div className="isolate mt-2 grid grid-cols-7 gap-px rounded-lg bg-gray-200 text-sm shadow-sm ring-1 ring-gray-200">
-                {days.map((day, i) => {
+            <div className="mt-2 grid grid-cols-7 gap-0.5 text-sm">
+                {days.map((day) => {
                     const isCurrentMonth = isSameMonth(day, displayMonth);
                     const isSelected = isSameDay(day, date);
                     const isTodayDate = isToday(day);
@@ -237,28 +251,18 @@ function MiniCalendar({ date, onSelectDay }: { date: Date; onSelectDay: (d: Date
                             key={day.toISOString()}
                             type="button"
                             onClick={() => onSelectDay(day)}
-                            className={`py-1.5 hover:bg-gray-100 focus:z-10 ${
-                                isCurrentMonth ? 'bg-white' : 'bg-gray-50'
-                            } ${i === 0 ? 'rounded-tl-lg' : ''} ${i === 6 ? 'rounded-tr-lg' : ''} ${
-                                i === days.length - 7 ? 'rounded-bl-lg' : ''
-                            } ${i === days.length - 1 ? 'rounded-br-lg' : ''} ${
-                                isSelected ? 'font-semibold text-white' : ''
-                            } ${isTodayDate && !isSelected ? 'font-semibold text-indigo-600' : ''} ${
-                                !isSelected && isCurrentMonth && !isTodayDate ? 'text-gray-900' : ''
-                            } ${!isSelected && !isCurrentMonth && !isTodayDate ? 'text-gray-400' : ''}`}
+                            aria-pressed={isSelected}
+                            className={`flex aspect-square items-center justify-center rounded-md font-medium tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset ${
+                                isSelected
+                                    ? 'bg-foreground text-background'
+                                    : isTodayDate
+                                        ? 'bg-honey-soft text-primary-foreground hover:bg-honey-soft/70'
+                                        : isCurrentMonth
+                                            ? 'text-foreground hover:bg-accent/50'
+                                            : 'text-muted-foreground/60 hover:bg-accent/30'
+                            }`}
                         >
-                            <time
-                                dateTime={format(day, 'yyyy-MM-dd')}
-                                className={`mx-auto flex size-7 items-center justify-center rounded-full ${
-                                    isSelected && isTodayDate
-                                        ? 'bg-indigo-600'
-                                        : isSelected
-                                            ? 'bg-gray-900'
-                                            : ''
-                                }`}
-                            >
-                                {format(day, 'd')}
-                            </time>
+                            <time dateTime={format(day, 'yyyy-MM-dd')}>{format(day, 'd')}</time>
                         </button>
                     );
                 })}

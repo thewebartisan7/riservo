@@ -27,22 +27,16 @@ export default function CalendarPage() {
         usePage<CalendarPageProps>().props;
     const { t } = useTrans();
 
-    // Booking detail sheet state
     const [selectedBooking, setSelectedBooking] = useState<DashboardBooking | null>(null);
     const [sheetOpen, setSheetOpen] = useState(false);
-
-    // Manual booking dialog state
     const [dialogOpen, setDialogOpen] = useState(false);
 
-    // Collaborator filter state (admin only) — D-060
     const [visibleIds, setVisibleIds] = useState<Set<number>>(
         () => new Set(collaborators.map((c) => c.id)),
     );
 
-    // Color map based on collaborator order (D-059)
     const colorMap = getCollaboratorColorMap(collaborators.map((c) => c.id));
 
-    // Filter bookings by visible collaborators
     const filteredBookings = isAdmin
         ? bookings.filter((b) => visibleIds.has(b.collaborator.id))
         : bookings;
@@ -74,10 +68,11 @@ export default function CalendarPage() {
     }
 
     const ViewComponent = view === 'day' ? DayView : view === 'month' ? MonthView : WeekView;
+    const showFilter = isAdmin && collaborators.length > 1;
 
     return (
-        <AuthenticatedLayout title={t('Calendar')}>
-            <div className="flex h-[calc(100vh-3.5rem)] flex-col">
+        <AuthenticatedLayout title={t('Calendar')} fullBleed>
+            <div className="flex min-h-0 flex-1 flex-col">
                 <CalendarHeader
                     view={view}
                     date={date}
@@ -85,8 +80,8 @@ export default function CalendarPage() {
                     onNewBooking={() => setDialogOpen(true)}
                 />
 
-                {isAdmin && collaborators.length > 1 && (
-                    <div className="flex-none border-b border-gray-200 px-6 py-3">
+                {showFilter && (
+                    <div className="flex-none border-b border-border/70 bg-background/80 px-5 py-2.5 backdrop-blur-sm sm:px-7">
                         <CollaboratorFilter
                             collaborators={collaborators}
                             visibleIds={visibleIds}
@@ -97,7 +92,7 @@ export default function CalendarPage() {
                     </div>
                 )}
 
-                <div className="flex-1 overflow-hidden">
+                <div className="flex min-h-0 flex-1 flex-col">
                     <ViewComponent
                         bookings={filteredBookings}
                         date={date}

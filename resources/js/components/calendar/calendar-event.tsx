@@ -1,36 +1,102 @@
+import { Popover, PopoverPopup, PopoverTrigger } from '@/components/ui/popover';
+import { Button } from '@/components/ui/button';
+import { useTrans } from '@/hooks/use-trans';
+import { formatTimeShort } from '@/lib/datetime-format';
 import type { DashboardBooking } from '@/types';
 import type { CollaboratorColor } from '@/lib/calendar-colors';
 
 interface CalendarEventProps {
     booking: DashboardBooking;
     color: CollaboratorColor;
+    timezone: string;
     onClick: (booking: DashboardBooking) => void;
+    /** True when the event's grid span is too small to fit all content inline. */
     compact?: boolean;
+    /** True when the event is so tight only a title + time can fit. */
+    tight?: boolean;
 }
 
-export function CalendarEvent({ booking, color, onClick, compact = false }: CalendarEventProps) {
-    const startTime = new Date(booking.starts_at).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-    });
+export function CalendarEvent({
+    booking,
+    color,
+    timezone,
+    onClick,
+    compact = false,
+    tight = false,
+}: CalendarEventProps) {
+    const { t } = useTrans();
+    const startTime = formatTimeShort(booking.starts_at, timezone);
+    const endTime = formatTimeShort(booking.ends_at, timezone);
+
+    // For very tight bookings: render a compact trigger that reveals full details in a Popover.
+    if (tight) {
+        return (
+            <Popover>
+                <PopoverTrigger
+                    className={`group absolute inset-x-1 flex items-center gap-1.5 overflow-hidden rounded-md border border-transparent px-1.5 text-left text-[11px]/4 ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ${color.bg} ${color.hoverBg}`}
+                    style={{ top: '1px', bottom: '1px' }}
+                >
+                    <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${color.dot}`} />
+                    <span className={`truncate font-medium ${color.text}`}>
+                        {booking.service.name}
+                    </span>
+                </PopoverTrigger>
+                <PopoverPopup side="right" align="start" sideOffset={6} className="w-64">
+                    <div className="flex flex-col gap-3">
+                        <div className="flex items-start gap-2">
+                            <span
+                                aria-hidden="true"
+                                className={`mt-1.5 size-2 shrink-0 rounded-full ${color.dot}`}
+                            />
+                            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                                <p className="font-semibold text-foreground text-sm leading-snug">
+                                    {booking.service.name}
+                                </p>
+                                <p className="truncate text-muted-foreground text-xs">
+                                    {booking.customer.name}
+                                </p>
+                            </div>
+                        </div>
+                        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                            <dt className="text-muted-foreground">{t('Time')}</dt>
+                            <dd className="text-foreground">
+                                <time dateTime={booking.starts_at}>{startTime}</time>
+                                {' – '}
+                                <time dateTime={booking.ends_at}>{endTime}</time>
+                            </dd>
+                            <dt className="text-muted-foreground">{t('With')}</dt>
+                            <dd className="truncate text-foreground">{booking.collaborator.name}</dd>
+                        </dl>
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => onClick(booking)}
+                            className="w-full"
+                        >
+                            {t('Open booking')}
+                        </Button>
+                    </div>
+                </PopoverPopup>
+            </Popover>
+        );
+    }
 
     return (
         <button
             type="button"
             onClick={() => onClick(booking)}
-            className={`group absolute inset-x-1 flex flex-col overflow-hidden rounded-lg p-2 text-left text-xs/5 ${color.bg} ${color.hoverBg} transition-colors`}
+            className={`group absolute inset-x-1 flex flex-col overflow-hidden rounded-md border border-transparent p-1.5 text-left text-[11px]/4 ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ${color.bg} ${color.hoverBg}`}
             style={{ top: '1px', bottom: '1px' }}
         >
-            <p className={`order-1 font-semibold ${color.text} truncate`}>
+            <p className={`truncate font-semibold ${color.text}`}>
                 {booking.service.name}
             </p>
             {!compact && (
-                <p className={`order-1 ${color.accent} truncate`}>
+                <p className={`truncate ${color.accent}`}>
                     {booking.customer.name}
                 </p>
             )}
-            <p className={`${color.accent} group-hover:${color.text}`}>
+            <p className={`mt-auto ${color.accent}`}>
                 <time dateTime={booking.starts_at}>{startTime}</time>
             </p>
         </button>

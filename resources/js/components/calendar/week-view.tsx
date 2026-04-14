@@ -2,7 +2,12 @@ import { Fragment, useEffect, useRef } from 'react';
 import { parseISO, startOfWeek, addDays, format, isToday } from 'date-fns';
 import type { DashboardBooking } from '@/types';
 import type { CollaboratorColor } from '@/lib/calendar-colors';
-import { CalendarEvent, getBookingGridPosition, getDateInTimezone, layoutOverlappingEvents } from './calendar-event';
+import {
+    CalendarEvent,
+    getBookingGridPosition,
+    getDateInTimezone,
+    layoutOverlappingEvents,
+} from './calendar-event';
 import { CurrentTimeIndicator, isTodayInRange } from './current-time-indicator';
 
 interface WeekViewProps {
@@ -16,18 +21,18 @@ interface WeekViewProps {
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
 const DEFAULT_COLOR: CollaboratorColor = {
-    bg: 'bg-gray-50',
-    hoverBg: 'hover:bg-gray-100',
-    text: 'text-gray-700',
-    accent: 'text-gray-500',
-    dot: 'bg-gray-400',
+    bg: 'bg-muted',
+    hoverBg: 'hover:bg-muted/80',
+    text: 'text-foreground',
+    accent: 'text-muted-foreground',
+    dot: 'bg-muted-foreground',
 };
 
 function formatHourLabel(hour: number): string {
-    if (hour === 0) return '12AM';
-    if (hour < 12) return `${hour}AM`;
-    if (hour === 12) return '12PM';
-    return `${hour - 12}PM`;
+    if (hour === 0) return '12 AM';
+    if (hour < 12) return `${hour} AM`;
+    if (hour === 12) return '12 PM';
+    return `${hour - 12} PM`;
 }
 
 export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }: WeekViewProps) {
@@ -39,7 +44,6 @@ export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }:
     const showTimeIndicator = isTodayInRange(timezone, weekDays[0], weekDays[6]);
     const todayColIdx = showTimeIndicator ? getTodayColumnIndex(weekDays, timezone) : -1;
 
-    // Group bookings by day
     const bookingsByDay = new Map<string, DashboardBooking[]>();
     for (const booking of bookings) {
         const dayKey = getDateInTimezone(booking.starts_at, timezone);
@@ -48,7 +52,6 @@ export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }:
         bookingsByDay.set(dayKey, arr);
     }
 
-    // Auto-scroll to 7 AM on mount
     useEffect(() => {
         if (containerRef.current) {
             const hourHeight = containerRef.current.scrollHeight / 24;
@@ -57,68 +60,79 @@ export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }:
     }, [date]);
 
     return (
-        <div className="isolate flex h-full flex-col overflow-auto bg-white" ref={containerRef}>
-            <div style={{ width: '165%' }} className="flex max-w-full flex-none flex-col sm:max-w-none md:max-w-full">
+        <div className="isolate flex min-h-0 flex-1 flex-col overflow-auto bg-background" ref={containerRef}>
+            <div className="flex flex-none flex-col">
                 {/* Day headers */}
-                <div className="sticky top-0 z-30 flex-none bg-white shadow-sm ring-1 ring-black/5 sm:pr-8">
+                <div className="sticky top-0 z-30 flex-none border-b border-border/80 bg-background/95 backdrop-blur-sm">
                     {/* Mobile day strip */}
-                    <div className="grid grid-cols-7 text-sm/6 text-gray-500 sm:hidden">
-                        {weekDays.map((day) => (
-                            <button
-                                key={day.toISOString()}
-                                type="button"
-                                className="flex flex-col items-center pt-2 pb-3"
-                            >
-                                {format(day, 'EEEEE')}
-                                <span
-                                    className={`mt-1 flex size-8 items-center justify-center font-semibold ${
-                                        isToday(day)
-                                            ? 'rounded-full bg-indigo-600 text-white'
-                                            : 'text-gray-900'
-                                    }`}
+                    <div className="grid grid-cols-7 text-xs text-muted-foreground sm:hidden">
+                        {weekDays.map((day) => {
+                            const todayDay = isToday(day);
+                            return (
+                                <div
+                                    key={day.toISOString()}
+                                    className="flex flex-col items-center pt-2 pb-2.5"
                                 >
-                                    {format(day, 'd')}
-                                </span>
-                            </button>
-                        ))}
-                    </div>
-
-                    {/* Desktop day headers */}
-                    <div className="-mr-px hidden grid-cols-7 divide-x divide-gray-100 border-r border-gray-100 text-sm/6 text-gray-500 sm:grid">
-                        <div className="col-end-1 w-14" />
-                        {weekDays.map((day) => (
-                            <div key={day.toISOString()} className="flex items-center justify-center py-3">
-                                <span className={isToday(day) ? 'flex items-baseline' : ''}>
-                                    {format(day, 'EEE')}{' '}
+                                    <span className="text-[10px] uppercase tracking-[0.14em]">
+                                        {format(day, 'EEEEE')}
+                                    </span>
                                     <span
-                                        className={
-                                            isToday(day)
-                                                ? 'ml-1.5 flex size-8 items-center justify-center rounded-full bg-indigo-600 font-semibold text-white'
-                                                : 'items-center justify-center font-semibold text-gray-900'
-                                        }
+                                        className={`mt-1 flex size-7 items-center justify-center text-sm font-semibold ${
+                                            todayDay
+                                                ? 'rounded-full bg-primary text-primary-foreground'
+                                                : 'text-foreground'
+                                        }`}
                                     >
                                         {format(day, 'd')}
                                     </span>
-                                </span>
-                            </div>
-                        ))}
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* Desktop day headers */}
+                    <div className="-mr-px hidden grid-cols-[3.5rem_repeat(7,1fr)_0.5rem] text-xs text-muted-foreground sm:grid">
+                        <div className="border-r border-border/60" />
+                        {weekDays.map((day) => {
+                            const todayDay = isToday(day);
+                            return (
+                                <div
+                                    key={day.toISOString()}
+                                    className="flex items-center justify-center gap-2 border-r border-border/60 py-3"
+                                >
+                                    <span className="text-[10px] font-medium uppercase tracking-[0.16em]">
+                                        {format(day, 'EEE')}
+                                    </span>
+                                    <span
+                                        className={`flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 font-display text-sm font-semibold tabular-nums ${
+                                            todayDay
+                                                ? 'bg-primary text-primary-foreground'
+                                                : 'text-foreground'
+                                        }`}
+                                    >
+                                        {format(day, 'd')}
+                                    </span>
+                                </div>
+                            );
+                        })}
+                        <div />
                     </div>
                 </div>
 
                 {/* Time grid */}
                 <div className="flex flex-auto">
-                    <div className="sticky left-0 z-10 w-14 flex-none bg-white ring-1 ring-gray-100" />
+                    <div className="sticky left-0 z-10 w-14 flex-none border-r border-border/60 bg-background" />
                     <div className="grid flex-auto grid-cols-1 grid-rows-1">
                         {/* Hour lines */}
                         <div
                             style={{ gridTemplateRows: 'repeat(48, minmax(3.5rem, 1fr))' }}
-                            className="col-start-1 col-end-2 row-start-1 grid divide-y divide-gray-100"
+                            className="col-start-1 col-end-2 row-start-1 grid divide-y divide-border/50"
                         >
                             <div className="row-end-1 h-7" />
                             {HOURS.map((hour) => (
                                 <Fragment key={hour}>
                                     <div>
-                                        <div className="sticky left-0 z-20 -mt-2.5 -ml-14 w-14 pr-2 text-right text-xs/5 text-gray-400">
+                                        <div className="sticky left-0 z-20 -mt-2.5 -ml-14 w-14 pr-2 text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground tabular-nums">
                                             {formatHourLabel(hour)}
                                         </div>
                                     </div>
@@ -128,7 +142,7 @@ export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }:
                         </div>
 
                         {/* Vertical day dividers */}
-                        <div className="col-start-1 col-end-2 row-start-1 hidden grid-rows-1 divide-x divide-gray-100 sm:grid sm:grid-cols-7">
+                        <div className="col-start-1 col-end-2 row-start-1 hidden grid-rows-1 divide-x divide-border/50 sm:grid sm:grid-cols-7">
                             <div className="col-start-1 row-span-full" />
                             <div className="col-start-2 row-span-full" />
                             <div className="col-start-3 row-span-full" />
@@ -136,13 +150,13 @@ export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }:
                             <div className="col-start-5 row-span-full" />
                             <div className="col-start-6 row-span-full" />
                             <div className="col-start-7 row-span-full" />
-                            <div className="col-start-8 row-span-full w-8" />
+                            <div className="col-start-8 row-span-full w-2" />
                         </div>
 
                         {/* Events + current time indicator */}
                         <ol
                             style={{ gridTemplateRows: '1.75rem repeat(288, minmax(0, 1fr)) auto' }}
-                            className="col-start-1 col-end-2 row-start-1 grid grid-cols-1 sm:grid-cols-7 sm:pr-8"
+                            className="col-start-1 col-end-2 row-start-1 grid grid-cols-1 pr-2 sm:grid-cols-7"
                         >
                             {weekDays.map((day, dayIndex) => {
                                 const dayKey = format(day, 'yyyy-MM-dd');
@@ -166,19 +180,23 @@ export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }:
                                                     style={{
                                                         gridRow: `${gridRow} / span ${gridSpan}`,
                                                         gridColumnStart: dayIndex + 1,
-                                                        width: booking.totalColumns > 1
-                                                            ? `${100 / booking.totalColumns}%`
-                                                            : undefined,
-                                                        marginLeft: booking.totalColumns > 1
-                                                            ? `${(booking.column * 100) / booking.totalColumns}%`
-                                                            : undefined,
+                                                        width:
+                                                            booking.totalColumns > 1
+                                                                ? `${100 / booking.totalColumns}%`
+                                                                : undefined,
+                                                        marginLeft:
+                                                            booking.totalColumns > 1
+                                                                ? `${(booking.column * 100) / booking.totalColumns}%`
+                                                                : undefined,
                                                     }}
                                                 >
                                                     <CalendarEvent
                                                         booking={booking}
                                                         color={color}
+                                                        timezone={timezone}
                                                         onClick={onBookingClick}
-                                                        compact={gridSpan < 6}
+                                                        compact={gridSpan < 8}
+                                                        tight={gridSpan < 4}
                                                     />
                                                 </li>
                                             );
@@ -189,15 +207,7 @@ export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }:
 
                             {/* Current time indicator */}
                             {showTimeIndicator && todayColIdx >= 0 && (
-                                <li
-                                    className="relative hidden sm:flex"
-                                    style={{
-                                        gridRow: '1 / -1',
-                                        gridColumnStart: todayColIdx + 1,
-                                    }}
-                                >
-                                    <CurrentTimeIndicator timezone={timezone} />
-                                </li>
+                                <CurrentTimeIndicator timezone={timezone} columnStart={todayColIdx} />
                             )}
                         </ol>
                     </div>

@@ -157,6 +157,20 @@ Why it lives in `components/ui/` but is not upstream COSS UI: COSS UI doesn't sh
 
 For `<AvatarFallback>` (where we can't wrap children in Display because Base UI controls the rendered element), apply `className="font-display"` directly — the stylistic set + tight tracking are invisible on 2-character initials.
 
+### `AuthenticatedLayout` — `fullBleed` escape hatch
+
+**File:** `resources/js/layouts/authenticated-layout.tsx`
+
+Optional `fullBleed?: boolean` prop on the layout. When `true`, the layout skips its centered padded wrapper (`mx-auto w-full max-w-6xl px-5 pb-16 pt-5 sm:px-8 sm:pt-8`) and renders the page directly into `<main>` with a viewport-height constraint (`h-[calc(100svh-3rem)] md:h-svh` — the 3rem accounts for the mobile sticky header). The page is then responsible for its own horizontal padding, vertical padding, and internal scroll.
+
+**Used by:** `resources/js/pages/dashboard/calendar.tsx`.
+
+**Why:** the calendar's time grid needs independent internal scrolling (the time axis) while the page chrome (header, collaborator filter) stays sticky. The default centered wrapper adds `pb-16 pt-5` padding and a `max-w-6xl` cap, both of which fight a full-viewport calendar surface — the result was a double scrollbar (page body + grid).
+
+**Default:** `false`. Every other page renders unchanged.
+
+**When to reach for this:** only for pages that are intrinsically viewport-sized interactive surfaces (calendars, kanban boards, map views). Don't reach for it to "make the page wider" — use a custom callsite `className` on the normal children instead.
+
 ### `<SectionHeading>` / `<SectionTitle>` / `<SectionRule>` — editorial section header primitive
 
 **File:** `resources/js/components/ui/section-heading.tsx`

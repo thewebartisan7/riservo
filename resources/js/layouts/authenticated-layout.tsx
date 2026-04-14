@@ -43,6 +43,12 @@ interface AuthenticatedLayoutProps {
     heading?: string;
     description?: string;
     actions?: ReactNode;
+    /**
+     * riservo: when true, the page renders directly into <main> without the centered
+     * padded wrapper. The page owns its own height/width/padding. Default: false.
+     * Currently used by the calendar surface to eliminate double scroll.
+     */
+    fullBleed?: boolean;
 }
 
 export default function AuthenticatedLayout({
@@ -51,6 +57,7 @@ export default function AuthenticatedLayout({
     heading,
     description,
     actions,
+    fullBleed = false,
     children,
 }: PropsWithChildren<AuthenticatedLayoutProps>) {
     const { auth } = usePage<PageProps>().props;
@@ -169,39 +176,51 @@ export default function AuthenticatedLayout({
                             </span>
                         )}
                     </header>
-                    <main className="flex-1">
-                        <div className="mx-auto w-full max-w-6xl px-5 pb-16 pt-5 sm:px-8 sm:pt-8">
-                            {hasPageHeader && (
-                                <div className="mb-6 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-                                    <div className="flex min-w-0 flex-1 flex-col gap-2">
-                                        {eyebrow && (
-                                            <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-                                                {eyebrow}
-                                            </p>
-                                        )}
-                                        {heading && (
-                                            <Display
-                                                render={<h1 />}
-                                                className="text-[clamp(1.5rem,1.2rem+0.9vw,1.875rem)] font-semibold leading-[1.05] text-foreground"
-                                            >
-                                                {heading}
-                                            </Display>
-                                        )}
-                                        {description && (
-                                            <p className="max-w-xl text-balance text-sm leading-relaxed text-muted-foreground">
-                                                {description}
-                                            </p>
+                    <main
+                        className={
+                            fullBleed
+                                ? 'flex h-[calc(100svh-3rem)] min-h-0 flex-col md:h-svh'
+                                : 'flex-1'
+                        }
+                    >
+                        {fullBleed ? (
+                            <div className="flex min-h-0 flex-1 flex-col animate-rise">
+                                {children}
+                            </div>
+                        ) : (
+                            <div className="mx-auto w-full max-w-6xl px-5 pb-16 pt-5 sm:px-8 sm:pt-8">
+                                {hasPageHeader && (
+                                    <div className="mb-6 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+                                        <div className="flex min-w-0 flex-1 flex-col gap-2">
+                                            {eyebrow && (
+                                                <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                                                    {eyebrow}
+                                                </p>
+                                            )}
+                                            {heading && (
+                                                <Display
+                                                    render={<h1 />}
+                                                    className="text-[clamp(1.5rem,1.2rem+0.9vw,1.875rem)] font-semibold leading-[1.05] text-foreground"
+                                                >
+                                                    {heading}
+                                                </Display>
+                                            )}
+                                            {description && (
+                                                <p className="max-w-xl text-balance text-sm leading-relaxed text-muted-foreground">
+                                                    {description}
+                                                </p>
+                                            )}
+                                        </div>
+                                        {actions && (
+                                            <div className="flex shrink-0 items-center gap-2">
+                                                {actions}
+                                            </div>
                                         )}
                                     </div>
-                                    {actions && (
-                                        <div className="flex shrink-0 items-center gap-2">
-                                            {actions}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                            <div className="animate-rise">{children}</div>
-                        </div>
+                                )}
+                                <div className="animate-rise">{children}</div>
+                            </div>
+                        )}
                     </main>
                 </SidebarInset>
             </SidebarProvider>

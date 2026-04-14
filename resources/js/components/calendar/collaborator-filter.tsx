@@ -21,15 +21,12 @@ export function CollaboratorFilter({
     const allVisible = visibleIds.size === collaborators.length;
 
     return (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t('Filter by collaborator')}>
             <button
                 type="button"
                 onClick={onToggleAll}
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                    allVisible
-                        ? 'bg-gray-900 text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
+                aria-pressed={allVisible}
+                className="inline-flex h-7 items-center gap-1.5 rounded-full border border-transparent bg-secondary px-3 text-xs font-medium text-secondary-foreground transition-colors hover:bg-accent/60 aria-pressed:border-primary/30 aria-pressed:bg-honey-soft aria-pressed:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
             >
                 {t('All')}
             </button>
@@ -42,16 +39,12 @@ export function CollaboratorFilter({
                         key={collaborator.id}
                         type="button"
                         onClick={() => onToggle(collaborator.id)}
-                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                            isVisible
-                                ? 'bg-gray-100 text-gray-900'
-                                : 'bg-gray-50 text-gray-400 hover:bg-gray-100'
-                        }`}
+                        aria-pressed={isVisible}
+                        className="inline-flex h-7 items-center gap-1.5 rounded-full border border-transparent bg-secondary/60 px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/60 aria-pressed:border-border/80 aria-pressed:bg-background aria-pressed:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                     >
                         <span
-                            className={`size-2 rounded-full ${
-                                isVisible ? (color?.dot ?? 'bg-gray-400') : 'bg-gray-300'
-                            }`}
+                            aria-hidden="true"
+                            className={`size-2 rounded-full transition-opacity ${color?.dot ?? 'bg-muted-foreground'} ${isVisible ? 'opacity-100' : 'opacity-40'}`}
                         />
                         {collaborator.name}
                     </button>
