@@ -11,11 +11,16 @@ export default function CreateService({ collaborators }: Props) {
     const { t } = useTrans();
 
     return (
-        <SettingsLayout title={t('New Service')}>
+        <SettingsLayout
+            title={t('New Service')}
+            eyebrow={t('Settings · Team')}
+            heading={t('New service')}
+            description={t('Add a treatment, set its duration and price, and choose who performs it.')}
+        >
             <ServiceForm
                 action={store()}
                 collaborators={collaborators}
-                submitLabel={t('Create Service')}
+                submitLabel={t('Create service')}
             />
         </SettingsLayout>
     );

@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import { Link, router, usePage } from '@inertiajs/react';
+import { router, usePage } from '@inertiajs/react';
 import { index as bookingsIndex } from '@/actions/App/Http/Controllers/Dashboard/BookingController';
 import AuthenticatedLayout from '@/layouts/authenticated-layout';
 import BookingDetailSheet from '@/components/dashboard/booking-detail-sheet';
 import ManualBookingDialog from '@/components/dashboard/manual-booking-dialog';
 import { BookingStatusBadge, BookingSourceBadge } from '@/components/dashboard/booking-status-badge';
 import { useTrans } from '@/hooks/use-trans';
-import { CalendarIcon } from 'lucide-react';
+import { CalendarIcon, PlusIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
+import { Field, FieldLabel } from '@/components/ui/field';
 import { Frame, FrameFooter } from '@/components/ui/frame';
 import { LinkButton } from '@/components/ui/link-button';
 import { Popover, PopoverTrigger, PopoverPopup } from '@/components/ui/popover';
@@ -30,6 +31,7 @@ import {
     PaginationNext,
     PaginationPrevious,
 } from '@/components/ui/pagination';
+import { formatDateTimeShort } from '@/lib/datetime-format';
 import type { DashboardBooking, FilterOption, PageProps, ServiceWithCollaborators } from '@/types';
 
 interface PaginatedData<T> {
@@ -58,29 +60,16 @@ interface BookingsPageProps extends PageProps {
     timezone: string;
 }
 
-function formatDateTime(isoString: string, timezone: string): string {
-    return new Date(isoString).toLocaleString([], {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZone: timezone,
-    });
-}
-
-/** Parse "YYYY-MM-DD" filter string into a Date, or undefined */
 function parseFilterDate(value: string): Date | undefined {
     if (!value) return undefined;
     const [y, m, d] = value.split('-').map(Number);
     return new Date(y, m - 1, d);
 }
 
-/** Format a Date into "YYYY-MM-DD" for the filter query string */
 function toFilterString(date: Date): string {
-    return date.toLocaleDateString('sv'); // sv locale produces YYYY-MM-DD
+    return date.toLocaleDateString('sv');
 }
 
-/** Display a Date in short human-readable format */
 function formatShortDate(date: Date): string {
     return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
 }
@@ -95,7 +84,6 @@ export default function BookingsPage() {
 
     function applyFilter(key: string, value: string) {
         const params = { ...filters, [key]: value };
-        // Remove empty filters
         const cleaned = Object.fromEntries(
             Object.entries(params).filter(([, v]) => v !== ''),
         );
@@ -112,7 +100,7 @@ export default function BookingsPage() {
     }
 
     const statuses = [
-        { value: '', label: t('All Statuses') },
+        { value: '', label: t('All statuses') },
         { value: 'pending', label: t('Pending') },
         { value: 'confirmed', label: t('Confirmed') },
         { value: 'cancelled', label: t('Cancelled') },
@@ -120,23 +108,48 @@ export default function BookingsPage() {
         { value: 'no_show', label: t('No Show') },
     ];
 
+    const hasActiveFilters =
+        filters.date_from !== '' ||
+        filters.date_to !== '' ||
+        filters.status !== '' ||
+        filters.service_id !== '' ||
+        filters.collaborator_id !== '';
+
+    function clearFilters() {
+        router.get(
+            bookingsIndex.url(),
+            {},
+            { preserveState: true, preserveScroll: true, only: ['bookings'] },
+        );
+    }
+
     return (
-        <AuthenticatedLayout title={t('Bookings')}>
-            <div className="space-y-4">
-                {/* Filters */}
+        <AuthenticatedLayout
+            title={t('Bookings')}
+            eyebrow={t('Bookings')}
+            heading={t('All appointments')}
+            description={t('Filter, triage, and keep every appointment moving forward.')}
+            actions={
+                <Button onClick={() => setDialogOpen(true)}>
+                    <PlusIcon />
+                    {t('New booking')}
+                </Button>
+            }
+        >
+            <div className="flex flex-col gap-5">
                 <div className="flex flex-wrap items-end gap-3">
-                    <div>
-                        <label className="text-muted-foreground mb-1 block text-xs">
+                    <Field className="w-40">
+                        <FieldLabel className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                             {t('From')}
-                        </label>
+                        </FieldLabel>
                         <Popover>
                             <PopoverTrigger
-                                render={<Button className="w-40 justify-start font-normal" variant="outline" />}
+                                render={<Button className="w-full justify-start font-normal" variant="outline" />}
                             >
                                 <CalendarIcon aria-hidden="true" />
                                 {filters.date_from
                                     ? formatShortDate(parseFilterDate(filters.date_from)!)
-                                    : <span className="text-muted-foreground">{t('Pick a date')}</span>}
+                                    : <span className="text-muted-foreground">{t('Any date')}</span>}
                             </PopoverTrigger>
                             <PopoverPopup>
                                 <Calendar
@@ -147,19 +160,19 @@ export default function BookingsPage() {
                                 />
                             </PopoverPopup>
                         </Popover>
-                    </div>
-                    <div>
-                        <label className="text-muted-foreground mb-1 block text-xs">
+                    </Field>
+                    <Field className="w-40">
+                        <FieldLabel className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                             {t('To')}
-                        </label>
+                        </FieldLabel>
                         <Popover>
                             <PopoverTrigger
-                                render={<Button className="w-40 justify-start font-normal" variant="outline" />}
+                                render={<Button className="w-full justify-start font-normal" variant="outline" />}
                             >
                                 <CalendarIcon aria-hidden="true" />
                                 {filters.date_to
                                     ? formatShortDate(parseFilterDate(filters.date_to)!)
-                                    : <span className="text-muted-foreground">{t('Pick a date')}</span>}
+                                    : <span className="text-muted-foreground">{t('Any date')}</span>}
                             </PopoverTrigger>
                             <PopoverPopup>
                                 <Calendar
@@ -170,16 +183,16 @@ export default function BookingsPage() {
                                 />
                             </PopoverPopup>
                         </Popover>
-                    </div>
-                    <div>
-                        <label className="text-muted-foreground mb-1 block text-xs">
+                    </Field>
+                    <Field className="w-36">
+                        <FieldLabel className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                             {t('Status')}
-                        </label>
+                        </FieldLabel>
                         <Select
                             value={filters.status}
                             onValueChange={(val) => applyFilter('status', val ?? '')}
                         >
-                            <SelectTrigger className="w-36">
+                            <SelectTrigger className="w-full">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectPopup>
@@ -190,20 +203,20 @@ export default function BookingsPage() {
                                 ))}
                             </SelectPopup>
                         </Select>
-                    </div>
-                    <div>
-                        <label className="text-muted-foreground mb-1 block text-xs">
+                    </Field>
+                    <Field className="w-40">
+                        <FieldLabel className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                             {t('Service')}
-                        </label>
+                        </FieldLabel>
                         <Select
                             value={filters.service_id}
                             onValueChange={(val) => applyFilter('service_id', val ?? '')}
                         >
-                            <SelectTrigger className="w-40">
+                            <SelectTrigger className="w-full">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectPopup>
-                                <SelectItem value="">{t('All Services')}</SelectItem>
+                                <SelectItem value="">{t('All services')}</SelectItem>
                                 {services.map((s) => (
                                     <SelectItem key={s.id} value={String(s.id)}>
                                         {s.name}
@@ -211,55 +224,52 @@ export default function BookingsPage() {
                                 ))}
                             </SelectPopup>
                         </Select>
-                    </div>
+                    </Field>
                     {isAdmin && (
-                        <div>
-                            <label className="text-muted-foreground mb-1 block text-xs">
+                        <Field className="w-40">
+                            <FieldLabel className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                                 {t('Collaborator')}
-                            </label>
+                            </FieldLabel>
                             <Select
                                 value={filters.collaborator_id}
-                                onValueChange={(val) =>
-                                    applyFilter('collaborator_id', val ?? '')
-                                }
+                                onValueChange={(val) => applyFilter('collaborator_id', val ?? '')}
                             >
-                                <SelectTrigger className="w-40">
+                                <SelectTrigger className="w-full">
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectPopup>
                                     <SelectItem value="">
-                                        {t('All Collaborators')}
+                                        {t('All collaborators')}
                                     </SelectItem>
                                     {collaborators.map((c) => (
-                                        <SelectItem
-                                            key={c.id}
-                                            value={String(c.id)}
-                                        >
+                                        <SelectItem key={c.id} value={String(c.id)}>
                                             {c.name}
                                         </SelectItem>
                                     ))}
                                 </SelectPopup>
                             </Select>
-                        </div>
+                        </Field>
                     )}
-                    <div className="ml-auto">
-                        <Button onClick={() => setDialogOpen(true)}>
-                            {t('New Booking')}
+                    {hasActiveFilters && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={clearFilters}
+                            className="text-muted-foreground"
+                        >
+                            {t('Clear filters')}
                         </Button>
-                    </div>
+                    )}
                 </div>
 
-                {/* Table */}
                 <Frame className="w-full">
                     <Table>
                         <TableHeader>
                             <TableRow>
-                                <TableHead>{t('Date / Time')}</TableHead>
+                                <TableHead className="w-44">{t('When')}</TableHead>
                                 <TableHead>{t('Customer')}</TableHead>
                                 <TableHead>{t('Service')}</TableHead>
-                                {isAdmin && (
-                                    <TableHead>{t('Collaborator')}</TableHead>
-                                )}
+                                {isAdmin && <TableHead>{t('Collaborator')}</TableHead>}
                                 <TableHead>{t('Status')}</TableHead>
                                 <TableHead>{t('Source')}</TableHead>
                             </TableRow>
@@ -269,9 +279,18 @@ export default function BookingsPage() {
                                 <TableRow>
                                     <TableCell
                                         colSpan={isAdmin ? 6 : 5}
-                                        className="text-muted-foreground py-8 text-center"
+                                        className="py-10 text-center"
                                     >
-                                        {t('No bookings found.')}
+                                        <div className="flex flex-col items-center gap-1">
+                                            <p className="text-sm text-foreground">
+                                                {t('Nothing to show here yet.')}
+                                            </p>
+                                            <p className="text-sm text-muted-foreground">
+                                                {hasActiveFilters
+                                                    ? t('Try loosening the filters above.')
+                                                    : t('New bookings will appear as they come in.')}
+                                            </p>
+                                        </div>
                                     </TableCell>
                                 </TableRow>
                             ) : (
@@ -281,11 +300,8 @@ export default function BookingsPage() {
                                         className="cursor-pointer"
                                         onClick={() => openDetail(booking)}
                                     >
-                                        <TableCell className="text-sm">
-                                            {formatDateTime(
-                                                booking.starts_at,
-                                                timezone,
-                                            )}
+                                        <TableCell className="font-display tabular-nums text-sm">
+                                            {formatDateTimeShort(booking.starts_at, timezone)}
                                         </TableCell>
                                         <TableCell>
                                             <div className="text-sm font-medium">
@@ -299,19 +315,15 @@ export default function BookingsPage() {
                                             {booking.service.name}
                                         </TableCell>
                                         {isAdmin && (
-                                            <TableCell className="text-sm">
+                                            <TableCell className="text-muted-foreground text-sm">
                                                 {booking.collaborator.name}
                                             </TableCell>
                                         )}
                                         <TableCell>
-                                            <BookingStatusBadge
-                                                status={booking.status}
-                                            />
+                                            <BookingStatusBadge status={booking.status} />
                                         </TableCell>
                                         <TableCell>
-                                            <BookingSourceBadge
-                                                source={booking.source}
-                                            />
+                                            <BookingSourceBadge source={booking.source} />
                                         </TableCell>
                                     </TableRow>
                                 ))
@@ -319,7 +331,17 @@ export default function BookingsPage() {
                         </TableBody>
                     </Table>
                     {bookings.last_page > 1 && (
-                        <FrameFooter className="px-2 py-3">
+                        <FrameFooter className="flex items-center justify-between px-4 py-3">
+                            <span className="text-xs text-muted-foreground">
+                                {t('Showing :from–:end of :total', {
+                                    from: (bookings.current_page - 1) * bookings.per_page + 1,
+                                    end: Math.min(
+                                        bookings.current_page * bookings.per_page,
+                                        bookings.total,
+                                    ),
+                                    total: bookings.total,
+                                })}
+                            </span>
                             <Pagination>
                                 <PaginationContent>
                                     <PaginationItem>
@@ -336,9 +358,7 @@ export default function BookingsPage() {
                                                 }
                                             />
                                         ) : (
-                                            <PaginationPrevious
-                                                className="pointer-events-none opacity-50"
-                                            />
+                                            <PaginationPrevious className="pointer-events-none opacity-50" />
                                         )}
                                     </PaginationItem>
                                     {bookings.links.slice(1, -1).map((link) => (
@@ -381,9 +401,7 @@ export default function BookingsPage() {
                                                 }
                                             />
                                         ) : (
-                                            <PaginationNext
-                                                className="pointer-events-none opacity-50"
-                                            />
+                                            <PaginationNext className="pointer-events-none opacity-50" />
                                         )}
                                     </PaginationItem>
                                 </PaginationContent>

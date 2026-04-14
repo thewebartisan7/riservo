@@ -4,7 +4,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Field, FieldLabel, FieldError, FieldDescription } from '@/components/ui/field';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } from '@/components/ui/card';
+import { Card, CardPanel, CardFooter } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import {
     NumberField,
@@ -20,6 +20,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
+import { SectionHeading, SectionTitle, SectionRule } from '@/components/ui/section-heading';
 import { useTrans } from '@/hooks/use-trans';
 import { Form } from '@inertiajs/react';
 import { useState } from 'react';
@@ -67,18 +68,27 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
     }
 
     return (
-        <Card>
-            <CardHeader>
-                <CardTitle>{service ? t('Edit Service') : t('New Service')}</CardTitle>
-                <CardDescription>{service ? t('Update service details') : t('Add a new service to your business')}</CardDescription>
-            </CardHeader>
-            <Form action={action}>
-                {({ errors, processing }) => (
-                    <>
-                        <CardPanel className="flex flex-col gap-4">
+        <Form action={action}>
+            {({ errors, processing }) => (
+                <Card>
+                    <CardPanel className="flex flex-col gap-8 p-5 sm:p-6">
+                        <section className="flex flex-col gap-4">
+                            <SectionHeading>
+                                <SectionTitle>{t('Details')}</SectionTitle>
+                                <SectionRule />
+                            </SectionHeading>
+
                             <Field>
                                 <FieldLabel>{t('Service name')}</FieldLabel>
-                                <Input name="name" defaultValue={service?.name ?? ''} required />
+                                <Input
+                                    name="name"
+                                    defaultValue={service?.name ?? ''}
+                                    placeholder={t('e.g. Classic haircut')}
+                                    required
+                                />
+                                <FieldDescription>
+                                    {t('How this service appears on your booking page and in confirmations.')}
+                                </FieldDescription>
                                 {errors.name && <FieldError match>{errors.name}</FieldError>}
                             </Field>
 
@@ -88,39 +98,79 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                                     name="description"
                                     defaultValue={service?.description ?? ''}
                                     rows={3}
+                                    placeholder={t('What the customer gets. Keep it short and concrete.')}
                                 />
+                                <FieldDescription>
+                                    {t('Optional. Shown alongside the price on the service list.')}
+                                </FieldDescription>
                                 {errors.description && <FieldError match>{errors.description}</FieldError>}
                             </Field>
 
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid gap-4 sm:grid-cols-2">
                                 <Field>
-                                    <FieldLabel>{t('Duration (minutes)')}</FieldLabel>
-                                    <NumberField name="duration_minutes" defaultValue={service?.duration_minutes ?? 60} min={5} max={480}>
-                                        <NumberFieldGroup>
-                                            <NumberFieldDecrement />
-                                            <NumberFieldInput />
-                                            <NumberFieldIncrement />
-                                        </NumberFieldGroup>
-                                    </NumberField>
+                                    <FieldLabel>{t('Duration')}</FieldLabel>
+                                    <div className="flex items-center gap-2">
+                                        <NumberField
+                                            name="duration_minutes"
+                                            defaultValue={service?.duration_minutes ?? 60}
+                                            min={5}
+                                            max={480}
+                                            className="flex-1"
+                                        >
+                                            <NumberFieldGroup>
+                                                <NumberFieldDecrement />
+                                                <NumberFieldInput />
+                                                <NumberFieldIncrement />
+                                            </NumberFieldGroup>
+                                        </NumberField>
+                                        <span className="text-sm text-muted-foreground">{t('min')}</span>
+                                    </div>
                                     {errors.duration_minutes && <FieldError match>{errors.duration_minutes}</FieldError>}
                                 </Field>
                                 <Field>
                                     <FieldLabel>{t('Price')}</FieldLabel>
-                                    <Input
-                                        name="price"
-                                        type="number"
-                                        min={0}
-                                        step="0.01"
-                                        defaultValue={service?.price ?? ''}
-                                        placeholder={t('Leave empty for "on request"')}
-                                    />
+                                    <div className="flex items-center gap-2">
+                                        <span className="font-display text-sm text-muted-foreground">CHF</span>
+                                        <Input
+                                            name="price"
+                                            type="number"
+                                            min={0}
+                                            step="0.01"
+                                            defaultValue={service?.price ?? ''}
+                                            placeholder={t('Leave empty for "on request"')}
+                                            className="flex-1"
+                                        />
+                                    </div>
                                     {errors.price && <FieldError match>{errors.price}</FieldError>}
                                 </Field>
                             </div>
 
-                            <div className="grid grid-cols-3 gap-4">
+                            <div className="flex items-start justify-between gap-4 rounded-xl border border-border/70 bg-muted/40 px-4 py-3.5">
+                                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                                    <Label
+                                        htmlFor="is_active"
+                                        className="text-sm font-medium text-foreground"
+                                    >
+                                        {t('Visible to customers')}
+                                    </Label>
+                                    <p className="text-xs leading-relaxed text-muted-foreground">
+                                        {t('Inactive services stay on your list but are hidden from the booking page.')}
+                                    </p>
+                                </div>
+                                <Switch id="is_active" checked={isActive} onCheckedChange={setIsActive} />
+                                <input type="hidden" name="is_active" value={isActive ? '1' : '0'} />
+                            </div>
+                        </section>
+
+                        <section className="flex flex-col gap-4">
+                            <SectionHeading>
+                                <SectionTitle>{t('Scheduling')}</SectionTitle>
+                                <SectionRule />
+                            </SectionHeading>
+
+                            <div className="grid gap-4 sm:grid-cols-3">
                                 <Field>
-                                    <FieldLabel>{t('Buffer before (min)')}</FieldLabel>
+                                    <FieldLabel>{t('Buffer before')}</FieldLabel>
                                     <NumberField name="buffer_before" defaultValue={service?.buffer_before ?? 0} min={0} max={120}>
                                         <NumberFieldGroup>
                                             <NumberFieldDecrement />
@@ -131,7 +181,7 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                                     {errors.buffer_before && <FieldError match>{errors.buffer_before}</FieldError>}
                                 </Field>
                                 <Field>
-                                    <FieldLabel>{t('Buffer after (min)')}</FieldLabel>
+                                    <FieldLabel>{t('Buffer after')}</FieldLabel>
                                     <NumberField name="buffer_after" defaultValue={service?.buffer_after ?? 0} min={0} max={120}>
                                         <NumberFieldGroup>
                                             <NumberFieldDecrement />
@@ -163,29 +213,48 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                                 </Field>
                             </div>
 
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <Label htmlFor="is_active">{t('Active')}</Label>
-                                    <FieldDescription>{t('Inactive services are hidden from customers')}</FieldDescription>
-                                </div>
-                                <Switch id="is_active" checked={isActive} onCheckedChange={setIsActive} />
-                                <input type="hidden" name="is_active" value={isActive ? '1' : '0'} />
-                            </div>
+                            <p className="text-muted-foreground text-xs">
+                                {t('Buffers keep time between bookings. Slot interval controls how often new appointments can start.')}
+                            </p>
+                        </section>
 
-                            {collaborators.length > 0 && (
+                        {collaborators.length > 0 && (
+                            <section className="flex flex-col gap-4">
+                                <SectionHeading>
+                                    <SectionTitle>{t('Team')}</SectionTitle>
+                                    <SectionRule />
+                                </SectionHeading>
+
                                 <Field>
-                                    <FieldLabel>{t('Assigned collaborators')}</FieldLabel>
-                                    <div className="flex flex-col gap-2">
-                                        {collaborators.map((c) => (
-                                            <Label key={c.id}>
-                                                <Checkbox
-                                                    checked={selectedCollaborators.includes(c.id)}
-                                                    onCheckedChange={() => toggleCollaborator(c.id)}
-                                                />
-                                                {c.name}
-                                            </Label>
-                                        ))}
+                                    <div className="flex items-baseline justify-between gap-3">
+                                        <FieldLabel>{t('Who performs this service')}</FieldLabel>
+                                        <span className="font-display text-[11px] tabular-nums text-muted-foreground">
+                                            {t(':n of :total selected', {
+                                                n: selectedCollaborators.length,
+                                                total: collaborators.length,
+                                            })}
+                                        </span>
                                     </div>
+                                    <div className="grid gap-2 sm:grid-cols-2">
+                                        {collaborators.map((c) => {
+                                            const checked = selectedCollaborators.includes(c.id);
+                                            return (
+                                                <Label
+                                                    key={c.id}
+                                                    className="flex items-center gap-2.5 rounded-lg border border-border/70 bg-background px-3.5 py-2.5 text-sm transition-colors hover:border-border not-has-[:checked]:hover:bg-muted/40 has-[:checked]:border-primary/40 has-[:checked]:bg-honey-soft/60"
+                                                >
+                                                    <Checkbox
+                                                        checked={checked}
+                                                        onCheckedChange={() => toggleCollaborator(c.id)}
+                                                    />
+                                                    <span className="text-foreground">{c.name}</span>
+                                                </Label>
+                                            );
+                                        })}
+                                    </div>
+                                    <FieldDescription>
+                                        {t('At least one collaborator must be assigned for the service to appear on the booking page.')}
+                                    </FieldDescription>
                                     {selectedCollaborators.map((id) => (
                                         <input key={id} type="hidden" name="collaborator_ids[]" value={id} />
                                     ))}
@@ -193,14 +262,14 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                                         <input type="hidden" name="collaborator_ids" value="" />
                                     )}
                                 </Field>
-                            )}
-                        </CardPanel>
-                        <CardFooter className="flex justify-end">
-                            <Button type="submit" disabled={processing}>{submitLabel}</Button>
-                        </CardFooter>
-                    </>
-                )}
-            </Form>
-        </Card>
+                            </section>
+                        )}
+                    </CardPanel>
+                    <CardFooter className="justify-end border-t bg-muted/50 px-5 py-3 sm:px-6">
+                        <Button type="submit" loading={processing}>{submitLabel}</Button>
+                    </CardFooter>
+                </Card>
+            )}
+        </Form>
     );
 }

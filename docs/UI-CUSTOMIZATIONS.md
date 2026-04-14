@@ -10,11 +10,26 @@ This doc tracks every place riservo diverges from out-of-the-box COSS UI / Tailw
 
 `--primary`, `--primary-foreground`, `--background`, `--foreground`, `--muted`, `--muted-foreground`, `--accent`, `--accent-foreground`, `--secondary-foreground`, `--border`, `--ring` are reassigned globally to a warm honey/paper/ink palette (oklch-based, slight chroma in the yellow-orange hue ~75°). This is the riservo brand decision — confirmed with the user during the Impeccable booking refactor. The dashboard, auth surfaces, and any future page automatically inherit it.
 
-**What stays at the original COSS UI defaults:** `--card`, `--card-foreground`, `--popover`, `--popover-foreground`, `--sidebar-*`, `--input`, `--secondary`, `--destructive`, `--destructive-foreground`, `--chart-*`, `--code*`, `--warning*`, `--success*`, `--info*`. Repainting these is a deliberate design call and not part of the Impeccable scope.
+**Sidebar — retinted to the brand hue.** All seven `--sidebar-*` tokens were reassigned from the stock neutral palette to honey-tinted OKLCH values (hue 65–75, chroma 0.005–0.01 on neutrals, higher only on the accent / ring). The previous `var(--color-neutral-50)` and `color-mix(...neutral-950...)` read as a cold gray slab next to the warm paper background; the new values make the sidebar read as a second shade of the same paper rather than a different material.
 
-**Two new vars:** `--honey-soft` (pale amber surface), `--rule-strong` (78% lightness solid border) — registered as `--color-honey-soft` and `--color-rule-strong` in the existing `@theme inline` block. Used by booking only (so far).
+| Token | Light | Dark | Role |
+|---|---|---|---|
+| `--sidebar` | `oklch(0.97 0.008 75)` | `oklch(0.165 0.008 75)` | Sidebar surface — one notch off `--background` on each side |
+| `--sidebar-foreground` | `oklch(0.48 0.008 75)` | `oklch(0.68 0.008 75)` | Inactive label text |
+| `--sidebar-accent` | `oklch(0.62 0.11 65 / 0.08)` | `oklch(0.72 0.12 70 / 0.12)` | Hover / active menu-button background — honey at low alpha so the accent colour leaks in only on interaction |
+| `--sidebar-accent-foreground` | `oklch(0.22 0.01 75)` | `oklch(0.96 0.006 75)` | Hover / active menu-button text (full `--foreground`) |
+| `--sidebar-border` | `oklch(0.88 0.008 75 / 0.7)` | `oklch(0.32 0.008 75 / 0.7)` | Separator and rail hairline |
+| `--sidebar-primary` | `oklch(0.22 0.01 75)` | `oklch(0.96 0.006 75)` | Reserved for high-emphasis sidebar chrome (unused today) |
+| `--sidebar-primary-foreground` | `oklch(0.97 0.008 75)` | `oklch(0.2 0.01 75)` | Counterpart to `--sidebar-primary` |
+| `--sidebar-ring` | `oklch(0.62 0.11 65 / 0.32)` | `oklch(0.72 0.12 70 / 0.4)` | Focus ring — same honey accent as the main `--ring` |
 
-**On COSS UI upgrade:** the upstream `:root` / `.dark` blocks may add new tokens — pull them in. Don't let the upstream override the 11 reassigned values above.
+Nav items in `authenticated-layout.tsx` now each render a Lucide icon (HomeIcon, ClipboardListIcon, CalendarDaysIcon, UsersIcon, Settings2Icon) at `strokeWidth={1.75}`. Icon colour inherits via `currentColor` from the sidebar menu-button's own active/hover states — no explicit icon colour override. Log-out footer button also gets `LogOutIcon` and switched to `text-sidebar-foreground/75` so it reads as subdued within the sidebar palette rather than pulling from the main-content `--muted-foreground`.
+
+**What stays at the original COSS UI defaults:** `--card`, `--card-foreground`, `--popover`, `--popover-foreground`, `--input`, `--secondary`, `--destructive`, `--destructive-foreground`, `--chart-*`, `--code*`, `--warning*`, `--success*`, `--info*`. Repainting these is a deliberate design call and not part of the Impeccable scope.
+
+**Two new vars:** `--honey-soft` (pale amber surface), `--rule-strong` (78% lightness solid border) — registered as `--color-honey-soft` and `--color-rule-strong` in the existing `@theme inline` block. Used by booking and settings tile patterns.
+
+**On COSS UI upgrade:** the upstream `:root` / `.dark` blocks may add new tokens — pull them in. Don't let the upstream override the 18 reassigned values above (11 main + 7 sidebar).
 
 ---
 
@@ -68,6 +83,21 @@ The inline `// riservo:` comment above the classname pins this for reviewers.
 | `cn("text-destructive-foreground text-xs", className)` | `cn("text-primary text-xs", className)` |
 
 The inline `// riservo:` comment above the `cn()` pins this for reviewers.
+
+### `textarea.tsx` — invalid state uses `primary` (honey), not `destructive` (red)
+
+**Why:** same reasoning as `input.tsx` and `field.tsx` above. Textareas and inputs render side-by-side in dashboard forms (booking-detail-sheet internal notes, manual-booking confirm note, onboarding description). A red textarea next to a honey-invalid input would be dissonant.
+
+**What changed:** on the wrapper `<span>` className in the main `Textarea` component, four `destructive` classes were swapped:
+
+| Upstream COSS | Riservo |
+|---|---|
+| `has-aria-invalid:border-destructive/36` | `has-aria-invalid:border-primary` |
+| `has-focus-visible:has-aria-invalid:border-destructive/64` | `has-focus-visible:has-aria-invalid:border-primary` |
+| `has-focus-visible:has-aria-invalid:ring-destructive/16` | `has-focus-visible:has-aria-invalid:ring-ring/24` |
+| `dark:has-aria-invalid:ring-destructive/24` | `dark:has-aria-invalid:ring-ring/24` |
+
+The inline `// riservo:` comment above the classname pins this for reviewers.
 
 ---
 
@@ -127,6 +157,31 @@ Why it lives in `components/ui/` but is not upstream COSS UI: COSS UI doesn't sh
 
 For `<AvatarFallback>` (where we can't wrap children in Display because Base UI controls the rendered element), apply `className="font-display"` directly — the stylistic set + tight tracking are invisible on 2-character initials.
 
+### `<SectionHeading>` / `<SectionTitle>` / `<SectionRule>` — editorial section header primitive
+
+**File:** `resources/js/components/ui/section-heading.tsx`
+
+Riservo-specific primitive that renders the editorial "eyebrow + hairline rule + optional action" pattern used across dashboard and settings surfaces. Three small components composed together: `SectionHeading` (the flex row wrapper), `SectionTitle` (the uppercase tracked eyebrow label, semantic `<h2>`), and `SectionRule` (the 1px horizontal rule that fills the remaining space). Matches the pattern originally written inline in `welcome.tsx` and now used ~15× across settings pages (`profile.tsx`, `booking.tsx`, service form groups, exceptions list, collaborators show, embed & share sections).
+
+Uses Base UI's `useRender` / `mergeProps` pattern — same discipline as `<Display>`, `<Button>`, `<Card>`.
+
+Usage:
+```tsx
+<SectionHeading>
+    <SectionTitle>{t('Identity')}</SectionTitle>
+    <SectionRule />
+</SectionHeading>
+
+{/* with an action slot */}
+<SectionHeading>
+    <SectionTitle>{t('Exceptions')}</SectionTitle>
+    <SectionRule />
+    <Button size="sm" variant="outline">{t('Add')}</Button>
+</SectionHeading>
+```
+
+Why it lives in `components/ui/` but is not upstream COSS UI: COSS UI doesn't ship a section-heading primitive. We keep it next to the other primitives because the import path is ergonomic (`@/components/ui/section-heading`). The file is **ours** — a future COSS UI upgrade won't touch it and we don't fork any COSS file to support it.
+
 ---
 
 ## Animation utilities — defined in `@theme inline`
@@ -149,8 +204,8 @@ The `prefers-reduced-motion: reduce` media query suppresses all four animation c
 
 ## On COSS UI upgrade — quick checklist
 
-1. Pull the latest `resources/js/components/ui/*.tsx` from the upstream registry. Overwrite directly — **except** for any file listed under "COSS primitives with brand overrides" above (currently: `input.tsx`, `field.tsx`). For those, 3-way merge: keep the riservo override lines, pull in any unrelated upstream changes.
-2. Diff `resources/css/app.css` lines 1–185 (everything except the booking section) against the upstream template. Reapply our 11 token reassignments listed above + 2 new vars. Anything else upstream changed: pull in.
+1. Pull the latest `resources/js/components/ui/*.tsx` from the upstream registry. Overwrite directly — **except** (a) files listed under "COSS primitives with brand overrides" (currently: `input.tsx`, `field.tsx`, `textarea.tsx`) — 3-way merge those — and (b) riservo-owned primitives that live in the same folder but are ours (`display.tsx`, `section-heading.tsx`) — don't let the upstream overwrite them.
+2. Diff `resources/css/app.css` lines 1–185 (everything except the booking section) against the upstream template. Reapply our 18 token reassignments listed above (11 main + 7 sidebar) + 2 new vars. Anything else upstream changed: pull in.
 3. Walk the booking flow end-to-end at `http://localhost:8002/salone-bellissima` — service → confirmation. Confirm visual parity.
 4. Walk the dashboard. Confirm the rebrand still applies (buttons honey, backgrounds paper).
 5. Toggle `.dark` on `<html>` — both surfaces should flip palette.

@@ -14,7 +14,6 @@ import {
     DialogPanel,
     DialogHeader,
     DialogTitle,
-    DialogDescription,
     DialogFooter,
     DialogClose,
 } from '@/components/ui/dialog';
@@ -23,6 +22,9 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Calendar } from '@/components/ui/calendar';
 import { Spinner } from '@/components/ui/spinner';
+import { Field, FieldLabel } from '@/components/ui/field';
+import { Display } from '@/components/ui/display';
+import { formatDurationShort, formatPrice } from '@/lib/booking-format';
 import type { FilterOption, ServiceWithCollaborators } from '@/types';
 
 interface ManualBookingDialogProps {
@@ -41,16 +43,23 @@ interface CustomerResult {
 
 type Step = 'customer' | 'service' | 'collaborator' | 'datetime' | 'confirm';
 
+const STEP_LABELS: Record<Step, string> = {
+    customer: 'Customer',
+    service: 'Service',
+    collaborator: 'With',
+    datetime: 'When',
+    confirm: 'Review',
+};
+
 export default function ManualBookingDialog({
     open,
     onOpenChange,
     services,
-    timezone,
+    timezone: _timezone,
 }: ManualBookingDialogProps) {
     const { t } = useTrans();
     const [step, setStep] = useState<Step>('customer');
 
-    // Customer step
     const [customerName, setCustomerName] = useState('');
     const [customerEmail, setCustomerEmail] = useState('');
     const [customerPhone, setCustomerPhone] = useState('');
@@ -59,13 +68,9 @@ export default function ManualBookingDialog({
     const [isNewCustomer, setIsNewCustomer] = useState(false);
     const customerSearch = useHttp({});
 
-    // Service step
     const [selectedService, setSelectedService] = useState<ServiceWithCollaborators | null>(null);
-
-    // Collaborator step
     const [selectedCollaborator, setSelectedCollaborator] = useState<FilterOption | null>(null);
 
-    // DateTime step
     const [selectedDate, setSelectedDate] = useState<Date | undefined>();
     const [selectedTime, setSelectedTime] = useState<string | null>(null);
     const [availableDates, setAvailableDates] = useState<Record<string, boolean>>({});
@@ -73,10 +78,8 @@ export default function ManualBookingDialog({
     const datesHttp = useHttp({});
     const slotsHttp = useHttp({});
 
-    // Notes
     const [notes, setNotes] = useState('');
 
-    // Reset when dialog opens/closes
     useEffect(() => {
         if (open) {
             setStep('customer');
@@ -96,7 +99,6 @@ export default function ManualBookingDialog({
         }
     }, [open]);
 
-    // Customer search
     const handleSearch = useCallback(
         (query: string) => {
             setSearchQuery(query);
@@ -129,7 +131,6 @@ export default function ManualBookingDialog({
         setSearchQuery('');
     }
 
-    // Load available dates when service/collaborator changes
     function loadDates(month: string) {
         if (!selectedService) return;
         const params: Record<string, string> = {
@@ -147,11 +148,10 @@ export default function ManualBookingDialog({
         });
     }
 
-    // Load slots when date changes
     useEffect(() => {
         if (!selectedDate || !selectedService) return;
         setSelectedTime(null);
-        const dateStr = selectedDate.toLocaleDateString('sv'); // YYYY-MM-DD
+        const dateStr = selectedDate.toLocaleDateString('sv');
         const params: Record<string, string> = {
             service_id: String(selectedService.id),
             date: dateStr,
@@ -167,22 +167,25 @@ export default function ManualBookingDialog({
         });
     }, [selectedDate, selectedService, selectedCollaborator]);
 
-    // Submit
     function handleSubmit() {
         if (!selectedService || !selectedDate || !selectedTime) return;
         const dateStr = selectedDate.toLocaleDateString('sv');
-        router.post(storeBooking.url(), {
-            customer_name: customerName,
-            customer_email: customerEmail,
-            customer_phone: customerPhone || null,
-            service_id: selectedService.id,
-            collaborator_id: selectedCollaborator?.id ?? null,
-            date: dateStr,
-            time: selectedTime,
-            notes: notes || null,
-        }, {
-            onSuccess: () => onOpenChange(false),
-        });
+        router.post(
+            storeBooking.url(),
+            {
+                customer_name: customerName,
+                customer_email: customerEmail,
+                customer_phone: customerPhone || null,
+                service_id: selectedService.id,
+                collaborator_id: selectedCollaborator?.id ?? null,
+                date: dateStr,
+                time: selectedTime,
+                notes: notes || null,
+            },
+            {
+                onSuccess: () => onOpenChange(false),
+            },
+        );
     }
 
     const canProceedCustomer = customerName.trim() && customerEmail.trim();
@@ -191,6 +194,7 @@ export default function ManualBookingDialog({
 
     const steps: Step[] = ['customer', 'service', 'collaborator', 'datetime', 'confirm'];
     const stepIndex = steps.indexOf(step);
+    const currentLabel = t(STEP_LABELS[step]);
 
     function goBack() {
         if (stepIndex > 0) setStep(steps[stepIndex - 1]);
@@ -199,7 +203,6 @@ export default function ManualBookingDialog({
     function goNext() {
         if (step === 'customer' && canProceedCustomer) setStep('service');
         else if (step === 'service' && canProceedService) {
-            // If the service has only one collaborator, auto-select
             const serviceCollaborators = selectedService!.collaborators;
             if (serviceCollaborators.length === 1) {
                 setSelectedCollaborator(serviceCollaborators[0]);
@@ -207,82 +210,152 @@ export default function ManualBookingDialog({
             } else {
                 setStep('collaborator');
             }
-        }
-        else if (step === 'collaborator') {
+        } else if (step === 'collaborator') {
             setStep('datetime');
-        }
-        else if (step === 'datetime' && canProceedDateTime) setStep('confirm');
+        } else if (step === 'datetime' && canProceedDateTime) setStep('confirm');
     }
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogPopup className="sm:max-w-lg">
-                <DialogHeader>
-                    <DialogTitle>{t('New Booking')}</DialogTitle>
-                    <DialogDescription>
-                        {t('Step :current of :total', {
-                            current: String(stepIndex + 1),
-                            total: String(steps.length),
-                        })}
-                    </DialogDescription>
+                <DialogHeader className="gap-3">
+                    <div className="flex items-center justify-between gap-4">
+                        <div className="tabular-nums text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                            <span className="text-foreground">
+                                {String(stepIndex + 1).padStart(2, '0')}
+                            </span>
+                            <span className="mx-1.5 text-rule-strong">/</span>
+                            <span>{String(steps.length).padStart(2, '0')}</span>
+                            <span className="mx-3 text-rule-strong" aria-hidden="true">
+                                ·
+                            </span>
+                            <span>{currentLabel}</span>
+                        </div>
+                    </div>
+                    <DialogTitle className="font-display">
+                        {t('New booking')}
+                    </DialogTitle>
+                    <div
+                        className="relative h-px w-full overflow-hidden bg-border"
+                        role="progressbar"
+                        aria-valuenow={stepIndex + 1}
+                        aria-valuemin={1}
+                        aria-valuemax={steps.length}
+                    >
+                        <div
+                            className="absolute inset-y-0 left-0 bg-primary transition-[width] duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
+                            style={{
+                                width: `${((stepIndex + 1) / steps.length) * 100}%`,
+                            }}
+                        />
+                    </div>
                 </DialogHeader>
 
-                <DialogPanel className="min-h-[300px]">
-                    {/* Step 1: Customer */}
+                <DialogPanel className="min-h-[320px]">
                     {step === 'customer' && (
-                        <div className="space-y-3">
-                            <h3 className="text-sm font-medium">{t('Customer')}</h3>
+                        <div className="flex flex-col gap-4">
                             {!isNewCustomer && !customerEmail && (
                                 <>
-                                    <Input
-                                        placeholder={t('Search by name, email, or phone...')}
-                                        value={searchQuery}
-                                        onChange={(e) => handleSearch(e.target.value)}
-                                    />
-                                    {searchResults.length > 0 && (
-                                        <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border p-2">
-                                            {searchResults.map((c) => (
-                                                <button
-                                                    key={c.id}
-                                                    className="hover:bg-muted w-full rounded px-2 py-1.5 text-left text-sm"
-                                                    onClick={() => selectCustomer(c)}
-                                                >
-                                                    <span className="font-medium">{c.name}</span>
-                                                    <span className="text-muted-foreground ml-2">
-                                                        {c.email}
-                                                    </span>
-                                                </button>
-                                            ))}
+                                    <Field>
+                                        <FieldLabel>{t('Find a customer')}</FieldLabel>
+                                        <Input
+                                            placeholder={t('Search by name, email, or phone…')}
+                                            value={searchQuery}
+                                            onChange={(e) => handleSearch(e.target.value)}
+                                            autoFocus
+                                        />
+                                    </Field>
+                                    {customerSearch.processing && (
+                                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                            <Spinner className="size-3.5" />
+                                            {t('Searching…')}
                                         </div>
                                     )}
-                                    {customerSearch.processing && <Spinner className="size-4" />}
-                                    <Button variant="outline" size="sm" onClick={startNewCustomer}>
-                                        {t('New Customer')}
+                                    {searchResults.length > 0 && (
+                                        <ul className="flex max-h-56 flex-col divide-y divide-border/70 overflow-y-auto rounded-lg border border-border">
+                                            {searchResults.map((c) => (
+                                                <li key={c.id}>
+                                                    <button
+                                                        type="button"
+                                                        className="flex w-full flex-col gap-0.5 px-3 py-2.5 text-left transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
+                                                        onClick={() => selectCustomer(c)}
+                                                    >
+                                                        <span className="text-sm font-medium">
+                                                            {c.name}
+                                                        </span>
+                                                        <span className="text-xs text-muted-foreground">
+                                                            {c.email}
+                                                            {c.phone && ` · ${c.phone}`}
+                                                        </span>
+                                                    </button>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                    <div className="flex items-center gap-3">
+                                        <span
+                                            className="h-px flex-1 bg-border"
+                                            aria-hidden="true"
+                                        />
+                                        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                                            {t('or')}
+                                        </span>
+                                        <span
+                                            className="h-px flex-1 bg-border"
+                                            aria-hidden="true"
+                                        />
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        onClick={startNewCustomer}
+                                    >
+                                        {t('Create a new customer')}
                                     </Button>
                                 </>
                             )}
                             {(isNewCustomer || customerEmail) && (
-                                <div className="space-y-2">
-                                    <Input
-                                        placeholder={t('Name')}
-                                        value={customerName}
-                                        onChange={(e) => setCustomerName(e.target.value)}
-                                    />
-                                    <Input
-                                        type="email"
-                                        placeholder={t('Email')}
-                                        value={customerEmail}
-                                        onChange={(e) => setCustomerEmail(e.target.value)}
-                                    />
-                                    <Input
-                                        placeholder={t('Phone (optional)')}
-                                        value={customerPhone}
-                                        onChange={(e) => setCustomerPhone(e.target.value)}
-                                    />
+                                <div className="flex flex-col gap-4">
+                                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                        <Field>
+                                            <FieldLabel>{t('Name')}</FieldLabel>
+                                            <Input
+                                                value={customerName}
+                                                onChange={(e) =>
+                                                    setCustomerName(e.target.value)
+                                                }
+                                                autoFocus={isNewCustomer}
+                                            />
+                                        </Field>
+                                        <Field>
+                                            <FieldLabel>{t('Email')}</FieldLabel>
+                                            <Input
+                                                type="email"
+                                                value={customerEmail}
+                                                onChange={(e) =>
+                                                    setCustomerEmail(e.target.value)
+                                                }
+                                            />
+                                        </Field>
+                                    </div>
+                                    <Field>
+                                        <FieldLabel>
+                                            {t('Phone (optional)')}
+                                        </FieldLabel>
+                                        <Input
+                                            value={customerPhone}
+                                            onChange={(e) =>
+                                                setCustomerPhone(e.target.value)
+                                            }
+                                            placeholder="+41 79 000 00 00"
+                                        />
+                                    </Field>
                                     {customerEmail && !isNewCustomer && (
                                         <Button
+                                            type="button"
                                             variant="ghost"
                                             size="sm"
+                                            className="self-start text-muted-foreground"
                                             onClick={() => {
                                                 setCustomerName('');
                                                 setCustomerEmail('');
@@ -290,7 +363,7 @@ export default function ManualBookingDialog({
                                                 setIsNewCustomer(false);
                                             }}
                                         >
-                                            {t('Search again')}
+                                            ← {t('Search again')}
                                         </Button>
                                     )}
                                 </div>
@@ -298,178 +371,212 @@ export default function ManualBookingDialog({
                         </div>
                     )}
 
-                    {/* Step 2: Service */}
                     {step === 'service' && (
-                        <div className="space-y-3">
-                            <h3 className="text-sm font-medium">{t('Select Service')}</h3>
-                            <div className="space-y-2">
-                                {services.map((service) => (
-                                    <button
-                                        key={service.id}
-                                        className={`w-full rounded-md border p-3 text-left transition ${
-                                            selectedService?.id === service.id
-                                                ? 'border-primary bg-primary/5'
-                                                : 'hover:bg-muted'
-                                        }`}
-                                        onClick={() => setSelectedService(service)}
-                                    >
-                                        <span className="text-sm font-medium">
-                                            {service.name}
-                                        </span>
-                                        <span className="text-muted-foreground ml-2 text-xs">
-                                            {service.duration_minutes} {t('min')}
-                                            {service.price !== null && service.price > 0 && (
-                                                <> &middot; CHF {service.price}</>
-                                            )}
-                                        </span>
-                                    </button>
-                                ))}
-                            </div>
+                        <div className="flex flex-col gap-2">
+                            <ul className="flex flex-col gap-2">
+                                {services.map((service) => {
+                                    const isSelected = selectedService?.id === service.id;
+                                    return (
+                                        <li key={service.id}>
+                                            <button
+                                                type="button"
+                                                aria-pressed={isSelected}
+                                                className="flex w-full items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/40 aria-pressed:border-primary aria-pressed:bg-honey-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                                                onClick={() => setSelectedService(service)}
+                                            >
+                                                <div className="flex min-w-0 flex-col gap-0.5">
+                                                    <span className="text-sm font-medium text-foreground">
+                                                        {service.name}
+                                                    </span>
+                                                    <span className="text-xs text-muted-foreground">
+                                                        {formatDurationShort(
+                                                            service.duration_minutes,
+                                                            t,
+                                                        )}
+                                                    </span>
+                                                </div>
+                                                {service.price !== null && (
+                                                    <span className="tabular-nums text-sm font-medium text-foreground">
+                                                        {formatPrice(service.price, t)}
+                                                    </span>
+                                                )}
+                                            </button>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
                         </div>
                     )}
 
-                    {/* Step 3: Collaborator */}
                     {step === 'collaborator' && selectedService && (
-                        <div className="space-y-3">
-                            <h3 className="text-sm font-medium">{t('Select Collaborator')}</h3>
-                            <div className="space-y-2">
-                                <button
-                                    className={`w-full rounded-md border p-3 text-left transition ${
-                                        !selectedCollaborator
-                                            ? 'border-primary bg-primary/5'
-                                            : 'hover:bg-muted'
-                                    }`}
-                                    onClick={() => setSelectedCollaborator(null)}
-                                >
-                                    <span className="text-sm font-medium">
-                                        {t('Auto-assign')}
-                                    </span>
-                                </button>
-                                {selectedService.collaborators.map((collab) => (
+                        <div className="flex flex-col gap-2">
+                            <ul className="flex flex-col gap-2">
+                                <li>
                                     <button
-                                        key={collab.id}
-                                        className={`w-full rounded-md border p-3 text-left transition ${
-                                            selectedCollaborator?.id === collab.id
-                                                ? 'border-primary bg-primary/5'
-                                                : 'hover:bg-muted'
-                                        }`}
-                                        onClick={() => setSelectedCollaborator(collab)}
+                                        type="button"
+                                        aria-pressed={!selectedCollaborator}
+                                        className="flex w-full items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/40 aria-pressed:border-primary aria-pressed:bg-honey-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                                        onClick={() => setSelectedCollaborator(null)}
                                     >
                                         <span className="text-sm font-medium">
-                                            {collab.name}
+                                            {t('Auto-assign')}
+                                        </span>
+                                        <span className="text-xs text-muted-foreground">
+                                            {t('Pick any available')}
                                         </span>
                                     </button>
+                                </li>
+                                {selectedService.collaborators.map((collab) => (
+                                    <li key={collab.id}>
+                                        <button
+                                            type="button"
+                                            aria-pressed={selectedCollaborator?.id === collab.id}
+                                            className="flex w-full items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/40 aria-pressed:border-primary aria-pressed:bg-honey-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                                            onClick={() => setSelectedCollaborator(collab)}
+                                        >
+                                            <span className="text-sm font-medium">
+                                                {collab.name}
+                                            </span>
+                                        </button>
+                                    </li>
                                 ))}
-                            </div>
+                            </ul>
                         </div>
                     )}
 
-                    {/* Step 4: Date & Time */}
                     {step === 'datetime' && selectedService && (
-                        <div className="space-y-3">
-                            <h3 className="text-sm font-medium">{t('Select Date & Time')}</h3>
-                            <div className="flex flex-col gap-4 sm:flex-row">
-                                <Calendar
-                                    mode="single"
-                                    selected={selectedDate}
-                                    onSelect={(date) => setSelectedDate(date ?? undefined)}
-                                    disabled={(date) => {
-                                        const key = date.toLocaleDateString('sv');
-                                        return date < new Date(new Date().setHours(0, 0, 0, 0)) ||
-                                            availableDates[key] === false;
-                                    }}
-                                    onMonthChange={(month) => {
-                                        const m = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}`;
-                                        loadDates(m);
-                                    }}
-                                    defaultMonth={new Date()}
-                                    className="rounded-md border"
-                                />
-                                <div className="flex-1">
-                                    {!selectedDate && (
-                                        <p className="text-muted-foreground text-sm">
-                                            {t('Select a date to see available times.')}
+                        <div className="flex flex-col gap-4 sm:flex-row sm:gap-6">
+                            <Calendar
+                                mode="single"
+                                selected={selectedDate}
+                                onSelect={(date) => setSelectedDate(date ?? undefined)}
+                                disabled={(date) => {
+                                    const key = date.toLocaleDateString('sv');
+                                    return (
+                                        date < new Date(new Date().setHours(0, 0, 0, 0)) ||
+                                        availableDates[key] === false
+                                    );
+                                }}
+                                onMonthChange={(month) => {
+                                    const m = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}`;
+                                    loadDates(m);
+                                }}
+                                defaultMonth={new Date()}
+                                className="self-start rounded-lg border"
+                            />
+                            <div className="flex min-h-48 flex-1 flex-col gap-2">
+                                <span className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+                                    {t('Available times')}
+                                </span>
+                                {!selectedDate && (
+                                    <p className="text-sm text-muted-foreground">
+                                        {t('Pick a date to see what opens up.')}
+                                    </p>
+                                )}
+                                {selectedDate && slotsHttp.processing && (
+                                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                        <Spinner className="size-3.5" />
+                                        {t('Checking availability…')}
+                                    </div>
+                                )}
+                                {selectedDate &&
+                                    !slotsHttp.processing &&
+                                    availableSlots.length === 0 && (
+                                        <p className="text-sm text-muted-foreground">
+                                            {t('Nothing free on this date.')}
                                         </p>
                                     )}
-                                    {selectedDate && slotsHttp.processing && (
-                                        <div className="flex justify-center py-4">
-                                            <Spinner className="size-5" />
+                                {selectedDate &&
+                                    !slotsHttp.processing &&
+                                    availableSlots.length > 0 && (
+                                        <div className="grid max-h-60 grid-cols-3 gap-1.5 overflow-y-auto pe-1">
+                                            {availableSlots.map((slot) => {
+                                                const isSelected = selectedTime === slot;
+                                                return (
+                                                    <button
+                                                        key={slot}
+                                                        type="button"
+                                                        aria-pressed={isSelected}
+                                                        className="rounded-md border border-border bg-background px-2 py-1.5 text-center font-display tabular-nums text-sm text-foreground transition-colors hover:bg-muted/60 aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                                                        onClick={() => setSelectedTime(slot)}
+                                                    >
+                                                        {slot}
+                                                    </button>
+                                                );
+                                            })}
                                         </div>
                                     )}
-                                    {selectedDate && !slotsHttp.processing && availableSlots.length === 0 && (
-                                        <p className="text-muted-foreground text-sm">
-                                            {t('No available times for this date.')}
-                                        </p>
-                                    )}
-                                    {selectedDate && !slotsHttp.processing && availableSlots.length > 0 && (
-                                        <div className="grid max-h-48 grid-cols-3 gap-1.5 overflow-y-auto">
-                                            {availableSlots.map((slot) => (
-                                                <button
-                                                    key={slot}
-                                                    className={`rounded border px-2 py-1.5 text-center text-sm transition ${
-                                                        selectedTime === slot
-                                                            ? 'border-primary bg-primary text-primary-foreground'
-                                                            : 'hover:bg-muted'
-                                                    }`}
-                                                    onClick={() => setSelectedTime(slot)}
-                                                >
-                                                    {slot}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
                             </div>
                         </div>
                     )}
 
-                    {/* Step 5: Confirm */}
                     {step === 'confirm' && selectedService && (
-                        <div className="space-y-4">
-                            <h3 className="text-sm font-medium">{t('Confirm Booking')}</h3>
-                            <div className="space-y-2 rounded-md border p-3 text-sm">
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">{t('Customer')}</span>
-                                    <span>{customerName} ({customerEmail})</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">{t('Service')}</span>
-                                    <span>{selectedService.name}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">{t('Collaborator')}</span>
-                                    <span>
-                                        {selectedCollaborator?.name ?? t('Auto-assign')}
-                                    </span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">{t('Date & Time')}</span>
-                                    <span>
-                                        {selectedDate?.toLocaleDateString([], {
-                                            dateStyle: 'medium',
-                                        })}{' '}
-                                        {selectedTime}
-                                    </span>
-                                </div>
-                            </div>
-                            <Textarea
-                                placeholder={t('Notes (optional)')}
-                                value={notes}
-                                onChange={(e) => setNotes(e.target.value)}
-                                rows={2}
-                            />
+                        <div className="flex flex-col gap-5">
+                            <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-3 rounded-lg border border-border bg-honey-soft/50 px-4 py-4 text-sm">
+                                <dt className="text-muted-foreground">{t('Customer')}</dt>
+                                <dd className="text-foreground">
+                                    <p className="font-medium">{customerName}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {customerEmail}
+                                    </p>
+                                </dd>
+
+                                <dt className="text-muted-foreground">{t('Service')}</dt>
+                                <dd className="text-foreground">
+                                    <p className="font-medium">{selectedService.name}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {formatDurationShort(
+                                            selectedService.duration_minutes,
+                                            t,
+                                        )}
+                                        {selectedService.price !== null &&
+                                            selectedService.price > 0 && (
+                                                <>
+                                                    {' · '}
+                                                    {formatPrice(selectedService.price, t)}
+                                                </>
+                                            )}
+                                    </p>
+                                </dd>
+
+                                <dt className="text-muted-foreground">{t('With')}</dt>
+                                <dd className="text-foreground">
+                                    {selectedCollaborator?.name ?? t('Auto-assign')}
+                                </dd>
+
+                                <dt className="text-muted-foreground">{t('When')}</dt>
+                                <dd className="font-display tabular-nums text-foreground">
+                                    {selectedDate?.toLocaleDateString([], {
+                                        dateStyle: 'medium',
+                                    })}
+                                    {' · '}
+                                    {selectedTime}
+                                </dd>
+                            </dl>
+
+                            <Field>
+                                <FieldLabel>{t('Note (optional)')}</FieldLabel>
+                                <Textarea
+                                    value={notes}
+                                    onChange={(e) => setNotes(e.target.value)}
+                                    rows={2}
+                                    placeholder={t(
+                                        'Anything the customer should see on their confirmation…',
+                                    )}
+                                />
+                            </Field>
                         </div>
                     )}
                 </DialogPanel>
 
                 <DialogFooter className="gap-2">
                     {stepIndex > 0 && (
-                        <Button variant="outline" onClick={goBack}>
-                            {t('Back')}
+                        <Button variant="ghost" onClick={goBack}>
+                            ← {t('Back')}
                         </Button>
                     )}
                     {stepIndex === 0 && (
-                        <DialogClose render={<Button variant="outline" />}>
+                        <DialogClose render={<Button variant="ghost" />}>
                             {t('Cancel')}
                         </DialogClose>
                     )}
@@ -482,11 +589,13 @@ export default function ManualBookingDialog({
                                 (step === 'datetime' && !canProceedDateTime)
                             }
                         >
-                            {t('Next')}
+                            {t('Continue')}
                         </Button>
                     ) : (
                         <Button onClick={handleSubmit}>
-                            {t('Create Booking')}
+                            <Display className="tracking-tight">
+                                {t('Create booking')}
+                            </Display>
                         </Button>
                     )}
                 </DialogFooter>

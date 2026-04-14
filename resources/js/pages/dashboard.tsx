@@ -2,8 +2,19 @@ import AuthenticatedLayout from '@/layouts/authenticated-layout';
 import { Link, usePage } from '@inertiajs/react';
 import { index as bookingsIndex } from '@/actions/App/Http/Controllers/Dashboard/BookingController';
 import { useTrans } from '@/hooks/use-trans';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Display } from '@/components/ui/display';
+import { Frame, FrameHeader } from '@/components/ui/frame';
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from '@/components/ui/table';
+import { BookingStatusBadge } from '@/components/dashboard/booking-status-badge';
+import { formatTimeShort } from '@/lib/datetime-format';
+import { ArrowUpRightIcon } from 'lucide-react';
 import type { DashboardStats, PageProps, TodayBooking } from '@/types';
 
 interface DashboardPageProps extends PageProps {
@@ -12,111 +23,131 @@ interface DashboardPageProps extends PageProps {
     timezone: string;
 }
 
-function formatTime(isoString: string, timezone: string): string {
-    return new Date(isoString).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
+export default function Dashboard() {
+    const { auth, stats, todayBookings, timezone } =
+        usePage<DashboardPageProps>().props;
+    const { t } = useTrans();
+
+    const firstName = auth.user?.name.split(' ')[0] ?? '';
+    const today = new Date().toLocaleDateString([], {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
         timeZone: timezone,
     });
-}
-
-function StatusBadge({ status }: { status: string }) {
-    const variant =
-        status === 'confirmed'
-            ? 'success'
-            : status === 'pending'
-              ? 'warning'
-              : status === 'cancelled'
-                ? 'destructive'
-                : status === 'no_show'
-                  ? 'error'
-                  : 'secondary';
-
-    const label =
-        status === 'no_show'
-            ? 'No Show'
-            : status.charAt(0).toUpperCase() + status.slice(1);
-
-    return <Badge variant={variant}>{label}</Badge>;
-}
-
-export default function Dashboard() {
-    const { stats, todayBookings, timezone } = usePage<DashboardPageProps>().props;
-    const { t } = useTrans();
 
     const statCards = [
         { label: t('Today'), value: stats.today_count },
-        { label: t('This Week'), value: stats.week_count },
+        { label: t('This week'), value: stats.week_count },
         { label: t('Upcoming'), value: stats.upcoming_count },
-        { label: t('Pending'), value: stats.pending_count },
+        { label: t('Awaiting confirmation'), value: stats.pending_count },
     ];
 
     return (
-        <AuthenticatedLayout title={t('Dashboard')}>
-            <div className="space-y-6">
-                {/* Stats */}
-                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                    {statCards.map((stat) => (
-                        <Card key={stat.label}>
-                            <CardHeader className="pb-2">
-                                <CardTitle className="text-muted-foreground text-sm font-medium">
+        <AuthenticatedLayout
+            title={t('Dashboard')}
+            eyebrow={today}
+            heading={
+                firstName ? t('Good to see you, :name.', { name: firstName }) : t('Dashboard')
+            }
+            description={t("A calm look at today — glance, act, move on.")}
+        >
+            <div className="flex flex-col gap-8">
+                <section>
+                    <h2 className="sr-only">{t('Overview')}</h2>
+                    <dl className="grid grid-cols-2 divide-y divide-border border-y border-border sm:grid-cols-4 sm:divide-x sm:divide-y-0">
+                        {statCards.map((stat, idx) => (
+                            <div
+                                key={stat.label}
+                                className={
+                                    'flex flex-col gap-1 py-4 sm:py-5 ' +
+                                    (idx % 2 === 1 ? 'ps-5 sm:ps-6' : 'pe-5 sm:px-6') +
+                                    (idx === 0 ? ' sm:ps-0' : '') +
+                                    (idx === statCards.length - 1 ? ' sm:pe-0' : '')
+                                }
+                            >
+                                <dt className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
                                     {stat.label}
-                                </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                <p className="text-2xl font-bold">
-                                    {stat.value}
-                                </p>
-                            </CardContent>
-                        </Card>
-                    ))}
-                </div>
+                                </dt>
+                                <dd>
+                                    <Display className="text-3xl font-semibold tabular-nums leading-none text-foreground sm:text-4xl">
+                                        {stat.value}
+                                    </Display>
+                                </dd>
+                            </div>
+                        ))}
+                    </dl>
+                </section>
 
-                {/* Today's Appointments */}
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between">
-                        <CardTitle>{t("Today's Appointments")}</CardTitle>
+                <section className="flex flex-col gap-4">
+                    <div className="flex items-end justify-between gap-4">
+                        <div className="flex flex-col gap-1">
+                            <h2 className="text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+                                {t("Today's schedule")}
+                            </h2>
+                            <p className="text-sm text-muted-foreground">
+                                {todayBookings.length === 0
+                                    ? t('Nothing on the books yet.')
+                                    : t(':count on the calendar.', { count: todayBookings.length })}
+                            </p>
+                        </div>
                         <Link
                             href={bookingsIndex.url()}
-                            className="text-sm text-primary hover:underline"
+                            className="inline-flex items-center gap-1 text-[11px] uppercase tracking-[0.22em] text-muted-foreground transition-colors hover:text-foreground"
                         >
-                            {t('View all')}
+                            {t('All bookings')}
+                            <ArrowUpRightIcon className="size-3" />
                         </Link>
-                    </CardHeader>
-                    <CardContent>
-                        {todayBookings.length === 0 ? (
-                            <p className="text-muted-foreground text-sm">
-                                {t('No appointments scheduled for today.')}
-                            </p>
-                        ) : (
-                            <div className="space-y-3">
-                                {todayBookings.map((booking) => (
-                                    <div
-                                        key={booking.id}
-                                        className="flex items-center justify-between rounded-md border p-3"
-                                    >
-                                        <div className="flex items-center gap-4">
-                                            <div className="text-sm font-medium">
-                                                {formatTime(booking.starts_at, timezone)}
-                                            </div>
-                                            <div>
-                                                <p className="text-sm font-medium">
-                                                    {booking.customer.name}
-                                                </p>
-                                                <p className="text-muted-foreground text-xs">
-                                                    {booking.service.name}{' '}
-                                                    &middot;{' '}
-                                                    {booking.collaborator.name}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <StatusBadge status={booking.status} />
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
+                    </div>
+
+                    {todayBookings.length === 0 ? (
+                        <Frame>
+                            <FrameHeader className="items-center gap-2 py-10 text-center">
+                                <p className="text-sm text-foreground">
+                                    {t('A quiet day.')}
+                                </p>
+                                <p className="text-sm text-muted-foreground">
+                                    {t('New bookings will appear here as they come in.')}
+                                </p>
+                            </FrameHeader>
+                        </Frame>
+                    ) : (
+                        <Frame className="w-full">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead className="w-24">{t('Time')}</TableHead>
+                                        <TableHead>{t('Customer')}</TableHead>
+                                        <TableHead>{t('Service')}</TableHead>
+                                        <TableHead>{t('With')}</TableHead>
+                                        <TableHead className="text-right">{t('Status')}</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {todayBookings.map((booking) => (
+                                        <TableRow key={booking.id}>
+                                            <TableCell className="font-display tabular-nums text-sm font-medium">
+                                                {formatTimeShort(booking.starts_at, timezone)}
+                                            </TableCell>
+                                            <TableCell className="text-sm font-medium">
+                                                {booking.customer.name}
+                                            </TableCell>
+                                            <TableCell className="text-muted-foreground text-sm">
+                                                {booking.service.name}
+                                            </TableCell>
+                                            <TableCell className="text-muted-foreground text-sm">
+                                                {booking.collaborator.name}
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                <BookingStatusBadge status={booking.status} />
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </Frame>
+                    )}
+                </section>
             </div>
         </AuthenticatedLayout>
     );

@@ -24,7 +24,12 @@ export default function EditService({ service, collaborators }: Props) {
     const { t } = useTrans();
 
     return (
-        <SettingsLayout title={t('Edit Service')}>
+        <SettingsLayout
+            title={t('Edit Service')}
+            eyebrow={t('Settings · Team')}
+            heading={service.name}
+            description={t('Adjust the treatment, its timing, and who performs it.')}
+        >
             <ServiceForm
                 action={update(service.id)}
                 service={service}

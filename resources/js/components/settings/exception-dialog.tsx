@@ -5,13 +5,6 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Calendar } from '@/components/ui/calendar';
 import {
-    Select,
-    SelectItem,
-    SelectPopup,
-    SelectTrigger,
-    SelectValue,
-} from '@/components/ui/select';
-import {
     Popover,
     PopoverPopup,
     PopoverTrigger,
@@ -30,6 +23,7 @@ import { useTrans } from '@/hooks/use-trans';
 import { useHttp } from '@inertiajs/react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { format } from 'date-fns';
+import { CalendarIcon } from 'lucide-react';
 
 export interface ExceptionData {
     id?: number;
@@ -49,10 +43,11 @@ interface ExceptionDialogProps {
     updateUrl?: string;
 }
 
-const typeItems = [
-    { label: 'Block (unavailable)', value: 'block' },
-    { label: 'Open (extra availability)', value: 'open' },
-];
+interface TypeChoice {
+    value: 'block' | 'open';
+    label: string;
+    hint: string;
+}
 
 function formatDateDisplay(dateStr: string): string {
     if (!dateStr) return '';
@@ -77,9 +72,14 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
         end_date: '',
         start_time: '' as string | null,
         end_time: '' as string | null,
-        type: 'block',
+        type: 'block' as 'block' | 'open',
         reason: '' as string | null,
     });
+
+    const typeChoices: TypeChoice[] = [
+        { value: 'block', label: t('Closed'), hint: t('Unavailable for bookings') },
+        { value: 'open', label: t('Open'), hint: t('Extra availability') },
+    ];
 
     useEffect(() => {
         if (open && exception) {
@@ -88,7 +88,7 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
                 end_date: exception.end_date,
                 start_time: exception.start_time,
                 end_time: exception.end_time,
-                type: exception.type,
+                type: exception.type as 'block' | 'open',
                 reason: exception.reason,
             });
             setIsPartial(!!exception.start_time);
@@ -107,10 +107,8 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
 
     function submit(e: FormEvent) {
         e.preventDefault();
-
         const url = isEditing ? updateUrl! : storeUrl;
         const method = isEditing ? 'put' : 'post';
-
         http[method](url, {
             onSuccess: () => onOpenChange(false),
         });
@@ -121,43 +119,59 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
             <DialogPopup>
                 <form onSubmit={submit} className="contents">
                     <DialogHeader>
-                        <DialogTitle>{isEditing ? t('Edit Exception') : t('Add Exception')}</DialogTitle>
-                        <DialogDescription>{t('Define a closure, absence, or special availability.')}</DialogDescription>
+                        <DialogTitle>{isEditing ? t('Edit exception') : t('New exception')}</DialogTitle>
+                        <DialogDescription>
+                            {t('Override your default hours for a closure, vacation, or special opening.')}
+                        </DialogDescription>
                     </DialogHeader>
                     <DialogPanel>
-                        <div className="flex flex-col gap-4">
+                        <div className="flex flex-col gap-5">
                             <Field>
                                 <FieldLabel>{t('Type')}</FieldLabel>
-                                <Select
-                                    defaultValue={http.data.type}
-                                    onValueChange={(val) => http.setData('type', val as string)}
-                                    items={typeItems}
-                                >
-                                    <SelectTrigger>
-                                        <SelectValue placeholder={t('Select type')} />
-                                    </SelectTrigger>
-                                    <SelectPopup>
-                                        {typeItems.map((item) => (
-                                            <SelectItem key={item.value} value={item.value}>
-                                                {t(item.label)}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectPopup>
-                                </Select>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {typeChoices.map((choice) => {
+                                        const selected = http.data.type === choice.value;
+                                        return (
+                                            <button
+                                                key={choice.value}
+                                                type="button"
+                                                aria-pressed={selected}
+                                                onClick={() => http.setData('type', choice.value)}
+                                                className="flex flex-col items-start gap-0.5 rounded-lg border border-border/70 bg-background px-3.5 py-2.5 text-left transition-colors hover:border-border hover:bg-muted/40 aria-pressed:border-primary/40 aria-pressed:bg-honey-soft/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/32"
+                                            >
+                                                <span className="text-sm font-medium text-foreground">
+                                                    {choice.label}
+                                                </span>
+                                                <span className="text-[11px] text-muted-foreground">
+                                                    {choice.hint}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
                                 {http.errors.type && <FieldError match>{http.errors.type}</FieldError>}
                             </Field>
 
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-2 gap-3">
                                 <Field>
                                     <FieldLabel>{t('Start date')}</FieldLabel>
                                     <Popover open={startDateOpen} onOpenChange={setStartDateOpen}>
                                         <PopoverTrigger
                                             render={<Button variant="outline" type="button" />}
-                                            className="w-full justify-start text-left font-normal"
+                                            className="h-9 w-full justify-start gap-2 px-3 text-left font-normal"
                                         >
-                                            {http.data.start_date
-                                                ? formatDateDisplay(http.data.start_date)
-                                                : <span className="text-muted-foreground">{t('Pick a date')}</span>}
+                                            <CalendarIcon
+                                                aria-hidden="true"
+                                                className="size-3.5 text-muted-foreground"
+                                                strokeWidth={1.75}
+                                            />
+                                            {http.data.start_date ? (
+                                                <span className="font-display tabular-nums text-foreground">
+                                                    {formatDateDisplay(http.data.start_date)}
+                                                </span>
+                                            ) : (
+                                                <span className="text-muted-foreground">{t('Pick a date')}</span>
+                                            )}
                                         </PopoverTrigger>
                                         <PopoverPopup>
                                             <Calendar
@@ -177,11 +191,20 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
                                     <Popover open={endDateOpen} onOpenChange={setEndDateOpen}>
                                         <PopoverTrigger
                                             render={<Button variant="outline" type="button" />}
-                                            className="w-full justify-start text-left font-normal"
+                                            className="h-9 w-full justify-start gap-2 px-3 text-left font-normal"
                                         >
-                                            {http.data.end_date
-                                                ? formatDateDisplay(http.data.end_date)
-                                                : <span className="text-muted-foreground">{t('Pick a date')}</span>}
+                                            <CalendarIcon
+                                                aria-hidden="true"
+                                                className="size-3.5 text-muted-foreground"
+                                                strokeWidth={1.75}
+                                            />
+                                            {http.data.end_date ? (
+                                                <span className="font-display tabular-nums text-foreground">
+                                                    {formatDateDisplay(http.data.end_date)}
+                                                </span>
+                                            ) : (
+                                                <span className="text-muted-foreground">{t('Pick a date')}</span>
+                                            )}
                                         </PopoverTrigger>
                                         <PopoverPopup>
                                             <Calendar
@@ -198,7 +221,7 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
                                 </Field>
                             </div>
 
-                            <Label>
+                            <Label className="flex items-center gap-2.5 rounded-lg border border-border/70 bg-background px-3.5 py-2.5 text-sm transition-colors hover:border-border not-has-[:checked]:hover:bg-muted/40 has-[:checked]:border-primary/40 has-[:checked]:bg-honey-soft/60">
                                 <Checkbox
                                     checked={isPartial}
                                     onCheckedChange={(checked) => {
@@ -210,11 +233,13 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
                                         }
                                     }}
                                 />
-                                {t('Specific time range (partial day)')}
+                                <span className="text-foreground">
+                                    {t('Only part of the day')}
+                                </span>
                             </Label>
 
                             {isPartial && (
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-2 gap-3">
                                     <Field>
                                         <FieldLabel>{t('Start time')}</FieldLabel>
                                         <Input
@@ -237,11 +262,11 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
                             )}
 
                             <Field>
-                                <FieldLabel>{t('Reason (optional)')}</FieldLabel>
+                                <FieldLabel>{t('Reason')}</FieldLabel>
                                 <Input
                                     value={http.data.reason ?? ''}
                                     onChange={(e) => http.setData('reason', e.target.value || null)}
-                                    placeholder={t('e.g. Holiday, Sick day')}
+                                    placeholder={t('Holiday, sick day, special evening…')}
                                 />
                                 {http.errors.reason && <FieldError match>{http.errors.reason}</FieldError>}
                             </Field>
@@ -249,7 +274,9 @@ export function ExceptionDialog({ open, onOpenChange, exception, storeUrl, updat
                     </DialogPanel>
                     <DialogFooter>
                         <DialogClose render={<Button variant="outline" type="button" />}>{t('Cancel')}</DialogClose>
-                        <Button type="submit" disabled={http.processing}>{isEditing ? t('Update') : t('Add')}</Button>
+                        <Button type="submit" loading={http.processing}>
+                            {isEditing ? t('Save exception') : t('Add exception')}
+                        </Button>
                     </DialogFooter>
                 </form>
             </DialogPopup>

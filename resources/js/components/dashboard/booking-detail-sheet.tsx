@@ -12,8 +12,11 @@ import {
 } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Separator } from '@/components/ui/separator';
+import { Field, FieldLabel } from '@/components/ui/field';
+import { Display } from '@/components/ui/display';
 import { BookingStatusBadge, BookingSourceBadge } from './booking-status-badge';
+import { formatDateTimeMedium, formatTimeShort } from '@/lib/datetime-format';
+import { formatPrice, formatDurationShort } from '@/lib/booking-format';
 import type { DashboardBooking } from '@/types';
 
 interface BookingDetailSheetProps {
@@ -23,24 +26,36 @@ interface BookingDetailSheetProps {
     timezone: string;
 }
 
-const statusTransitions: Record<string, { label: string; target: string; variant?: 'default' | 'destructive' | 'outline' }[]> = {
+const statusTransitions: Record<
+    string,
+    { label: string; target: string; variant?: 'default' | 'destructive' | 'outline' }[]
+> = {
     pending: [
         { label: 'Confirm', target: 'confirmed' },
         { label: 'Cancel', target: 'cancelled', variant: 'destructive' },
     ],
     confirmed: [
-        { label: 'Complete', target: 'completed' },
-        { label: 'No Show', target: 'no_show', variant: 'outline' },
+        { label: 'Mark complete', target: 'completed' },
+        { label: 'No show', target: 'no_show', variant: 'outline' },
         { label: 'Cancel', target: 'cancelled', variant: 'destructive' },
     ],
 };
 
-function formatDateTime(isoString: string, timezone: string): string {
-    return new Date(isoString).toLocaleString([], {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-        timeZone: timezone,
-    });
+function Meta({
+    label,
+    children,
+}: {
+    label: string;
+    children: React.ReactNode;
+}) {
+    return (
+        <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+                {label}
+            </span>
+            <div className="text-sm text-foreground">{children}</div>
+        </div>
+    );
 }
 
 export default function BookingDetailSheet({
@@ -57,20 +72,30 @@ export default function BookingDetailSheet({
     if (!booking) return null;
 
     const actions = statusTransitions[booking.status] ?? [];
+    const startTime = formatTimeShort(booking.starts_at, timezone);
+    const endTime = formatTimeShort(booking.ends_at, timezone);
 
     function handleStatusChange(target: string) {
-        router.patch(updateStatus.url(booking!.id), { status: target }, {
-            preserveScroll: true,
-            onSuccess: () => onOpenChange(false),
-        });
+        router.patch(
+            updateStatus.url(booking!.id),
+            { status: target },
+            {
+                preserveScroll: true,
+                onSuccess: () => onOpenChange(false),
+            },
+        );
     }
 
     function handleSaveNotes() {
         notesHttp.setData('internal_notes', notesValue);
-        router.patch(updateNotes.url(booking!.id), { internal_notes: notesValue }, {
-            preserveScroll: true,
-            onSuccess: () => setEditingNotes(false),
-        });
+        router.patch(
+            updateNotes.url(booking!.id),
+            { internal_notes: notesValue },
+            {
+                preserveScroll: true,
+                onSuccess: () => setEditingNotes(false),
+            },
+        );
     }
 
     function startEditingNotes() {
@@ -82,140 +107,120 @@ export default function BookingDetailSheet({
         <Sheet open={open} onOpenChange={onOpenChange}>
             <SheetPopup side="right" className="w-full sm:max-w-md">
                 <SheetHeader>
-                    <SheetTitle>{t('Booking Details')}</SheetTitle>
+                    <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                        {t('Booking')}
+                    </p>
+                    <SheetTitle className="font-display">
+                        {booking.customer.name}
+                    </SheetTitle>
                     <SheetDescription>
-                        {booking.service.name} &middot;{' '}
-                        {formatDateTime(booking.starts_at, timezone)}
+                        {formatDateTimeMedium(booking.starts_at, timezone)}
                     </SheetDescription>
-                </SheetHeader>
-
-                <div className="space-y-4 p-4">
-                    {/* Status & Source */}
-                    <div className="flex items-center gap-2">
+                    <div className="mt-1 flex items-center gap-2">
                         <BookingStatusBadge status={booking.status} />
                         <BookingSourceBadge source={booking.source} />
                     </div>
+                </SheetHeader>
 
-                    {/* Time */}
-                    <div>
-                        <h4 className="text-muted-foreground mb-1 text-xs font-medium uppercase">
-                            {t('Time')}
-                        </h4>
-                        <p className="text-sm">
-                            {formatDateTime(booking.starts_at, timezone)} &ndash;{' '}
-                            {new Date(booking.ends_at).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                timeZone: timezone,
-                            })}
-                        </p>
-                        <p className="text-muted-foreground text-xs">
-                            {booking.service.duration_minutes} {t('min')}
-                        </p>
-                    </div>
+                <div className="flex flex-col gap-6 border-t border-border/60 px-6 py-6">
+                    <Meta label={t('When')}>
+                        <div className="flex items-baseline gap-2">
+                            <Display className="font-display tabular-nums text-base font-semibold">
+                                {startTime}
+                                <span className="mx-1.5 text-muted-foreground/80">–</span>
+                                {endTime}
+                            </Display>
+                            <span className="text-xs text-muted-foreground">
+                                {formatDurationShort(booking.service.duration_minutes, t)}
+                            </span>
+                        </div>
+                    </Meta>
 
-                    <Separator />
-
-                    {/* Service & Collaborator */}
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <h4 className="text-muted-foreground mb-1 text-xs font-medium uppercase">
-                                {t('Service')}
-                            </h4>
-                            <p className="text-sm">{booking.service.name}</p>
+                    <div className="grid grid-cols-2 gap-5">
+                        <Meta label={t('Service')}>
+                            <p className="font-medium">{booking.service.name}</p>
                             {booking.service.price !== null && (
-                                <p className="text-muted-foreground text-xs">
-                                    {booking.service.price === 0
-                                        ? t('Free')
-                                        : `CHF ${booking.service.price}`}
+                                <p className="text-xs text-muted-foreground">
+                                    {formatPrice(booking.service.price, t)}
                                 </p>
                             )}
-                        </div>
-                        <div>
-                            <h4 className="text-muted-foreground mb-1 text-xs font-medium uppercase">
-                                {t('Collaborator')}
-                            </h4>
-                            <p className="text-sm">{booking.collaborator.name}</p>
-                        </div>
+                        </Meta>
+                        <Meta label={t('With')}>
+                            <p className="font-medium">{booking.collaborator.name}</p>
+                        </Meta>
                     </div>
 
-                    <Separator />
-
-                    {/* Customer */}
-                    <div>
-                        <h4 className="text-muted-foreground mb-1 text-xs font-medium uppercase">
-                            {t('Customer')}
-                        </h4>
-                        <p className="text-sm font-medium">{booking.customer.name}</p>
-                        <p className="text-muted-foreground text-sm">{booking.customer.email}</p>
+                    <Meta label={t('Customer')}>
+                        <p className="font-medium">{booking.customer.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                            {booking.customer.email}
+                        </p>
                         {booking.customer.phone && (
-                            <p className="text-muted-foreground text-sm">{booking.customer.phone}</p>
+                            <p className="text-xs text-muted-foreground">
+                                {booking.customer.phone}
+                            </p>
                         )}
-                    </div>
+                    </Meta>
 
-                    {/* Customer Notes */}
                     {booking.notes && (
-                        <>
-                            <Separator />
-                            <div>
-                                <h4 className="text-muted-foreground mb-1 text-xs font-medium uppercase">
-                                    {t('Customer Notes')}
-                                </h4>
-                                <p className="text-sm whitespace-pre-wrap">{booking.notes}</p>
-                            </div>
-                        </>
+                        <Meta label={t('Customer note')}>
+                            <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                                {booking.notes}
+                            </p>
+                        </Meta>
                     )}
 
-                    <Separator />
-
-                    {/* Internal Notes */}
-                    <div>
-                        <div className="mb-1 flex items-center justify-between">
-                            <h4 className="text-muted-foreground text-xs font-medium uppercase">
-                                {t('Internal Notes')}
-                            </h4>
+                    <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+                                {t('Internal note')}
+                            </span>
                             {!editingNotes && (
                                 <Button
                                     variant="ghost"
                                     size="sm"
                                     onClick={startEditingNotes}
+                                    className="text-muted-foreground"
                                 >
                                     {booking.internal_notes ? t('Edit') : t('Add')}
                                 </Button>
                             )}
                         </div>
                         {editingNotes ? (
-                            <div className="space-y-2">
+                            <Field>
+                                <FieldLabel className="sr-only">
+                                    {t('Internal note')}
+                                </FieldLabel>
                                 <Textarea
                                     value={notesValue}
                                     onChange={(e) => setNotesValue(e.target.value)}
                                     rows={3}
-                                    placeholder={t('Add internal notes...')}
+                                    placeholder={t('Anything worth remembering for next time…')}
+                                    autoFocus
                                 />
                                 <div className="flex gap-2">
                                     <Button size="sm" onClick={handleSaveNotes}>
-                                        {t('Save')}
+                                        {t('Save note')}
                                     </Button>
                                     <Button
                                         size="sm"
-                                        variant="outline"
+                                        variant="ghost"
                                         onClick={() => setEditingNotes(false)}
                                     >
                                         {t('Cancel')}
                                     </Button>
                                 </div>
-                            </div>
+                            </Field>
                         ) : (
-                            <p className="text-muted-foreground text-sm whitespace-pre-wrap">
-                                {booking.internal_notes || t('No internal notes.')}
+                            <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+                                {booking.internal_notes || t('No internal notes yet.')}
                             </p>
                         )}
                     </div>
                 </div>
 
-                {/* Status Actions */}
                 {actions.length > 0 && (
-                    <SheetFooter className="flex-row gap-2 px-4 pb-4">
+                    <SheetFooter className="flex-row flex-wrap gap-2">
                         {actions.map((action) => (
                             <Button
                                 key={action.target}

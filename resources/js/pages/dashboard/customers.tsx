@@ -1,10 +1,15 @@
 import { useState, useEffect } from 'react';
 import { router, usePage } from '@inertiajs/react';
-import { index as customersIndex, show as customerShow } from '@/actions/App/Http/Controllers/Dashboard/CustomerController';
+import {
+    index as customersIndex,
+    show as customerShow,
+} from '@/actions/App/Http/Controllers/Dashboard/CustomerController';
 import AuthenticatedLayout from '@/layouts/authenticated-layout';
 import { useTrans } from '@/hooks/use-trans';
+import { Field, FieldLabel } from '@/components/ui/field';
 import { Frame, FrameFooter } from '@/components/ui/frame';
 import { Input } from '@/components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { LinkButton } from '@/components/ui/link-button';
 import {
     Table,
@@ -23,6 +28,8 @@ import {
     PaginationNext,
     PaginationPrevious,
 } from '@/components/ui/pagination';
+import { formatDateMedium } from '@/lib/datetime-format';
+import { SearchIcon } from 'lucide-react';
 import type { DashboardCustomer, PageProps } from '@/types';
 
 interface PaginatedData<T> {
@@ -39,11 +46,6 @@ interface CustomersPageProps extends PageProps {
     filters: {
         search: string;
     };
-}
-
-function formatDate(isoString: string | null): string {
-    if (!isoString) return '—';
-    return new Date(isoString).toLocaleDateString([], { dateStyle: 'medium' });
 }
 
 export default function CustomersPage() {
@@ -65,22 +67,40 @@ export default function CustomersPage() {
     }, [search]);
 
     return (
-        <AuthenticatedLayout title={t('Customers')}>
-            <div className="space-y-4">
-                {/* Search */}
-                <div className="flex items-center gap-3">
-                    <Input
-                        placeholder={t('Search by name, email, or phone...')}
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        className="max-w-sm"
-                    />
-                    <span className="text-muted-foreground text-sm">
-                        {customers.total} {t('customers')}
-                    </span>
+        <AuthenticatedLayout
+            title={t('Customers')}
+            eyebrow={t('Customers')}
+            heading={t('Your regulars')}
+            description={t(
+                'Search the people behind your bookings. Open any row to see their visit history.',
+            )}
+        >
+            <div className="flex flex-col gap-5">
+                <div className="flex flex-wrap items-end justify-between gap-4">
+                    <Field className="w-full max-w-sm">
+                        <FieldLabel className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                            {t('Search')}
+                        </FieldLabel>
+                        <InputGroup>
+                            <InputGroupAddon align="inline-start">
+                                <SearchIcon className="size-4 text-muted-foreground" />
+                            </InputGroupAddon>
+                            <InputGroupInput
+                                placeholder={t('Name, email, or phone')}
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                            />
+                        </InputGroup>
+                    </Field>
+                    <p className="pb-2 text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                        <span className="font-display text-foreground">
+                            {customers.total}
+                        </span>
+                        <span className="mx-2 text-rule-strong">·</span>
+                        {customers.total === 1 ? t('customer') : t('customers')}
+                    </p>
                 </div>
 
-                {/* Table */}
                 <Frame className="w-full">
                     <Table>
                         <TableHeader>
@@ -88,10 +108,8 @@ export default function CustomersPage() {
                                 <TableHead>{t('Name')}</TableHead>
                                 <TableHead>{t('Email')}</TableHead>
                                 <TableHead>{t('Phone')}</TableHead>
-                                <TableHead className="text-right">
-                                    {t('Bookings')}
-                                </TableHead>
-                                <TableHead>{t('Last Visit')}</TableHead>
+                                <TableHead className="text-right">{t('Visits')}</TableHead>
+                                <TableHead>{t('Last visit')}</TableHead>
                                 <TableHead className="w-0" />
                             </TableRow>
                         </TableHeader>
@@ -100,9 +118,18 @@ export default function CustomersPage() {
                                 <TableRow>
                                     <TableCell
                                         colSpan={6}
-                                        className="text-muted-foreground py-8 text-center"
+                                        className="py-10 text-center"
                                     >
-                                        {t('No customers found.')}
+                                        <div className="flex flex-col items-center gap-1">
+                                            <p className="text-sm text-foreground">
+                                                {t('No one matches that yet.')}
+                                            </p>
+                                            <p className="text-sm text-muted-foreground">
+                                                {search
+                                                    ? t('Try a different spelling or email.')
+                                                    : t('Customers appear here after their first booking.')}
+                                            </p>
+                                        </div>
                                     </TableCell>
                                 </TableRow>
                             ) : (
@@ -121,20 +148,20 @@ export default function CustomersPage() {
                                         <TableCell className="text-muted-foreground text-sm">
                                             {customer.phone || '—'}
                                         </TableCell>
-                                        <TableCell className="text-right text-sm">
+                                        <TableCell className="text-right font-display tabular-nums text-sm">
                                             {customer.bookings_count}
                                         </TableCell>
                                         <TableCell className="text-muted-foreground text-sm">
-                                            {formatDate(customer.last_booking_at)}
+                                            {formatDateMedium(customer.last_booking_at)}
                                         </TableCell>
-                                        <TableCell>
+                                        <TableCell className="w-0">
                                             <LinkButton
                                                 href={customerShow.url(customer.id)}
                                                 variant="ghost"
                                                 size="sm"
                                                 onClick={(e) => e.stopPropagation()}
                                             >
-                                                {t('View')}
+                                                {t('Open')}
                                             </LinkButton>
                                         </TableCell>
                                     </TableRow>
@@ -143,7 +170,17 @@ export default function CustomersPage() {
                         </TableBody>
                     </Table>
                     {customers.last_page > 1 && (
-                        <FrameFooter className="px-2 py-3">
+                        <FrameFooter className="flex items-center justify-between px-4 py-3">
+                            <span className="text-xs text-muted-foreground">
+                                {t('Showing :from–:end of :total', {
+                                    from: (customers.current_page - 1) * customers.per_page + 1,
+                                    end: Math.min(
+                                        customers.current_page * customers.per_page,
+                                        customers.total,
+                                    ),
+                                    total: customers.total,
+                                })}
+                            </span>
                             <Pagination>
                                 <PaginationContent>
                                     <PaginationItem>
@@ -160,9 +197,7 @@ export default function CustomersPage() {
                                                 }
                                             />
                                         ) : (
-                                            <PaginationPrevious
-                                                className="pointer-events-none opacity-50"
-                                            />
+                                            <PaginationPrevious className="pointer-events-none opacity-50" />
                                         )}
                                     </PaginationItem>
                                     {customers.links.slice(1, -1).map((link) => (
@@ -205,9 +240,7 @@ export default function CustomersPage() {
                                                 }
                                             />
                                         ) : (
-                                            <PaginationNext
-                                                className="pointer-events-none opacity-50"
-                                            />
+                                            <PaginationNext className="pointer-events-none opacity-50" />
                                         )}
                                     </PaginationItem>
                                 </PaginationContent>

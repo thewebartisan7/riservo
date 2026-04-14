@@ -1,7 +1,6 @@
 import SettingsLayout from '@/layouts/settings-layout';
-import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } from '@/components/ui/card';
+import { Card, CardPanel, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
     AlertDialog,
     AlertDialogClose,
@@ -13,7 +12,12 @@ import {
     AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { InputError } from '@/components/input-error';
+import { Display } from '@/components/ui/display';
+import {
+    SectionHeading,
+    SectionTitle,
+    SectionRule,
+} from '@/components/ui/section-heading';
 import { useTrans } from '@/hooks/use-trans';
 import { router, useHttp } from '@inertiajs/react';
 import {
@@ -28,6 +32,8 @@ import type { DaySchedule } from '@/components/onboarding/day-row';
 import { ExceptionDialog, type ExceptionData } from '@/components/settings/exception-dialog';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import type { AvatarUploadResponse } from '@/types';
+import { getInitials } from '@/lib/booking-format';
+import { PlusIcon } from 'lucide-react';
 
 interface CollaboratorDetail {
     id: number;
@@ -50,16 +56,30 @@ interface Props {
     services: ServiceAssignment[];
 }
 
-function getInitials(name: string): string {
-    return name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
+function formatDateRange(start: string, end: string, t: (key: string) => string): string {
+    if (!start) return '';
+    const fmt = (d: string) =>
+        new Date(d + 'T00:00:00').toLocaleDateString([], {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+        });
+    if (start === end) return fmt(start);
+    return t(':start — :end').replace(':start', fmt(start)).replace(':end', fmt(end));
 }
 
-export default function CollaboratorShow({ collaborator, schedule: initialSchedule, exceptions, services }: Props) {
+export default function CollaboratorShow({
+    collaborator,
+    schedule: initialSchedule,
+    exceptions,
+    services,
+}: Props) {
     const { t } = useTrans();
     const [scheduleData, setScheduleData] = useState<DaySchedule[]>(initialSchedule);
     const [avatarUrl, setAvatarUrl] = useState<string | null>(collaborator.avatar_url);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingException, setEditingException] = useState<ExceptionData | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const scheduleHttp = useHttp({ rules: [] as DaySchedule[] });
     const avatarHttp = useHttp({ avatar: null as File | null });
@@ -115,112 +135,174 @@ export default function CollaboratorShow({ collaborator, schedule: initialSchedu
         router.delete(destroyException.url({ user: collaborator.id, exception: id }));
     }
 
+    const scheduleErrors = Object.values(scheduleHttp.errors ?? {}) as string[];
+
     return (
-        <SettingsLayout title={collaborator.name}>
-            <div className="flex flex-col gap-6">
-                {/* Profile card */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle>{collaborator.name}</CardTitle>
-                        <CardDescription>{collaborator.email}</CardDescription>
-                    </CardHeader>
-                    <CardPanel>
-                        <div className="flex items-center gap-4">
-                            <Avatar className="size-16">
-                                <AvatarImage src={avatarUrl ?? undefined} alt={collaborator.name} />
-                                <AvatarFallback className="text-lg">{getInitials(collaborator.name)}</AvatarFallback>
-                            </Avatar>
-                            <div>
-                                <input
-                                    type="file"
-                                    accept="image/jpeg,image/png,image/webp"
-                                    onChange={handleAvatarChange}
-                                    className="text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground hover:file:bg-primary/90"
-                                />
-                                <p className="mt-1 text-xs text-muted-foreground">{t('JPG, PNG or WebP. Max 2MB.')}</p>
-                                {avatarHttp.processing && <p className="text-xs text-muted-foreground">{t('Uploading...')}</p>}
-                            </div>
-                        </div>
-                        {!collaborator.is_active && (
-                            <Badge variant="secondary" className="mt-3">{t('Inactive')}</Badge>
-                        )}
-                    </CardPanel>
-                </Card>
+        <SettingsLayout
+            title={collaborator.name}
+            eyebrow={t('Settings · Team')}
+            heading={collaborator.name}
+            description={collaborator.email}
+        >
+            <div className="flex flex-col gap-10">
+                <section className="flex flex-col gap-4">
+                    <SectionHeading>
+                        <SectionTitle>{t('Profile')}</SectionTitle>
+                        <SectionRule />
+                    </SectionHeading>
 
-                {/* Schedule */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle>{t('Weekly Schedule')}</CardTitle>
-                        <CardDescription>{t("Set this collaborator's working hours")}</CardDescription>
-                    </CardHeader>
-                    <form onSubmit={submitSchedule}>
-                        <CardPanel>
-                            <WeekScheduleEditor hours={scheduleData} onChange={setScheduleData} />
-                            {scheduleHttp.hasErrors && (
-                                <div className="mt-4">
-                                    {Object.values(scheduleHttp.errors).map((error: string, i: number) => (
-                                        <InputError key={i} message={error} />
-                                    ))}
-                                </div>
+                    <div className="flex items-center gap-5">
+                        <Avatar className="size-16 shrink-0 rounded-2xl border border-border bg-muted">
+                            <AvatarImage
+                                src={avatarUrl ?? undefined}
+                                alt=""
+                                className="rounded-2xl object-cover"
+                            />
+                            <AvatarFallback className="rounded-2xl bg-muted font-display text-base font-semibold text-muted-foreground">
+                                {getInitials(collaborator.name)}
+                            </AvatarFallback>
+                        </Avatar>
+                        <div className="flex flex-col items-start gap-1.5">
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp"
+                                onChange={handleAvatarChange}
+                                className="sr-only"
+                            />
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => fileInputRef.current?.click()}
+                                loading={avatarHttp.processing}
+                            >
+                                {avatarUrl ? t('Replace photo') : t('Upload photo')}
+                            </Button>
+                            <p className="text-xs text-muted-foreground">
+                                {t('JPG, PNG, or WebP · up to 2 MB')}
+                            </p>
+                            {!collaborator.is_active && (
+                                <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                                    {t('Inactive')}
+                                </p>
                             )}
-                        </CardPanel>
-                        <CardFooter className="flex justify-end">
-                            <Button type="submit" disabled={scheduleHttp.processing}>{t('Save Schedule')}</Button>
-                        </CardFooter>
-                    </form>
-                </Card>
-
-                {/* Exceptions */}
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between">
-                        <div>
-                            <CardTitle>{t('Exceptions')}</CardTitle>
-                            <CardDescription>{t('Absences, extra availability, and other schedule overrides')}</CardDescription>
                         </div>
-                        <Button onClick={handleAddException}>{t('Add Exception')}</Button>
-                    </CardHeader>
-                    <CardPanel>
-                        {exceptions.length === 0 ? (
-                            <p className="py-4 text-center text-sm text-muted-foreground">{t('No exceptions defined.')}</p>
-                        ) : (
-                            <div className="divide-y">
-                                {exceptions.map((exception) => (
-                                    <div key={exception.id} className="flex items-center justify-between py-3">
-                                        <div className="flex flex-col gap-1">
-                                            <div className="flex items-center gap-2">
-                                                <Badge variant={exception.type === 'block' ? 'destructive' : 'default'}>
-                                                    {exception.type === 'block' ? t('Unavailable') : t('Extra')}
-                                                </Badge>
-                                                <span className="text-sm font-medium">
-                                                    {exception.start_date === exception.end_date
-                                                        ? exception.start_date
-                                                        : `${exception.start_date} — ${exception.end_date}`}
-                                                </span>
-                                                {exception.start_time && (
-                                                    <span className="text-sm text-muted-foreground">
-                                                        {exception.start_time} – {exception.end_time}
+                    </div>
+                </section>
+
+                <section className="flex flex-col gap-4">
+                    <SectionHeading>
+                        <SectionTitle>{t('Weekly schedule')}</SectionTitle>
+                        <SectionRule />
+                    </SectionHeading>
+
+                    <form onSubmit={submitSchedule}>
+                        <Card>
+                            <CardPanel className="p-5 sm:p-6">
+                                <WeekScheduleEditor hours={scheduleData} onChange={setScheduleData} />
+                                {scheduleErrors.length > 0 && (
+                                    <ul className="mt-5 flex flex-col gap-1 rounded-lg border border-primary/20 bg-honey-soft/60 px-4 py-3">
+                                        {scheduleErrors.map((error, i) => (
+                                            <li key={i} className="text-xs text-primary">
+                                                {error}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </CardPanel>
+                            <CardFooter className="justify-end border-t bg-muted/50 px-5 py-3 sm:px-6">
+                                <Button type="submit" loading={scheduleHttp.processing}>
+                                    {t('Save schedule')}
+                                </Button>
+                            </CardFooter>
+                        </Card>
+                    </form>
+                </section>
+
+                <section className="flex flex-col gap-4">
+                    <SectionHeading>
+                        <SectionTitle>{t('Exceptions')}</SectionTitle>
+                        <SectionRule />
+                        <Button size="sm" variant="outline" onClick={handleAddException}>
+                            <PlusIcon />
+                            {t('Add')}
+                        </Button>
+                    </SectionHeading>
+
+                    {exceptions.length === 0 ? (
+                        <p className="py-4 text-sm text-muted-foreground">
+                            {t('Absences, extra availability, and overrides for this collaborator go here.')}
+                        </p>
+                    ) : (
+                        <ul className="flex flex-col divide-y divide-border/70 border-y border-border/70">
+                            {exceptions.map((exception) => {
+                                const isBlock = exception.type === 'block';
+                                return (
+                                    <li
+                                        key={exception.id}
+                                        className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6"
+                                    >
+                                        <div className="flex min-w-0 items-start gap-4">
+                                            <span
+                                                aria-hidden="true"
+                                                className={
+                                                    'mt-1.5 size-1.5 shrink-0 rounded-full ' +
+                                                    (isBlock ? 'bg-muted-foreground/50' : 'bg-primary')
+                                                }
+                                            />
+                                            <div className="flex min-w-0 flex-col gap-1">
+                                                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                                                    <Display className="text-sm font-medium text-foreground">
+                                                        {formatDateRange(exception.start_date, exception.end_date, t)}
+                                                    </Display>
+                                                    <span className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                                                        {isBlock ? t('Unavailable') : t('Extra')}
                                                     </span>
+                                                    {exception.start_time && exception.end_time && (
+                                                        <span className="font-display text-xs tabular-nums text-muted-foreground">
+                                                            {exception.start_time} – {exception.end_time}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {exception.reason && (
+                                                    <p className="max-w-xl text-xs leading-relaxed text-muted-foreground">
+                                                        {exception.reason}
+                                                    </p>
                                                 )}
                                             </div>
-                                            {exception.reason && (
-                                                <span className="text-xs text-muted-foreground">{exception.reason}</span>
-                                            )}
                                         </div>
-                                        <div className="flex gap-2">
-                                            <Button variant="ghost" size="sm" onClick={() => handleEditException(exception)}>{t('Edit')}</Button>
+                                        <div className="flex shrink-0 items-center gap-1 sm:ml-auto">
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => handleEditException(exception)}
+                                            >
+                                                {t('Edit')}
+                                            </Button>
                                             <AlertDialog>
-                                                <AlertDialogTrigger render={<Button variant="ghost" size="sm" />}>
+                                                <AlertDialogTrigger
+                                                    render={
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className="text-muted-foreground hover:text-foreground"
+                                                        />
+                                                    }
+                                                >
                                                     {t('Delete')}
                                                 </AlertDialogTrigger>
                                                 <AlertDialogPopup>
                                                     <AlertDialogHeader>
-                                                        <AlertDialogTitle>{t('Delete Exception')}</AlertDialogTitle>
+                                                        <AlertDialogTitle>{t('Delete this exception?')}</AlertDialogTitle>
                                                         <AlertDialogDescription>
-                                                            {t('Are you sure you want to delete this exception? This action cannot be undone.')}
+                                                            {t('The collaborator will revert to their default hours for this period.')}
                                                         </AlertDialogDescription>
                                                     </AlertDialogHeader>
                                                     <AlertDialogFooter>
-                                                        <AlertDialogClose render={<Button variant="outline" />}>{t('Cancel')}</AlertDialogClose>
+                                                        <AlertDialogClose render={<Button variant="outline" />}>
+                                                            {t('Cancel')}
+                                                        </AlertDialogClose>
                                                         <AlertDialogClose
                                                             render={<Button variant="destructive" />}
                                                             onClick={() => handleDeleteException(exception.id!)}
@@ -231,30 +313,46 @@ export default function CollaboratorShow({ collaborator, schedule: initialSchedu
                                                 </AlertDialogPopup>
                                             </AlertDialog>
                                         </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </CardPanel>
-                </Card>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    )}
+                </section>
 
-                {/* Services */}
                 {services.length > 0 && (
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>{t('Assigned Services')}</CardTitle>
-                            <CardDescription>{t('Services this collaborator can perform. Manage assignments from the service settings.')}</CardDescription>
-                        </CardHeader>
-                        <CardPanel>
-                            <div className="flex flex-wrap gap-2">
-                                {services.map((service) => (
-                                    <Badge key={service.id} variant={service.assigned ? 'default' : 'outline'}>
-                                        {service.name}
-                                    </Badge>
-                                ))}
-                            </div>
-                        </CardPanel>
-                    </Card>
+                    <section className="flex flex-col gap-4">
+                        <SectionHeading>
+                            <SectionTitle>{t('Services performed')}</SectionTitle>
+                            <SectionRule />
+                        </SectionHeading>
+
+                        <div className="flex flex-wrap gap-2">
+                            {services.map((service) => (
+                                <span
+                                    key={service.id}
+                                    className={
+                                        'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors ' +
+                                        (service.assigned
+                                            ? 'border-primary/30 bg-honey-soft/70 text-foreground'
+                                            : 'border-border/70 bg-background text-muted-foreground')
+                                    }
+                                >
+                                    <span
+                                        aria-hidden="true"
+                                        className={
+                                            'size-1 rounded-full ' +
+                                            (service.assigned ? 'bg-primary' : 'bg-muted-foreground/40')
+                                        }
+                                    />
+                                    {service.name}
+                                </span>
+                            ))}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                            {t('Assignments are managed from the service settings.')}
+                        </p>
+                    </section>
                 )}
             </div>
 
@@ -263,7 +361,11 @@ export default function CollaboratorShow({ collaborator, schedule: initialSchedu
                 onOpenChange={setDialogOpen}
                 exception={editingException}
                 storeUrl={storeException.url(collaborator.id)}
-                updateUrl={editingException?.id ? updateException.url({ user: collaborator.id, exception: editingException.id }) : undefined}
+                updateUrl={
+                    editingException?.id
+                        ? updateException.url({ user: collaborator.id, exception: editingException.id })
+                        : undefined
+                }
             />
         </SettingsLayout>
     );

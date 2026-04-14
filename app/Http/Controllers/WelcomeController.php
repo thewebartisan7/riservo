@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -15,6 +16,7 @@ class WelcomeController extends Controller
         return Inertia::render('dashboard/welcome', [
             'publicUrl' => url($business->slug),
             'businessName' => $business->name,
+            'logoUrl' => $business->logo ? Storage::disk('public')->url($business->logo) : null,
         ]);
     }
 }
