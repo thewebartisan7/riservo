@@ -70,7 +70,10 @@ export function CalendarHeader({ view, date, isAdmin, onNewBooking }: CalendarHe
         navigateCalendar(view, format(newDate, 'yyyy-MM-dd'));
     }
 
-    function changeView(newView: string) {
+    function changeView(newView: 'day' | 'week' | 'month' | null) {
+        if (newView === null) {
+            return;
+        }
         navigateCalendar(newView, date);
     }
 

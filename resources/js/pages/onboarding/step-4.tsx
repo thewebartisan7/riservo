@@ -6,6 +6,7 @@ import { Field, FieldLabel, FieldError } from '@/components/ui/field';
 import { Display } from '@/components/ui/display';
 import { useTrans } from '@/hooks/use-trans';
 import { router, usePage } from '@inertiajs/react';
+import type { FormDataConvertible } from '@inertiajs/core';
 import { store } from '@/actions/App/Http/Controllers/OnboardingController';
 import { type FormEvent, useState } from 'react';
 import { PlusIcon, Trash2Icon, UserPlusIcon, CheckIcon } from 'lucide-react';
@@ -69,8 +70,7 @@ export default function Step4({ services, pendingInvitations }: Props) {
     }
 
     function submitData(rows: InvitationRow[]) {
-        // TODO Fix TS2345: Argument of type Record<string, unknown> is not assignable to parameter of type RequestPayload | undefined
-        router.post(store.url(4), { invitations: rows } as Record<string, unknown>, {
+        router.post(store.url(4), { invitations: rows } as unknown as Record<string, FormDataConvertible>, {
             preserveState: true,
             preserveScroll: true,
             onStart: () => setProcessing(true),

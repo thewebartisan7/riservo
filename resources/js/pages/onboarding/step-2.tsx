@@ -6,6 +6,7 @@ import { WeekScheduleEditor } from '@/components/onboarding/week-schedule-editor
 import type { DaySchedule } from '@/components/onboarding/day-row';
 import { useTrans } from '@/hooks/use-trans';
 import { router, usePage } from '@inertiajs/react';
+import type { FormDataConvertible } from '@inertiajs/core';
 import { store } from '@/actions/App/Http/Controllers/OnboardingController';
 import type { FormEvent } from 'react';
 import { useState } from 'react';
@@ -23,8 +24,7 @@ export default function Step2({ hours: initialHours }: Props) {
 
     function submit(e: FormEvent) {
         e.preventDefault();
-        // TODO fix TS2345: Argument of type Record<string, unknown> is not assignable to parameter of type RequestPayload | undefined
-        router.post(store.url(2), { hours } as Record<string, unknown>, {
+        router.post(store.url(2), { hours } as unknown as Record<string, FormDataConvertible>, {
             preserveState: true,
             preserveScroll: true,
             onStart: () => setProcessing(true),

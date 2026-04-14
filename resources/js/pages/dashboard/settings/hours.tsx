@@ -3,6 +3,7 @@ import { Card, CardPanel, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useTrans } from '@/hooks/use-trans';
 import { router, usePage } from '@inertiajs/react';
+import type { FormDataConvertible } from '@inertiajs/core';
 import { update } from '@/actions/App/Http/Controllers/Dashboard/Settings/WorkingHoursController';
 import { WeekScheduleEditor } from '@/components/onboarding/week-schedule-editor';
 import type { DaySchedule } from '@/components/onboarding/day-row';
@@ -23,7 +24,7 @@ export default function WorkingHours({ hours: initialHours }: Props) {
 
     function submit(e: FormEvent) {
         e.preventDefault();
-        router.put(update.url(), { hours } as Record<string, unknown>, {
+        router.put(update.url(), { hours } as unknown as Record<string, FormDataConvertible>, {
             preserveState: true,
             preserveScroll: true,
             onStart: () => setProcessing(true),
