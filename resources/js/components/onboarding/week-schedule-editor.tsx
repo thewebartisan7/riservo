@@ -13,7 +13,7 @@ export function WeekScheduleEditor({ hours, onChange }: WeekScheduleEditorProps)
     }
 
     return (
-        <div className="divide-y">
+        <div className="-my-4 divide-y divide-border/60">
             {hours.map((day, index) => (
                 <DayRow
                     key={day.day_of_week}

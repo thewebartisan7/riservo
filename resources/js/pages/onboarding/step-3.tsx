@@ -1,12 +1,22 @@
 import OnboardingLayout from '@/layouts/onboarding-layout';
-import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } from '@/components/ui/card';
+import { Card, CardPanel, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Field, FieldLabel, FieldError, FieldDescription } from '@/components/ui/field';
+import { Display } from '@/components/ui/display';
+import {
+    NumberField,
+    NumberFieldDecrement,
+    NumberFieldGroup,
+    NumberFieldIncrement,
+    NumberFieldInput,
+} from '@/components/ui/number-field';
 import { useTrans } from '@/hooks/use-trans';
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Form, router } from '@inertiajs/react';
-import { store, show } from '@/actions/App/Http/Controllers/OnboardingController';
+import { Form } from '@inertiajs/react';
+import { store } from '@/actions/App/Http/Controllers/OnboardingController';
 import { useState } from 'react';
 
 interface Props {
@@ -21,32 +31,49 @@ interface Props {
     } | null;
 }
 
+const slotIntervalItems = [
+    { label: '5 min', value: '5' },
+    { label: '10 min', value: '10' },
+    { label: '15 min', value: '15' },
+    { label: '20 min', value: '20' },
+    { label: '30 min', value: '30' },
+    { label: '60 min', value: '60' },
+];
+
 export default function Step3({ service }: Props) {
     const { t } = useTrans();
-    const [priceOnRequest, setPriceOnRequest] = useState(service?.price === null && service !== null);
+    const [duration, setDuration] = useState<number>(service?.duration_minutes ?? 60);
+    const [bufferBefore, setBufferBefore] = useState<number>(service?.buffer_before ?? 0);
+    const [bufferAfter, setBufferAfter] = useState<number>(service?.buffer_after ?? 0);
+    const [priceOnRequest, setPriceOnRequest] = useState<boolean>(service?.price === null && service !== null);
     const [price, setPrice] = useState<string | number>(service?.price ?? '');
+    const [advancedOpen, setAdvancedOpen] = useState<boolean>(
+        (service?.buffer_before ?? 0) > 0 || (service?.buffer_after ?? 0) > 0,
+    );
 
     return (
-        <OnboardingLayout step={3} title={t('First Service')}>
+        <OnboardingLayout
+            step={3}
+            title={t('First service')}
+            eyebrow={t('Your first offering')}
+            heading={t('Create a bookable service')}
+            description={t('Start with one — a haircut, a 30-minute consultation, a deep-tissue session. You can add variants and more services after launch.')}
+        >
             <Card>
-                <CardHeader>
-                    <CardTitle>{t('First Service')}</CardTitle>
-                    <CardDescription>{t('Create your first bookable service. You can add more later.')}</CardDescription>
-                </CardHeader>
                 <Form
                     action={store(3)}
                     transform={(data) => ({
                         name: data.name,
-                        duration_minutes: data.duration_minutes,
-                        price: priceOnRequest ? null : (price === '' ? null : price),
-                        buffer_before: data.buffer_before,
-                        buffer_after: data.buffer_after,
+                        duration_minutes: duration,
+                        price: priceOnRequest ? null : price === '' ? null : price,
+                        buffer_before: bufferBefore,
+                        buffer_after: bufferAfter,
                         slot_interval_minutes: data.slot_interval_minutes,
                     })}
                 >
                     {({ errors, processing }) => (
                         <>
-                            <CardPanel className="flex flex-col gap-4">
+                            <CardPanel className="flex flex-col gap-5">
                                 <Field>
                                     <FieldLabel>{t('Service name')}</FieldLabel>
                                     <Input
@@ -55,117 +82,185 @@ export default function Step3({ service }: Props) {
                                         required
                                         autoFocus
                                         placeholder={t('e.g. Haircut, Consultation, Massage')}
+                                        aria-invalid={!!errors.name}
                                     />
                                     {errors.name && <FieldError match>{errors.name}</FieldError>}
                                 </Field>
 
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                                     <Field>
-                                        <FieldLabel>{t('Duration (minutes)')}</FieldLabel>
-                                        <Input
+                                        <FieldLabel>{t('Duration')}</FieldLabel>
+                                        <NumberField
                                             name="duration_minutes"
-                                            type="number"
+                                            value={duration}
+                                            onValueChange={(v) => setDuration(v ?? 60)}
                                             min={5}
                                             max={480}
                                             step={5}
-                                            defaultValue={service?.duration_minutes ?? 60}
-                                            required
-                                        />
-                                        {errors.duration_minutes && <FieldError match>{errors.duration_minutes}</FieldError>}
+                                            aria-invalid={!!errors.duration_minutes}
+                                        >
+                                            <NumberFieldGroup>
+                                                <NumberFieldDecrement />
+                                                <NumberFieldInput />
+                                                <NumberFieldIncrement />
+                                            </NumberFieldGroup>
+                                        </NumberField>
+                                        <FieldDescription>{t('Minutes')}</FieldDescription>
+                                        {errors.duration_minutes && (
+                                            <FieldError match>{errors.duration_minutes}</FieldError>
+                                        )}
                                     </Field>
 
                                     <Field>
-                                        <FieldLabel>{t('Price (CHF)')}</FieldLabel>
-                                        <Input
-                                            name="price"
-                                            type="number"
-                                            min={0}
-                                            step="0.01"
-                                            value={priceOnRequest ? '' : price}
-                                            onChange={(e) => setPrice(e.target.value)}
-                                            disabled={priceOnRequest}
-                                            placeholder={priceOnRequest ? t('On request') : '0.00'}
-                                        />
-                                        <label className="flex items-center gap-2 text-sm">
-                                            <input
-                                                type="checkbox"
-                                                checked={priceOnRequest}
-                                                onChange={(e) => {
-                                                    setPriceOnRequest(e.target.checked);
-                                                    if (e.target.checked) setPrice('');
-                                                }}
-                                                className="rounded"
+                                        <FieldLabel className="justify-between">
+                                            <span>{t('Price')}</span>
+                                            <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-normal text-muted-foreground">
+                                                <Checkbox
+                                                    checked={priceOnRequest}
+                                                    onCheckedChange={(checked) => {
+                                                        const val = checked === true;
+                                                        setPriceOnRequest(val);
+                                                        if (val) setPrice('');
+                                                    }}
+                                                />
+                                                {t('On request')}
+                                            </label>
+                                        </FieldLabel>
+                                        <InputGroup>
+                                            <InputGroupAddon align="inline-start">
+                                                <InputGroupText>CHF</InputGroupText>
+                                            </InputGroupAddon>
+                                            <InputGroupInput
+                                                name="price"
+                                                type="number"
+                                                min={0}
+                                                step="0.01"
+                                                value={priceOnRequest ? '' : price}
+                                                onChange={(e) => setPrice(e.target.value)}
+                                                disabled={priceOnRequest}
+                                                placeholder={priceOnRequest ? t('On request') : '0.00'}
+                                                aria-invalid={!!errors.price}
                                             />
-                                            {t('Price on request')}
-                                        </label>
+                                        </InputGroup>
+                                        <FieldDescription>
+                                            {priceOnRequest
+                                                ? t('Shown as "On request" on your booking page.')
+                                                : t('Leave blank to hide the price.')}
+                                        </FieldDescription>
                                         {errors.price && <FieldError match>{errors.price}</FieldError>}
                                     </Field>
                                 </div>
 
                                 <Field>
-                                    <FieldLabel>{t('Slot interval (minutes)')}</FieldLabel>
-                                    <FieldDescription>
-                                        {t('How often start times are offered. A 60-min service with a 15-min interval offers slots at 09:00, 09:15, 09:30, etc.')}
-                                    </FieldDescription>
-                                    <Select name="slot_interval_minutes" defaultValue={String(service?.slot_interval_minutes ?? 15)}>
+                                    <FieldLabel>{t('Slot interval')}</FieldLabel>
+                                    <Select
+                                        name="slot_interval_minutes"
+                                        defaultValue={String(service?.slot_interval_minutes ?? 15)}
+                                        items={slotIntervalItems}
+                                    >
                                         <SelectTrigger>
                                             <SelectValue />
                                         </SelectTrigger>
                                         <SelectPopup>
-                                            {[5, 10, 15, 20, 30, 60].map((val) => (
-                                                <SelectItem key={val} value={String(val)}>
-                                                    {val} {t('minutes')}
+                                            {slotIntervalItems.map((item) => (
+                                                <SelectItem key={item.value} value={item.value}>
+                                                    {item.label}
                                                 </SelectItem>
                                             ))}
                                         </SelectPopup>
                                     </Select>
-                                    {errors.slot_interval_minutes && <FieldError match>{errors.slot_interval_minutes}</FieldError>}
+                                    <FieldDescription>
+                                        {t('How often a start time appears. A 60-minute service with 15-minute intervals offers 09:00, 09:15, 09:30…')}
+                                    </FieldDescription>
+                                    {errors.slot_interval_minutes && (
+                                        <FieldError match>{errors.slot_interval_minutes}</FieldError>
+                                    )}
                                 </Field>
 
-                                <details className="group">
-                                    <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground">
-                                        {t('Advanced: Buffer times')}
-                                    </summary>
-                                    <div className="mt-3 grid grid-cols-2 gap-4">
-                                        <Field>
-                                            <FieldLabel>{t('Buffer before (min)')}</FieldLabel>
-                                            <Input
-                                                name="buffer_before"
-                                                type="number"
-                                                min={0}
-                                                max={120}
-                                                step={5}
-                                                defaultValue={service?.buffer_before ?? 0}
-                                            />
-                                            <FieldDescription>{t('Setup time before the appointment')}</FieldDescription>
-                                            {errors.buffer_before && <FieldError match>{errors.buffer_before}</FieldError>}
-                                        </Field>
-                                        <Field>
-                                            <FieldLabel>{t('Buffer after (min)')}</FieldLabel>
-                                            <Input
-                                                name="buffer_after"
-                                                type="number"
-                                                min={0}
-                                                max={120}
-                                                step={5}
-                                                defaultValue={service?.buffer_after ?? 0}
-                                            />
-                                            <FieldDescription>{t('Cleanup time after the appointment')}</FieldDescription>
-                                            {errors.buffer_after && <FieldError match>{errors.buffer_after}</FieldError>}
-                                        </Field>
-                                    </div>
-                                </details>
+                                <div className="rounded-lg border border-border/80 bg-muted/40">
+                                    <button
+                                        type="button"
+                                        aria-expanded={advancedOpen}
+                                        onClick={() => setAdvancedOpen((s) => !s)}
+                                        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted/60"
+                                    >
+                                        <span className="flex items-center gap-2">
+                                            <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                                                {t('Optional')}
+                                            </span>
+                                            <span>{t('Buffer times')}</span>
+                                        </span>
+                                        <span
+                                            aria-hidden="true"
+                                            className={`text-xs text-muted-foreground transition-transform ${advancedOpen ? 'rotate-180' : ''}`}
+                                        >
+                                            ⌄
+                                        </span>
+                                    </button>
+                                    {advancedOpen && (
+                                        <div className="border-t border-border/80 px-4 py-4">
+                                            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+                                                {t('Protected time before and after each appointment — for setup, travel, or a breath. Bookings won\'t be offered that overlap these buffers.')}
+                                            </p>
+                                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                                <Field>
+                                                    <FieldLabel>{t('Before')}</FieldLabel>
+                                                    <NumberField
+                                                        name="buffer_before"
+                                                        value={bufferBefore}
+                                                        onValueChange={(v) => setBufferBefore(v ?? 0)}
+                                                        min={0}
+                                                        max={120}
+                                                        step={5}
+                                                    >
+                                                        <NumberFieldGroup>
+                                                            <NumberFieldDecrement />
+                                                            <NumberFieldInput />
+                                                            <NumberFieldIncrement />
+                                                        </NumberFieldGroup>
+                                                    </NumberField>
+                                                    <FieldDescription>{t('Minutes of setup')}</FieldDescription>
+                                                    {errors.buffer_before && (
+                                                        <FieldError match>{errors.buffer_before}</FieldError>
+                                                    )}
+                                                </Field>
+                                                <Field>
+                                                    <FieldLabel>{t('After')}</FieldLabel>
+                                                    <NumberField
+                                                        name="buffer_after"
+                                                        value={bufferAfter}
+                                                        onValueChange={(v) => setBufferAfter(v ?? 0)}
+                                                        min={0}
+                                                        max={120}
+                                                        step={5}
+                                                    >
+                                                        <NumberFieldGroup>
+                                                            <NumberFieldDecrement />
+                                                            <NumberFieldInput />
+                                                            <NumberFieldIncrement />
+                                                        </NumberFieldGroup>
+                                                    </NumberField>
+                                                    <FieldDescription>{t('Minutes of cleanup')}</FieldDescription>
+                                                    {errors.buffer_after && (
+                                                        <FieldError match>{errors.buffer_after}</FieldError>
+                                                    )}
+                                                </Field>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </CardPanel>
-                            <CardFooter className="flex justify-between">
+                            <CardFooter>
                                 <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={() => router.visit(show(2))}
+                                    type="submit"
+                                    size="xl"
+                                    loading={processing}
+                                    disabled={processing}
+                                    className="h-12 w-full text-sm sm:h-12"
                                 >
-                                    {t('Back')}
-                                </Button>
-                                <Button type="submit" disabled={processing}>
-                                    {t('Continue')}
+                                    <Display className="tracking-tight">
+                                        {t('Continue to team')}
+                                    </Display>
                                 </Button>
                             </CardFooter>
                         </>

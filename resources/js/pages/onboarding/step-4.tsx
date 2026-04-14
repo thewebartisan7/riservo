@@ -1,13 +1,14 @@
 import OnboardingLayout from '@/layouts/onboarding-layout';
-import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } from '@/components/ui/card';
+import { Card, CardPanel, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Field, FieldLabel, FieldError } from '@/components/ui/field';
+import { Display } from '@/components/ui/display';
 import { useTrans } from '@/hooks/use-trans';
 import { router, usePage } from '@inertiajs/react';
-import { store, show } from '@/actions/App/Http/Controllers/OnboardingController';
+import { store } from '@/actions/App/Http/Controllers/OnboardingController';
 import { type FormEvent, useState } from 'react';
-import { PlusIcon, Trash2Icon } from 'lucide-react';
+import { PlusIcon, Trash2Icon, UserPlusIcon, CheckIcon } from 'lucide-react';
 import type { PageProps } from '@/types';
 
 interface ServiceOption {
@@ -68,6 +69,7 @@ export default function Step4({ services, pendingInvitations }: Props) {
     }
 
     function submitData(rows: InvitationRow[]) {
+        // TODO Fix TS2345: Argument of type Record<string, unknown> is not assignable to parameter of type RequestPayload | undefined
         router.post(store.url(4), { invitations: rows } as Record<string, unknown>, {
             preserveState: true,
             preserveScroll: true,
@@ -86,98 +88,129 @@ export default function Step4({ services, pendingInvitations }: Props) {
         submitData([]);
     }
 
+    const firstRowEmpty =
+        invitations.length === 1 &&
+        invitations[0].email.trim() === '' &&
+        invitations[0].service_ids.length === 0;
+
     return (
-        <OnboardingLayout step={4} title={t('Invite Team')}>
+        <OnboardingLayout
+            step={4}
+            title={t('Invite team')}
+            eyebrow={t('Optional — skip if you work alone')}
+            heading={t('Bring in your team')}
+            description={t('Collaborators get their own login, availability, and booking link. They accept by email, no account creation needed from you.')}
+        >
             <Card>
-                <CardHeader>
-                    <CardTitle>{t('Invite Collaborators')}</CardTitle>
-                    <CardDescription>{t('Invite team members to join your business. This step is optional — you can do it later.')}</CardDescription>
-                </CardHeader>
                 <form onSubmit={submit}>
-                    <CardPanel className="flex flex-col gap-4">
-                        {invitations.map((invitation, index) => {
-                            const emailError = pageErrors?.[`invitations.${index}.email`];
-                            return (
-                            <div key={index} className="rounded-lg border p-4">
-                                <div className="flex items-start gap-2">
-                                    <Field className="flex-1">
-                                        <FieldLabel>{t('Email')}</FieldLabel>
-                                        <Input
-                                            type="email"
-                                            value={invitation.email}
-                                            onChange={(e) => updateEmail(index, e.target.value)}
-                                            placeholder={t('collaborator@example.com')}
-                                        />
-                                        {emailError && <FieldError match>{emailError}</FieldError>}
-                                    </Field>
-                                    {invitations.length > 1 && (
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="icon"
-                                            className="mt-6 h-8 w-8 text-muted-foreground hover:text-destructive-foreground"
-                                            onClick={() => removeRow(index)}
-                                        >
-                                            <Trash2Icon className="h-4 w-4" />
-                                        </Button>
-                                    )}
-                                </div>
+                    <CardPanel className="flex flex-col gap-0">
+                        <ul className="flex flex-col gap-0 divide-y divide-border/60">
+                            {invitations.map((invitation, index) => {
+                                const emailError = pageErrors?.[`invitations.${index}.email`];
+                                return (
+                                    <li key={index} className="flex flex-col gap-4 py-5 first:pt-0 last:pb-0">
+                                        <Field>
+                                            <div className="flex items-center justify-between">
+                                                <FieldLabel>
+                                                    {t('Collaborator :n', { n: index + 1 })}
+                                                </FieldLabel>
+                                                {invitations.length > 1 && (
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="icon-xs"
+                                                        className="-mr-1 text-muted-foreground hover:text-foreground"
+                                                        onClick={() => removeRow(index)}
+                                                    >
+                                                        <Trash2Icon />
+                                                        <span className="sr-only">{t('Remove collaborator')}</span>
+                                                    </Button>
+                                                )}
+                                            </div>
+                                            <Input
+                                                type="email"
+                                                value={invitation.email}
+                                                onChange={(e) => updateEmail(index, e.target.value)}
+                                                placeholder="name@example.ch"
+                                                aria-invalid={!!emailError}
+                                            />
+                                            {emailError && <FieldError match>{emailError}</FieldError>}
+                                        </Field>
 
-                                {services.length > 0 && (
-                                    <div className="mt-3">
-                                        <label className="text-sm font-medium">{t('Assign to services')}</label>
-                                        <div className="mt-1 flex flex-wrap gap-2">
-                                            {services.map((service) => (
-                                                <label
-                                                    key={service.id}
-                                                    className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm transition-colors ${
-                                                        invitation.service_ids.includes(service.id)
-                                                            ? 'border-primary bg-primary/10 text-primary'
-                                                            : 'border-input hover:bg-accent'
-                                                    }`}
-                                                >
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={invitation.service_ids.includes(service.id)}
-                                                        onChange={() => toggleService(index, service.id)}
-                                                        className="sr-only"
-                                                    />
-                                                    {service.name}
-                                                </label>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                            );
-                        })}
+                                        {services.length > 0 && (
+                                            <Field>
+                                                <FieldLabel className="text-xs font-normal text-muted-foreground">
+                                                    {t('Offers these services')}
+                                                </FieldLabel>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {services.map((service) => {
+                                                        const selected = invitation.service_ids.includes(service.id);
+                                                        return (
+                                                            <button
+                                                                key={service.id}
+                                                                type="button"
+                                                                aria-pressed={selected}
+                                                                onClick={() => toggleService(index, service.id)}
+                                                                className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-input bg-background px-3 py-1.5 text-sm text-foreground shadow-xs/5 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background aria-pressed:border-primary aria-pressed:bg-honey-soft aria-pressed:text-primary"
+                                                            >
+                                                                <span
+                                                                    aria-hidden="true"
+                                                                    className={`inline-flex size-3.5 items-center justify-center rounded-full border transition-colors ${selected ? 'border-primary bg-primary text-primary-foreground' : 'border-input'}`}
+                                                                >
+                                                                    {selected && <CheckIcon className="size-2.5" />}
+                                                                </span>
+                                                                <span>{service.name}</span>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </Field>
+                                        )}
+                                    </li>
+                                );
+                            })}
+                        </ul>
 
-                        <Button type="button" variant="outline" size="sm" className="w-fit" onClick={addRow}>
-                            <PlusIcon className="mr-1 h-4 w-4" />
-                            {t('Add another')}
-                        </Button>
-                    </CardPanel>
-                    <CardFooter className="flex justify-between">
-                        <div className="flex gap-2">
+                        <div className="mt-5 flex items-center justify-center">
                             <Button
                                 type="button"
                                 variant="outline"
-                                onClick={() => router.visit(show(3))}
+                                size="sm"
+                                onClick={addRow}
+                                className="border-dashed"
                             >
-                                {t('Back')}
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                onClick={skip}
-                                disabled={processing}
-                            >
-                                {t('Skip this step')}
+                                <PlusIcon />
+                                {t('Add another person')}
                             </Button>
                         </div>
-                        <Button type="submit" disabled={processing}>
-                            {t('Continue')}
+                    </CardPanel>
+                    <CardFooter className="flex flex-col gap-3">
+                        <Button
+                            type="submit"
+                            size="xl"
+                            loading={processing}
+                            disabled={processing}
+                            className="h-12 w-full text-sm sm:h-12"
+                        >
+                            <Display className="tracking-tight">
+                                {firstRowEmpty ? (
+                                    <>
+                                        <UserPlusIcon className="mr-2 inline" />
+                                        {t('Continue without inviting')}
+                                    </>
+                                ) : (
+                                    t('Send invites & continue')
+                                )}
+                            </Display>
                         </Button>
+                        <button
+                            type="button"
+                            onClick={skip}
+                            disabled={processing}
+                            className="text-xs uppercase tracking-[0.22em] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
+                        >
+                            {t('Skip for now')}
+                        </button>
                     </CardFooter>
                 </form>
             </Card>

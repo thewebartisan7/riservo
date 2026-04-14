@@ -1,85 +1,143 @@
 import { Head, Link, router } from '@inertiajs/react';
+import type { PropsWithChildren } from 'react';
 import { destroy } from '@/actions/App/Http/Controllers/Auth/LoginController';
 import { show } from '@/actions/App/Http/Controllers/OnboardingController';
-import { Progress } from '@/components/ui/progress';
+import { home } from '@/routes/index';
+import { Display } from '@/components/ui/display';
 import { useTrans } from '@/hooks/use-trans';
-import type { PropsWithChildren } from 'react';
 
 interface OnboardingLayoutProps {
     step: number;
     totalSteps?: number;
     title?: string;
+    eyebrow?: string;
+    heading?: string;
+    description?: string;
 }
 
 const STEP_LABELS = [
-    'Business Profile',
-    'Working Hours',
-    'First Service',
-    'Invite Team',
-    'Review & Launch',
-];
+    'Business profile',
+    'Working hours',
+    'First service',
+    'Invite team',
+    'Review & launch',
+] as const;
 
 export default function OnboardingLayout({
     step,
     totalSteps = 5,
     title,
+    eyebrow,
+    heading,
+    description,
     children,
 }: PropsWithChildren<OnboardingLayoutProps>) {
     const { t } = useTrans();
+    const stepLabel = t(STEP_LABELS[step - 1] ?? '');
+    const progress = step / totalSteps;
 
     return (
         <>
             {title && <Head title={title} />}
-            <div className="flex min-h-screen flex-col bg-muted/40">
-                <header className="flex items-center justify-between border-b bg-background px-6 py-4">
-                    <span className="text-xl font-bold">riservo</span>
+            <div className="relative flex min-h-svh flex-col bg-background">
+                <header className="flex items-center justify-between px-5 pt-6 pb-4 sm:px-8 sm:pt-8 sm:pb-6">
+                    <Link
+                        href={home()}
+                        className="inline-flex items-baseline gap-1.5 text-foreground transition-colors hover:text-foreground/80"
+                    >
+                        <Display className="text-lg font-semibold leading-none">
+                            riservo
+                        </Display>
+                        <span
+                            aria-hidden="true"
+                            className="size-1 translate-y-[-1px] rounded-full bg-primary"
+                        />
+                    </Link>
                     <Link
                         href={destroy()}
                         method="post"
                         as="button"
-                        className="text-sm text-muted-foreground hover:text-foreground"
+                        className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground transition-colors hover:text-foreground sm:text-[11px]"
                     >
                         {t('Log out')}
                     </Link>
                 </header>
 
-                <div className="mx-auto w-full max-w-2xl px-4 py-4">
-                    <div className="mb-2 flex items-center justify-between text-sm text-muted-foreground">
-                        <span>{t('Step :current of :total', { current: step, total: totalSteps })}</span>
-                        <span>{t(STEP_LABELS[step - 1] ?? '')}</span>
+                <main className="flex flex-1 flex-col items-center px-5 pb-12 pt-2 sm:px-8 sm:pb-20 sm:pt-4">
+                    <div className="w-full max-w-[640px]">
+                        <div className="mb-6 flex flex-col gap-3 sm:mb-8">
+                            <div className="flex items-center justify-between gap-4">
+                                <div className="tabular-nums text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                                    <span className="text-foreground">
+                                        {String(step).padStart(2, '0')}
+                                    </span>
+                                    <span className="mx-1.5 text-rule-strong">/</span>
+                                    <span>{String(totalSteps).padStart(2, '0')}</span>
+                                    <span className="mx-3 text-rule-strong" aria-hidden="true">·</span>
+                                    <span>{stepLabel}</span>
+                                </div>
+                                {step > 1 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => router.visit(show(step - 1))}
+                                        className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground transition-colors hover:text-foreground sm:text-[11px]"
+                                    >
+                                        ← {t('Back')}
+                                    </button>
+                                )}
+                            </div>
+                            <div
+                                className="relative h-px w-full overflow-hidden bg-border"
+                                role="progressbar"
+                                aria-valuenow={step}
+                                aria-valuemin={1}
+                                aria-valuemax={totalSteps}
+                                aria-label={t('Onboarding progress')}
+                            >
+                                <div
+                                    className="absolute inset-y-0 left-0 bg-primary transition-[width] duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
+                                    style={{ width: `${progress * 100}%` }}
+                                />
+                            </div>
+                        </div>
+
+                        {(eyebrow || heading || description) && (
+                            <div className="mb-6 flex flex-col gap-2 sm:mb-8">
+                                {eyebrow && (
+                                    <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                                        {eyebrow}
+                                    </p>
+                                )}
+                                {heading && (
+                                    <Display
+                                        render={<h1 />}
+                                        className="text-[clamp(1.625rem,1.3rem+1vw,2rem)] font-semibold leading-[1.05] text-foreground"
+                                    >
+                                        {heading}
+                                    </Display>
+                                )}
+                                {description && (
+                                    <p className="text-balance text-sm leading-relaxed text-muted-foreground">
+                                        {description}
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
+                        <div key={step} className="animate-rise">
+                            {children}
+                        </div>
                     </div>
-                    <Progress value={(step / totalSteps) * 100} />
-
-                    <nav className="mt-3 flex gap-1">
-                        {STEP_LABELS.map((label, index) => {
-                            const stepNum = index + 1;
-                            const isCompleted = stepNum < step;
-                            const isCurrent = stepNum === step;
-
-                            return (
-                                <button
-                                    key={stepNum}
-                                    type="button"
-                                    onClick={() => isCompleted && router.visit(show(stepNum))}
-                                    disabled={!isCompleted}
-                                    className={`flex-1 rounded-md px-2 py-1.5 text-xs transition-colors ${
-                                        isCurrent
-                                            ? 'bg-primary/10 font-medium text-primary'
-                                            : isCompleted
-                                              ? 'cursor-pointer text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                                              : 'text-muted-foreground/50'
-                                    }`}
-                                >
-                                    {t(label)}
-                                </button>
-                            );
-                        })}
-                    </nav>
-                </div>
-
-                <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-8">
-                    {children}
                 </main>
+
+                <footer className="flex items-center justify-between gap-4 px-5 pb-6 sm:px-8 sm:pb-8">
+                    <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground sm:text-[11px]">
+                        {t('Crafted in Switzerland')}
+                    </span>
+                    <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground sm:text-[11px]">
+                        © {new Date().getFullYear()} riservo
+                    </span>
+                </footer>
             </div>
         </>
     );

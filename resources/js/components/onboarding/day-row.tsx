@@ -16,6 +16,7 @@ export interface DaySchedule {
 }
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const DAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 interface DayRowProps {
     day: DaySchedule;
@@ -25,6 +26,7 @@ interface DayRowProps {
 export function DayRow({ day, onChange }: DayRowProps) {
     const { t } = useTrans();
     const dayName = DAY_NAMES[day.day_of_week - 1];
+    const dayShort = DAY_SHORT[day.day_of_week - 1];
 
     function handleToggle(checked: boolean) {
         onChange({
@@ -58,15 +60,22 @@ export function DayRow({ day, onChange }: DayRowProps) {
     }
 
     return (
-        <div className="flex items-start gap-4 py-3">
-            <div className="flex w-28 shrink-0 items-center gap-3 pt-1">
+        <div className="grid grid-cols-[auto_1fr] items-start gap-x-3 gap-y-3 py-4 sm:grid-cols-[9rem_1fr] sm:gap-x-6">
+            <label className="flex items-center gap-3 pt-[0.1875rem] select-none">
                 <Switch checked={day.enabled} onCheckedChange={handleToggle} />
-                <span className={`text-sm font-medium ${!day.enabled ? 'text-muted-foreground' : ''}`}>
-                    {t(dayName)}
+                <span className="flex items-baseline gap-2">
+                    <span
+                        className={`text-sm font-medium transition-colors ${
+                            day.enabled ? 'text-foreground' : 'text-muted-foreground'
+                        }`}
+                    >
+                        <span className="hidden sm:inline">{t(dayName)}</span>
+                        <span className="sm:hidden">{t(dayShort)}</span>
+                    </span>
                 </span>
-            </div>
+            </label>
 
-            <div className="flex flex-1 flex-col gap-2">
+            <div className="col-start-2 flex flex-col gap-2">
                 {day.enabled ? (
                     <>
                         {day.windows.map((window, index) => (
@@ -82,16 +91,18 @@ export function DayRow({ day, onChange }: DayRowProps) {
                         <Button
                             type="button"
                             variant="ghost"
-                            size="sm"
-                            className="w-fit text-xs"
+                            size="xs"
+                            className="w-fit -ml-1.5 text-muted-foreground hover:text-foreground"
                             onClick={addWindow}
                         >
-                            <PlusIcon className="mr-1 h-3 w-3" />
-                            {t('Add time window')}
+                            <PlusIcon />
+                            {t('Add window')}
                         </Button>
                     </>
                 ) : (
-                    <span className="pt-1 text-sm text-muted-foreground">{t('Closed')}</span>
+                    <span className="pt-[0.4375rem] text-sm text-muted-foreground/80">
+                        {t('Closed')}
+                    </span>
                 )}
             </div>
         </div>
