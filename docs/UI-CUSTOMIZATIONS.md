@@ -18,16 +18,58 @@ This doc tracks every place riservo diverges from out-of-the-box COSS UI / Tailw
 
 ---
 
-## COSS UI primitive files — kept upstream-clean
+## COSS UI primitive files — kept upstream-clean (mostly)
 
 **Files:** `resources/js/components/ui/*.tsx`
 
-Riservo does **not** modify these files. We only override behaviour at the callsite via `cn()` + `className`. Upstream upgrades are safe to apply with a clean overwrite.
+Default policy: **do not modify**. Override at the callsite via `cn()` + `className`. Upstream upgrades stay a clean overwrite.
 
-If at any point a primitive needs structural change (a new variant in `cva`, a new prop), prefer:
-1. Wrapping the primitive in a riservo-specific component, OR
-2. Composing via `className` + `render` prop (Button supports `render={<a/>}` for anchor rendering), OR
-3. Last resort: forking the primitive with a comment block at the top tagging the divergence — and adding an entry below.
+**Exception — tracked brand overrides.** Small, cosmetic, brand-wide edits to a primitive's default classes are acceptable when:
+- the change is genuinely brand-wide (not surface-scoped — in which case use callsite `className`)
+- the change is cosmetic (token swap, color adjustment) — not structural (new props, new composition, behavior shift)
+- the divergence is logged in the "COSS primitives with brand overrides" section below
+- the affected lines carry an inline `// riservo:` comment referencing this doc, so the next person diffing against upstream sees it
+
+For structural changes, prefer wrapping the primitive in a riservo-owned component (see `<Display>` as the pattern).
+
+If you find yourself repeating the same `className=…` across 3+ callsites for a brand-wide reason, that's the signal to promote it into a primitive override — not to extract a shared const.
+
+---
+
+## COSS primitives with brand overrides
+
+Each entry documents exactly what was changed, why, and the minimal diff to re-apply on a COSS upgrade. Diff against the upstream file before overwriting — don't blow these away.
+
+### `input.tsx` — invalid state uses `primary` (honey), not `destructive` (red)
+
+**Why:** form validation is feedback, not alarm. The riservo brand keeps red reserved for genuinely destructive actions (delete, cancel, system error). Invalid-email-on-form is a gentle nudge, not a red flag — see `.impeccable.md` §"Calm".
+
+**What changed:** on the wrapper `<span>` className in the main `Input` component, four `destructive` classes were swapped:
+
+| Upstream COSS | Riservo |
+|---|---|
+| `has-aria-invalid:border-destructive/36` | `has-aria-invalid:border-primary` |
+| `has-focus-visible:has-aria-invalid:border-destructive/64` | `has-focus-visible:has-aria-invalid:border-primary` |
+| `has-focus-visible:has-aria-invalid:ring-destructive/16` | `has-focus-visible:has-aria-invalid:ring-ring/24` |
+| `dark:has-aria-invalid:ring-destructive/24` | `dark:has-aria-invalid:ring-ring/24` |
+
+The inline `// riservo:` comment above the classname pins this for reviewers.
+
+**Not changed:** `<Button variant="destructive">`, destructive alerts/toasts, and confirmation dialogs keep `--destructive` and render red — those are real alarms and the gradient matters.
+
+### `field.tsx` — `FieldError` text color uses `primary` (honey), not `destructive-foreground` (red)
+
+**Why:** same reasoning as `input.tsx` above. A FieldError is always paired with an invalid Input; keeping the two in different colors would be dissonant. Form validation is gentle feedback, red is reserved for real alarms.
+
+**What changed:** in the `FieldError` component:
+
+| Upstream COSS | Riservo |
+|---|---|
+| `cn("text-destructive-foreground text-xs", className)` | `cn("text-primary text-xs", className)` |
+
+The inline `// riservo:` comment above the `cn()` pins this for reviewers.
+
+---
 
 ---
 
@@ -107,7 +149,7 @@ The `prefers-reduced-motion: reduce` media query suppresses all four animation c
 
 ## On COSS UI upgrade — quick checklist
 
-1. Pull the latest `resources/js/components/ui/*.tsx` from the upstream registry. Overwrite directly.
+1. Pull the latest `resources/js/components/ui/*.tsx` from the upstream registry. Overwrite directly — **except** for any file listed under "COSS primitives with brand overrides" above (currently: `input.tsx`, `field.tsx`). For those, 3-way merge: keep the riservo override lines, pull in any unrelated upstream changes.
 2. Diff `resources/css/app.css` lines 1–185 (everything except the booking section) against the upstream template. Reapply our 11 token reassignments listed above + 2 new vars. Anything else upstream changed: pull in.
 3. Walk the booking flow end-to-end at `http://localhost:8002/salone-bellissima` — service → confirmation. Confirm visual parity.
 4. Walk the dashboard. Confirm the rebrand still applies (buttons honey, backgrounds paper).

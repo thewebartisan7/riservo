@@ -72,9 +72,8 @@ export default function CustomerForm({
                         value={data.name}
                         onChange={(e) => setData({ ...data, name: e.target.value })}
                         aria-invalid={!!errors.name}
-                        className="has-aria-invalid:border-primary has-focus-visible:has-aria-invalid:border-primary has-aria-invalid:ring-ring/24 has-focus-visible:has-aria-invalid:ring-ring/24"
                     />
-                    {errors.name && <FieldError match className="text-primary">{errors.name}</FieldError>}
+                    {errors.name && <FieldError match>{errors.name}</FieldError>}
                 </Field>
 
                 <Field>
@@ -87,9 +86,8 @@ export default function CustomerForm({
                         value={data.email}
                         onChange={(e) => setData({ ...data, email: e.target.value })}
                         aria-invalid={!!errors.email}
-                        className="has-aria-invalid:border-primary has-focus-visible:has-aria-invalid:border-primary has-aria-invalid:ring-ring/24 has-focus-visible:has-aria-invalid:ring-ring/24"
                     />
-                    {errors.email && <FieldError match className="text-primary">{errors.email}</FieldError>}
+                    {errors.email && <FieldError match>{errors.email}</FieldError>}
                 </Field>
 
                 <Field>
@@ -102,9 +100,8 @@ export default function CustomerForm({
                         value={data.phone}
                         onChange={(e) => setData({ ...data, phone: e.target.value })}
                         aria-invalid={!!errors.phone}
-                        className="has-aria-invalid:border-primary has-focus-visible:has-aria-invalid:border-primary has-aria-invalid:ring-ring/24 has-focus-visible:has-aria-invalid:ring-ring/24"
                     />
-                    {errors.phone && <FieldError match className="text-primary">{errors.phone}</FieldError>}
+                    {errors.phone && <FieldError match>{errors.phone}</FieldError>}
                 </Field>
 
                 <Field>

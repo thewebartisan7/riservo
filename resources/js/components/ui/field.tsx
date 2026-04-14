@@ -65,7 +65,9 @@ export function FieldError({
 }: FieldPrimitive.Error.Props): React.ReactElement {
   return (
     <FieldPrimitive.Error
-      className={cn("text-destructive-foreground text-xs", className)}
+      // riservo: defaults to `text-primary` (honey), not `text-destructive-foreground` (red).
+      // Form validation is feedback, not alarm — see docs/UI-CUSTOMIZATIONS.md.
+      className={cn("text-primary text-xs", className)}
       data-slot="field-error"
       {...props}
     />
