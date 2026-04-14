@@ -240,7 +240,25 @@ Custom calendar component for the business dashboard. Built with TailwindPlus te
 
 ---
 
-## Session 12 — Billing (Laravel Cashier)
+## Session 12 — Google Calendar Sync
+
+Two-way synchronization between riservo.ch bookings and collaborator Google Calendars. Built behind a `CalendarProvider` interface for future extensibility. Synced events are displayed in the calendar view built in Session 12.
+
+- [ ] Define `CalendarProvider` interface (connect, disconnect, push event, delete event, handle incoming webhook)
+- [ ] Google Calendar OAuth 2.0 flow per collaborator (connect / disconnect from profile settings)
+- [ ] Push sync: booking created/updated/cancelled on riservo → event created/updated/deleted on Google Calendar
+- [ ] Google Calendar events store `riservo_booking_id` in extended properties for sync tracking
+- [ ] Google Push Notifications (webhooks) setup: subscribe to calendar changes per collaborator
+- [ ] Pull sync: incoming webhook from Google → parse event → create or update Booking on riservo with `source: google_calendar`
+- [ ] External bookings (no riservo customer): displayed in dashboard as "External Booking" with source indicator
+- [ ] Conflict resolution: handle simultaneous changes gracefully
+- [ ] Webhook channel renewal (Google webhooks expire after ~7 days — auto-renew via scheduled job)
+- [ ] Connect/disconnect UI in collaborator profile settings
+- [ ] Sync status indicator in dashboard (connected, last synced, error state)
+
+---
+
+## Session 13 — Billing (Laravel Cashier)
 
 SaaS subscription management for business accounts.
 
@@ -256,24 +274,6 @@ SaaS subscription management for business accounts.
 - [ ] Stripe webhook handling (payment succeeded, failed, subscription cancelled, etc.)
 - [ ] Plan limits enforcement (if applicable for MVP — e.g., max collaborators per plan)
 - [ ] Test billing flows in Stripe test mode
-
----
-
-## Session 13 — Google Calendar Sync
-
-Two-way synchronization between riservo.ch bookings and collaborator Google Calendars. Built behind a `CalendarProvider` interface for future extensibility. Synced events are displayed in the calendar view built in Session 12.
-
-- [ ] Define `CalendarProvider` interface (connect, disconnect, push event, delete event, handle incoming webhook)
-- [ ] Google Calendar OAuth 2.0 flow per collaborator (connect / disconnect from profile settings)
-- [ ] Push sync: booking created/updated/cancelled on riservo → event created/updated/deleted on Google Calendar
-- [ ] Google Calendar events store `riservo_booking_id` in extended properties for sync tracking
-- [ ] Google Push Notifications (webhooks) setup: subscribe to calendar changes per collaborator
-- [ ] Pull sync: incoming webhook from Google → parse event → create or update Booking on riservo with `source: google_calendar`
-- [ ] External bookings (no riservo customer): displayed in dashboard as "External Booking" with source indicator
-- [ ] Conflict resolution: handle simultaneous changes gracefully
-- [ ] Webhook channel renewal (Google webhooks expire after ~7 days — auto-renew via scheduled job)
-- [ ] Connect/disconnect UI in collaborator profile settings
-- [ ] Sync status indicator in dashboard (connected, last synced, error state)
 
 ---
 

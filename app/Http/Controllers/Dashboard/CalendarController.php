@@ -138,13 +138,13 @@ class CalendarController extends Controller
                 $date->startOfDay(),
                 $date->endOfDay(),
             ],
-            'week' => [
-                $date->startOfWeek(CarbonImmutable::MONDAY),
-                $date->endOfWeek(CarbonImmutable::SUNDAY),
-            ],
             'month' => [
                 $date->startOfMonth()->startOfWeek(CarbonImmutable::MONDAY),
                 $date->endOfMonth()->endOfWeek(CarbonImmutable::SUNDAY),
+            ],
+            default => [
+                $date->startOfWeek(CarbonImmutable::MONDAY),
+                $date->endOfWeek(CarbonImmutable::SUNDAY),
             ],
         };
     }
