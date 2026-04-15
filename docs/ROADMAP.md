@@ -219,8 +219,6 @@ Custom calendar component for the business dashboard. Built with TailwindPlus te
 
 > **Architecture hint**: consider a server-driven approach where the controller generates the calendar grid and bookings via Carbon, served as Inertia props. Navigation between weeks/months could use Inertia partial reloads (`only: ['calendar']`) to keep it fast. `date-fns` (already a transitive dependency via `react-day-picker`) is available for any client-side date math needed for rendering. The agent should evaluate this approach against alternatives during planning.
 
-> **UI foundation**: TailwindPlus calendar source files are pre-copied into `docs/calendar/` (`day-view.tsx`, `week-view.tsx`, `month-view.tsx`). Use these as the visual foundation — adapt the markup and styling directly rather than building from scratch. Replace any Headless UI components (Listbox, Menu, Transition, etc.) with COSS UI equivalents (Select, DropdownMenu, etc.). `year-view.tsx` is available in the same folder but is out of scope for MVP — ignore it.
->
 - [x] Month view: grid showing bookings per day, navigation between months
 - [x] Week view: time-based grid showing bookings with proportional height
 - [x] Day view: detailed hour-by-hour view
@@ -312,4 +310,4 @@ Features explicitly out of scope for MVP, to be planned separately:
 
 ---
 
-*This roadmap defines the WHAT and WHEN — it is a checklist of outcomes, not a recipe. Every agent is expected to reason about the HOW during the planning step. If a better technical approach exists than what is implied by the roadmap wording, propose it before implementing. Each session's plan (e.g., `docs/PLAN-SESSION-1.md`, `docs/PLAN-SESSION-2.md`) is where the how gets decided and approved.*
+*This roadmap defines the WHAT and WHEN — it is a checklist of outcomes, not a recipe. Every agent is expected to reason about the HOW during the planning step. If a better technical approach exists than what is implied by the roadmap wording, propose it before implementing. Active session plans live in `docs/plans/`; completed plans move to `docs/archive/plans/` once they are no longer part of the current working set.*

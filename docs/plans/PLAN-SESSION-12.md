@@ -2,7 +2,7 @@
 
 ## Context
 
-Final MVP feature per D-010. Enables bidirectional sync between riservo.ch bookings and each collaborator's Google Calendar:
+Scheduled late in the MVP sequence per D-010. Enables bidirectional sync between riservo.ch bookings and each collaborator's Google Calendar:
 
 - **Outbound**: a riservo booking created/cancelled/completed → Google event created/deleted
 - **Inbound**: a Google event created/updated/deleted → a riservo booking is created / updated / cancelled as an "External Booking" that blocks availability
@@ -54,7 +54,7 @@ Per-collaborator Google OAuth + two-way sync (push + pull via webhooks), with a 
 
 ---
 
-## Key design decisions (new — will be recorded in DECISIONS.md)
+## Key design decisions (new — will be recorded via `docs/DECISIONS.md`)
 
 - **D-061** Booking `customer_id` and `service_id` become nullable. External Google events without a mappable customer or service are stored as bookings with these fields null and an `external_title` column populated from the Google event summary.
 - **D-062** Settings area splits into admin-only routes and admin-or-collaborator routes. Calendar Integration is the only setting in the second group for MVP; other settings remain admin-only.
@@ -265,7 +265,7 @@ Tests (Pest):
 - `docs/DEPLOYMENT.md`
 - `docs/ROADMAP.md` (check off Session 12 items)
 - `docs/HANDOFF.md` (overwrite)
-- `docs/DECISIONS.md` (append D-061..D-069)
+- `docs/DECISIONS.md` (record D-061..D-069 in the appropriate topical decision file)
 
 ---
 
@@ -310,4 +310,4 @@ Run after each phase: `php artisan test --compact`.
 
 ## New decisions to record
 
-D-061..D-069 as described above. Appended to DECISIONS.md before implementation.
+D-061..D-069 as described above. Record them in the appropriate topical decision file listed in `docs/DECISIONS.md` before implementation.

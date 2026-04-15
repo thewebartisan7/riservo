@@ -414,7 +414,7 @@ Overall assessment:
 
 ## LOW
 
-### 15. Invitation and magic-link notifications are still synchronous, and outgoing mail defaults still leak Laravel branding locally
+### 15. Invitation and magic-link notifications still run on the request path, and outgoing mail defaults still leak Laravel branding locally
 
 - Severity: LOW
 - Area / layer: Notifications, branding, response time
@@ -424,17 +424,19 @@ Overall assessment:
   - `config/app.php`
   - `config/mail.php`
 - What I found:
-  - Invitation and magic-link notifications do not implement `ShouldQueue`.
+  - Invitation and magic-link notifications are sent directly on the request path.
   - `config/app.php` still defaults app name to `Laravel`.
   - Local mail logs show `From: Laravel <hello@example.com>` and generic Laravel framing in auth and invite emails.
 - Why it matters:
   - SMTP latency should not sit on the critical path for login or collaborator invite requests.
+  - These two flows are interactive and user-triggered, so they benefit from being sent immediately after the response rather than waiting on a worker, but they still should not slow the HTTP response itself.
   - Branding drift is not catastrophic, but it weakens product polish and trust.
 - Evidence and reasoning:
-  - `Booking*Notification` classes are queued; `InvitationNotification` and `MagicLinkNotification` are not.
+  - `Booking*Notification` classes are queued and treated as background system events; `InvitationNotification` and `MagicLinkNotification` are not.
   - Recent mail log entries still render Laravel defaults.
 - Recommended direction:
-  - Queue these notifications as well.
+  - Move invitation and magic-link delivery off the request path using a post-response mechanism such as Laravel's `background` or `deferred` execution model, instead of sending synchronously during the request.
+  - Keep the booking-centric notifications on the real queue, since they benefit more from retryability and worker-based delivery.
   - Make branding defaults coherent even outside production-specific env files.
 - Issue type: performance, maintainability, UX
 
