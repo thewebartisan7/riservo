@@ -10,13 +10,14 @@ use App\Models\User;
 test('booking can be viewed by cancellation token', function () {
     $this->withoutVite();
     $business = Business::factory()->create();
-    $collaborator = User::factory()->create();
+    $staff = User::factory()->create();
+    $provider = attachProvider($business, $staff);
     $service = Service::factory()->create(['business_id' => $business->id]);
     $customer = Customer::factory()->create();
 
     $booking = Booking::factory()->create([
         'business_id' => $business->id,
-        'collaborator_id' => $collaborator->id,
+        'provider_id' => $provider->id,
         'service_id' => $service->id,
         'customer_id' => $customer->id,
         'cancellation_token' => 'test-token-123',
@@ -35,13 +36,14 @@ test('invalid token returns 404', function () {
 
 test('booking can be cancelled via token', function () {
     $business = Business::factory()->create(['cancellation_window_hours' => 0]);
-    $collaborator = User::factory()->create();
+    $staff = User::factory()->create();
+    $provider = attachProvider($business, $staff);
     $service = Service::factory()->create(['business_id' => $business->id]);
     $customer = Customer::factory()->create();
 
     $booking = Booking::factory()->future()->confirmed()->create([
         'business_id' => $business->id,
-        'collaborator_id' => $collaborator->id,
+        'provider_id' => $provider->id,
         'service_id' => $service->id,
         'customer_id' => $customer->id,
         'cancellation_token' => 'cancel-token-123',
@@ -55,13 +57,14 @@ test('booking can be cancelled via token', function () {
 
 test('already cancelled booking cannot be cancelled again', function () {
     $business = Business::factory()->create(['cancellation_window_hours' => 0]);
-    $collaborator = User::factory()->create();
+    $staff = User::factory()->create();
+    $provider = attachProvider($business, $staff);
     $service = Service::factory()->create(['business_id' => $business->id]);
     $customer = Customer::factory()->create();
 
     $booking = Booking::factory()->cancelled()->create([
         'business_id' => $business->id,
-        'collaborator_id' => $collaborator->id,
+        'provider_id' => $provider->id,
         'service_id' => $service->id,
         'customer_id' => $customer->id,
         'cancellation_token' => 'cancel-token-456',
@@ -74,14 +77,15 @@ test('already cancelled booking cannot be cancelled again', function () {
 
 test('cancellation within window is blocked', function () {
     $business = Business::factory()->create(['cancellation_window_hours' => 24]);
-    $collaborator = User::factory()->create();
+    $staff = User::factory()->create();
+    $provider = attachProvider($business, $staff);
     $service = Service::factory()->create(['business_id' => $business->id]);
     $customer = Customer::factory()->create();
 
     // Booking starts in 2 hours (within 24h window)
     $booking = Booking::factory()->confirmed()->create([
         'business_id' => $business->id,
-        'collaborator_id' => $collaborator->id,
+        'provider_id' => $provider->id,
         'service_id' => $service->id,
         'customer_id' => $customer->id,
         'starts_at' => now()->addHours(2),

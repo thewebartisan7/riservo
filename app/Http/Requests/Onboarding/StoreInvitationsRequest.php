@@ -35,7 +35,7 @@ class StoreInvitationsRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'invitations.*.email.distinct' => __('Each collaborator must have a unique email address.'),
+            'invitations.*.email.distinct' => __('Each staff member must have a unique email address.'),
         ];
     }
 }

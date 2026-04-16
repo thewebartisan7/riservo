@@ -26,14 +26,14 @@ class DashboardController extends Controller
 
         $baseQuery = Booking::where('business_id', $business->id);
 
-        if ($user->currentBusinessRole()->value === 'collaborator') {
-            $baseQuery->where('collaborator_id', $user->id);
+        if ($user->currentBusinessRole()->value === 'staff') {
+            $baseQuery->whereHas('provider', fn ($q) => $q->where('user_id', $user->id));
         }
 
         $todayBookings = (clone $baseQuery)
             ->whereBetween('starts_at', [$todayStart, $todayEnd])
             ->whereIn('status', [BookingStatus::Confirmed, BookingStatus::Pending])
-            ->with(['service:id,name,duration_minutes', 'collaborator:id,name,avatar', 'customer:id,name'])
+            ->with(['service:id,name,duration_minutes', 'provider.user:id,name,avatar', 'customer:id,name'])
             ->orderBy('starts_at')
             ->get();
 
@@ -63,9 +63,9 @@ class DashboardController extends Controller
                     'name' => $booking->service->name,
                     'duration_minutes' => $booking->service->duration_minutes,
                 ],
-                'collaborator' => [
-                    'id' => $booking->collaborator->id,
-                    'name' => $booking->collaborator->name,
+                'provider' => [
+                    'id' => $booking->provider->id,
+                    'name' => $booking->provider->user?->name ?? '',
                 ],
                 'customer' => [
                     'name' => $booking->customer->name,

@@ -1,7 +1,7 @@
 import { useHttp } from '@inertiajs/react';
 import { store } from '@/actions/App/Http/Controllers/Booking/PublicBookingController';
 import { useTrans } from '@/hooks/use-trans';
-import type { BookingStoreResponse, PublicCollaborator, PublicService } from '@/types';
+import type { BookingStoreResponse, PublicProvider, PublicService } from '@/types';
 import type { CustomerData } from './customer-form';
 import { Button } from '@/components/ui/button';
 import { Card, CardPanel } from '@/components/ui/card';
@@ -15,7 +15,7 @@ import {
 interface BookingSummaryProps {
     slug: string;
     service: PublicService;
-    collaborator: PublicCollaborator | null;
+    provider: PublicProvider | null;
     date: string;
     time: string;
     customer: CustomerData;
@@ -26,7 +26,7 @@ interface BookingSummaryProps {
 export default function BookingSummary({
     slug,
     service,
-    collaborator,
+    provider,
     date,
     time,
     customer,
@@ -41,7 +41,7 @@ export default function BookingSummary({
 
     const http = useHttp({
         service_id: service.id,
-        collaborator_id: collaborator?.id ?? (null as number | null),
+        provider_id: provider?.id ?? (null as number | null),
         date,
         time,
         name: customer.name,
@@ -65,7 +65,7 @@ export default function BookingSummary({
         [t('Service'), service.name],
         [t('Duration'), formatDurationFull(service.duration_minutes, t)],
         [t('Price'), formatPrice(service.price, t)],
-        [t('Specialist'), collaborator?.name ?? t('Any available')],
+        [t('Specialist'), provider?.name ?? t('Any available')],
         [t('Date'), formatDateLongWithYear(date)],
         [t('Time'), time],
     ];

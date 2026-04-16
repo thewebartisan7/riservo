@@ -17,7 +17,7 @@ function BookingItem({ booking }: { booking: BookingSummary }) {
             <div className="flex flex-col gap-1">
                 <span className="font-medium">{booking.service.name}</span>
                 <span className="text-sm text-muted-foreground">
-                    {booking.business.name} &middot; {booking.collaborator.name}
+                    {booking.business.name} &middot; {booking.provider.name}
                 </span>
                 <span className="text-sm text-muted-foreground">
                     {date.toLocaleDateString()} &middot;{' '}

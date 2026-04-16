@@ -35,7 +35,7 @@ export default function BookingShow() {
                         <span>{booking.service.name}</span>
 
                         <span className="text-muted-foreground">{t('With')}</span>
-                        <span>{booking.collaborator.name}</span>
+                        <span>{booking.provider.name}</span>
 
                         <span className="text-muted-foreground">{t('Date')}</span>
                         <span>{date.toLocaleDateString()}</span>

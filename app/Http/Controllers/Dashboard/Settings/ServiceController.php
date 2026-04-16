@@ -5,8 +5,8 @@ namespace App\Http\Controllers\Dashboard\Settings;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Dashboard\Settings\StoreSettingsServiceRequest;
 use App\Http\Requests\Dashboard\Settings\UpdateSettingsServiceRequest;
+use App\Models\Provider;
 use App\Models\Service;
-use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -21,7 +21,7 @@ class ServiceController extends Controller
 
         $services = $business->services()
             ->withCount('bookings')
-            ->with('collaborators:users.id,users.name')
+            ->with(['providers' => fn ($q) => $q->where('providers.business_id', $business->id)->with('user:id,name')])
             ->orderBy('name')
             ->get()
             ->map(fn (Service $s) => [
@@ -32,10 +32,10 @@ class ServiceController extends Controller
                 'price' => $s->price,
                 'is_active' => $s->is_active,
                 'bookings_count' => $s->bookings_count,
-                'collaborators' => $s->collaborators->map(fn (User $c) => [
-                    'id' => $c->id,
-                    'name' => $c->name,
-                ]),
+                'providers' => $s->providers->map(fn (Provider $p) => [
+                    'id' => $p->id,
+                    'name' => $p->user?->name ?? '',
+                ])->values(),
             ]);
 
         return Inertia::render('dashboard/settings/services/index', [
@@ -47,13 +47,14 @@ class ServiceController extends Controller
     {
         $business = $request->user()->currentBusiness();
 
-        $collaborators = $business->collaborators()
-            ->wherePivot('is_active', true)
-            ->get(['users.id', 'users.name'])
-            ->map(fn ($c) => ['id' => $c->id, 'name' => $c->name]);
+        $providers = $business->providers()
+            ->with('user:id,name')
+            ->orderBy('id')
+            ->get()
+            ->map(fn (Provider $p) => ['id' => $p->id, 'name' => $p->user?->name ?? '']);
 
         return Inertia::render('dashboard/settings/services/create', [
-            'collaborators' => $collaborators,
+            'providers' => $providers,
         ]);
     }
 
@@ -62,15 +63,15 @@ class ServiceController extends Controller
         $business = $request->user()->currentBusiness();
         $validated = $request->validated();
 
-        $collaboratorIds = $validated['collaborator_ids'] ?? [];
-        unset($validated['collaborator_ids']);
+        $providerIds = $validated['provider_ids'] ?? [];
+        unset($validated['provider_ids']);
 
         $validated['slug'] = $this->generateUniqueSlug($business, $validated['name']);
 
         $service = $business->services()->create($validated);
 
-        if (! empty($collaboratorIds)) {
-            $service->collaborators()->sync($collaboratorIds);
+        if (! empty($providerIds)) {
+            $service->providers()->sync($providerIds);
         }
 
         return redirect()->route('settings.services')->with('success', __('Service created.'));
@@ -84,10 +85,11 @@ class ServiceController extends Controller
             abort(403);
         }
 
-        $collaborators = $business->collaborators()
-            ->wherePivot('is_active', true)
-            ->get(['users.id', 'users.name'])
-            ->map(fn ($c) => ['id' => $c->id, 'name' => $c->name]);
+        $providers = $business->providers()
+            ->with('user:id,name')
+            ->orderBy('id')
+            ->get()
+            ->map(fn (Provider $p) => ['id' => $p->id, 'name' => $p->user?->name ?? '']);
 
         return Inertia::render('dashboard/settings/services/edit', [
             'service' => [
@@ -101,9 +103,11 @@ class ServiceController extends Controller
                 'buffer_after' => $service->buffer_after,
                 'slot_interval_minutes' => $service->slot_interval_minutes,
                 'is_active' => $service->is_active,
-                'collaborator_ids' => $service->collaborators->pluck('id'),
+                'provider_ids' => $service->providers()
+                    ->where('providers.business_id', $business->id)
+                    ->pluck('providers.id'),
             ],
-            'collaborators' => $collaborators,
+            'providers' => $providers,
         ]);
     }
 
@@ -116,11 +120,11 @@ class ServiceController extends Controller
         }
 
         $validated = $request->validated();
-        $collaboratorIds = $validated['collaborator_ids'] ?? [];
-        unset($validated['collaborator_ids']);
+        $providerIds = $validated['provider_ids'] ?? [];
+        unset($validated['provider_ids']);
 
         $service->update($validated);
-        $service->collaborators()->sync($collaboratorIds);
+        $service->providers()->sync($providerIds);
 
         return redirect()->route('settings.services.edit', $service)->with('success', __('Service updated.'));
     }

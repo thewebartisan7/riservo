@@ -15,9 +15,9 @@ use Illuminate\Support\Facades\Notification;
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create(['timezone' => 'Europe/Zurich']);
     $this->admin = User::factory()->create(['name' => 'Admin']);
-    $this->business->users()->attach($this->admin, ['role' => 'admin']);
-    $this->collaborator = User::factory()->create(['name' => 'Alice']);
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    attachAdmin($this->business, $this->admin);
+    $this->staff = User::factory()->create(['name' => 'Alice']);
+    $this->provider = attachProvider($this->business, $this->staff);
 
     BusinessHour::factory()->create([
         'business_id' => $this->business->id,
@@ -27,7 +27,7 @@ beforeEach(function () {
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
@@ -42,7 +42,7 @@ beforeEach(function () {
         'buffer_after' => 0,
         'slot_interval_minutes' => 60,
     ]);
-    $this->service->collaborators()->attach($this->collaborator);
+    $this->service->providers()->attach($this->provider);
 
     $this->travelTo(CarbonImmutable::parse('2026-04-13 08:00', 'Europe/Zurich'));
 });
@@ -52,7 +52,7 @@ test('auto-confirmed booking dispatches BookingConfirmedNotification to customer
 
     $this->postJson('/booking/'.$this->business->slug.'/book', [
         'service_id' => $this->service->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'date' => '2026-04-13',
         'time' => '10:00',
         'name' => 'Jane Doe',
@@ -72,7 +72,7 @@ test('pending booking does NOT dispatch BookingConfirmedNotification to customer
 
     $this->postJson('/booking/'.$this->business->slug.'/book', [
         'service_id' => $this->service->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'date' => '2026-04-13',
         'time' => '10:00',
         'name' => 'Jane Doe',
@@ -91,7 +91,7 @@ test('booking confirmed via dashboard dispatches to customer', function () {
     // Create a pending booking first
     $response = $this->postJson('/booking/'.$this->business->slug.'/book', [
         'service_id' => $this->service->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'date' => '2026-04-13',
         'time' => '10:00',
         'name' => 'Jane Doe',
@@ -114,7 +114,7 @@ test('booking confirmed via dashboard dispatches to customer', function () {
 test('BookingConfirmedNotification email has correct subject', function () {
     $booking = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
     ]);
 

@@ -25,7 +25,7 @@ import { useTrans } from '@/hooks/use-trans';
 import { Form } from '@inertiajs/react';
 import { useState } from 'react';
 
-interface Collaborator {
+interface Provider {
     id: number;
     name: string;
 }
@@ -41,9 +41,9 @@ interface ServiceFormProps {
         buffer_after: number;
         slot_interval_minutes: number;
         is_active: boolean;
-        collaborator_ids: number[];
+        provider_ids: number[];
     };
-    collaborators: Collaborator[];
+    providers: Provider[];
     submitLabel: string;
 }
 
@@ -56,13 +56,13 @@ const slotIntervalItems = [
     { label: '60 min', value: '60' },
 ];
 
-export function ServiceForm({ action, service, collaborators, submitLabel }: ServiceFormProps) {
+export function ServiceForm({ action, service, providers, submitLabel }: ServiceFormProps) {
     const { t } = useTrans();
-    const [selectedCollaborators, setSelectedCollaborators] = useState<number[]>(service?.collaborator_ids ?? []);
+    const [selectedProviders, setSelectedProviders] = useState<number[]>(service?.provider_ids ?? []);
     const [isActive, setIsActive] = useState(service?.is_active ?? true);
 
-    function toggleCollaborator(id: number) {
-        setSelectedCollaborators((prev) =>
+    function toggleProvider(id: number) {
+        setSelectedProviders((prev) =>
             prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id],
         );
     }
@@ -218,7 +218,7 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                             </p>
                         </section>
 
-                        {collaborators.length > 0 && (
+                        {providers.length > 0 && (
                             <section className="flex flex-col gap-4">
                                 <SectionHeading>
                                     <SectionTitle>{t('Team')}</SectionTitle>
@@ -230,14 +230,14 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                                         <FieldLabel>{t('Who performs this service')}</FieldLabel>
                                         <span className="font-display text-[11px] tabular-nums text-muted-foreground">
                                             {t(':n of :total selected', {
-                                                n: selectedCollaborators.length,
-                                                total: collaborators.length,
+                                                n: selectedProviders.length,
+                                                total: providers.length,
                                             })}
                                         </span>
                                     </div>
                                     <div className="grid gap-2 sm:grid-cols-2">
-                                        {collaborators.map((c) => {
-                                            const checked = selectedCollaborators.includes(c.id);
+                                        {providers.map((c) => {
+                                            const checked = selectedProviders.includes(c.id);
                                             return (
                                                 <Label
                                                     key={c.id}
@@ -245,7 +245,7 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                                                 >
                                                     <Checkbox
                                                         checked={checked}
-                                                        onCheckedChange={() => toggleCollaborator(c.id)}
+                                                        onCheckedChange={() => toggleProvider(c.id)}
                                                     />
                                                     <span className="text-foreground">{c.name}</span>
                                                 </Label>
@@ -253,13 +253,13 @@ export function ServiceForm({ action, service, collaborators, submitLabel }: Ser
                                         })}
                                     </div>
                                     <FieldDescription>
-                                        {t('At least one collaborator must be assigned for the service to appear on the booking page.')}
+                                        {t('At least one provider must be assigned for the service to appear on the booking page.')}
                                     </FieldDescription>
-                                    {selectedCollaborators.map((id) => (
-                                        <input key={id} type="hidden" name="collaborator_ids[]" value={id} />
+                                    {selectedProviders.map((id) => (
+                                        <input key={id} type="hidden" name="provider_ids[]" value={id} />
                                     ))}
-                                    {selectedCollaborators.length === 0 && (
-                                        <input type="hidden" name="collaborator_ids" value="" />
+                                    {selectedProviders.length === 0 && (
+                                        <input type="hidden" name="provider_ids" value="" />
                                     )}
                                 </Field>
                             </section>

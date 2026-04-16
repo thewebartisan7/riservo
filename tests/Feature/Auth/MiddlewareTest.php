@@ -1,6 +1,5 @@
 <?php
 
-use App\Enums\BusinessUserRole;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\User;
@@ -15,18 +14,18 @@ test('admin can access dashboard when onboarded', function () {
     $this->withoutVite();
     $user = User::factory()->create();
     $business = Business::factory()->onboarded()->create();
-    $business->users()->attach($user->id, ['role' => BusinessUserRole::Admin->value]);
+    attachAdmin($business, $user);
 
     $response = $this->actingAs($user)->get('/dashboard');
 
     $response->assertStatus(200);
 });
 
-test('collaborator can access dashboard', function () {
+test('staff can access dashboard', function () {
     $this->withoutVite();
     $user = User::factory()->create();
     $business = Business::factory()->create();
-    $business->users()->attach($user->id, ['role' => BusinessUserRole::Collaborator->value]);
+    attachProvider($business, $user);
 
     $response = $this->actingAs($user)->get('/dashboard');
 
@@ -55,7 +54,7 @@ test('customer can access my-bookings', function () {
 test('business user without customer record cannot access my-bookings', function () {
     $user = User::factory()->create();
     $business = Business::factory()->create();
-    $business->users()->attach($user->id, ['role' => BusinessUserRole::Admin->value]);
+    attachAdmin($business, $user);
 
     $response = $this->actingAs($user)->get('/my-bookings');
 

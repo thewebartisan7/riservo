@@ -47,9 +47,9 @@ export default function Welcome({ publicUrl, businessName, logoUrl = null }: Pro
             eyebrow: '02',
             title: t('Invite your team'),
             description: t(
-                'Send invites so each collaborator manages their own calendar and customers.',
+                'Send invites so each team member manages their own calendar and customers.',
             ),
-            href: '/dashboard/settings/team',
+            href: '/dashboard/settings/staff',
         },
         {
             eyebrow: '03',

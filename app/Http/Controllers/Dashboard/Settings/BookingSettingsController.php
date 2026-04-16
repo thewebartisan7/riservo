@@ -18,7 +18,7 @@ class BookingSettingsController extends Controller
         return Inertia::render('dashboard/settings/booking', [
             'settings' => [
                 'confirmation_mode' => $business->confirmation_mode->value,
-                'allow_collaborator_choice' => $business->allow_collaborator_choice,
+                'allow_provider_choice' => $business->allow_provider_choice,
                 'cancellation_window_hours' => $business->cancellation_window_hours,
                 'payment_mode' => $business->payment_mode->value,
                 'assignment_strategy' => $business->assignment_strategy->value,

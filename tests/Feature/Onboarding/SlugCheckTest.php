@@ -1,6 +1,5 @@
 <?php
 
-use App\Enums\BusinessUserRole;
 use App\Models\Business;
 use App\Models\User;
 
@@ -10,7 +9,7 @@ beforeEach(function () {
         'slug' => 'my-business',
         'onboarding_step' => 1,
     ]);
-    $this->business->users()->attach($this->user->id, ['role' => BusinessUserRole::Admin->value]);
+    attachAdmin($this->business, $this->user);
 });
 
 test('available slug returns true', function () {

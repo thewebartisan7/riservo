@@ -41,10 +41,10 @@ class Service extends Model
         return $this->belongsTo(Business::class);
     }
 
-    /** @return BelongsToMany<User, $this> */
-    public function collaborators(): BelongsToMany
+    /** @return BelongsToMany<Provider, $this> */
+    public function providers(): BelongsToMany
     {
-        return $this->belongsToMany(User::class, 'collaborator_service', 'service_id', 'collaborator_id')
+        return $this->belongsToMany(Provider::class, 'provider_service')
             ->withTimestamps();
     }
 

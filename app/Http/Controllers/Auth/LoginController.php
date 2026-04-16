@@ -42,7 +42,7 @@ class LoginController extends Controller
     {
         $user = $request->user();
 
-        if ($user && $user->hasBusinessRole('admin', 'collaborator')) {
+        if ($user && $user->hasBusinessRole('admin', 'staff')) {
             return route('dashboard');
         }
 

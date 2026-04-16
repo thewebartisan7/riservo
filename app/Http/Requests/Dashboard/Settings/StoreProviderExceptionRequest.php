@@ -6,7 +6,7 @@ use App\Enums\ExceptionType;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
-class StoreCollaboratorExceptionRequest extends FormRequest
+class StoreProviderExceptionRequest extends FormRequest
 {
     public function authorize(): bool
     {

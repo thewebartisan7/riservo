@@ -2,7 +2,7 @@
 
 namespace Database\Factories;
 
-use App\Enums\BusinessUserRole;
+use App\Enums\BusinessMemberRole;
 use App\Models\Business;
 use App\Models\BusinessInvitation;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -23,7 +23,7 @@ class BusinessInvitationFactory extends Factory
         return [
             'business_id' => Business::factory(),
             'email' => fake()->unique()->safeEmail(),
-            'role' => BusinessUserRole::Collaborator,
+            'role' => BusinessMemberRole::Staff,
             'token' => Str::random(64),
             'expires_at' => now()->addHours(48),
             'accepted_at' => null,

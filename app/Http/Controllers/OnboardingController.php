@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Enums\BusinessUserRole;
+use App\Enums\BusinessMemberRole;
 use App\Http\Requests\Onboarding\StoreHoursRequest;
 use App\Http\Requests\Onboarding\StoreInvitationsRequest;
 use App\Http\Requests\Onboarding\StoreProfileRequest;
@@ -285,7 +285,7 @@ class OnboardingController extends Controller
             $invitation = BusinessInvitation::create([
                 'business_id' => $business->id,
                 'email' => $invitationData['email'],
-                'role' => BusinessUserRole::Collaborator,
+                'role' => BusinessMemberRole::Staff,
                 'token' => Str::random(64),
                 'service_ids' => $invitationData['service_ids'] ?? null,
                 'expires_at' => now()->addHours(48),

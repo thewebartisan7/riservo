@@ -1,7 +1,7 @@
 <?php
 
 use App\Enums\AssignmentStrategy;
-use App\Enums\BusinessUserRole;
+use App\Enums\BusinessMemberRole;
 use App\Enums\ConfirmationMode;
 use App\Enums\PaymentMode;
 use App\Models\AvailabilityException;
@@ -49,30 +49,41 @@ test('it casts reminder_hours to array', function () {
         ->and($business->reminder_hours)->toBe([24, 1]);
 });
 
-test('it has many users through pivot with role', function () {
+test('it has many members through pivot with role', function () {
     $business = Business::factory()->create();
     $admin = User::factory()->create();
-    $collaborator = User::factory()->create();
+    $staff = User::factory()->create();
 
-    $business->users()->attach($admin, ['role' => BusinessUserRole::Admin]);
-    $business->users()->attach($collaborator, ['role' => BusinessUserRole::Collaborator]);
+    $business->members()->attach($admin, ['role' => BusinessMemberRole::Admin]);
+    $business->members()->attach($staff, ['role' => BusinessMemberRole::Staff]);
 
-    expect($business->users)->toHaveCount(2)
-        ->and($business->users->first()->pivot->role)->toBe(BusinessUserRole::Admin);
+    expect($business->members)->toHaveCount(2)
+        ->and($business->members->first()->pivot->role)->toBe(BusinessMemberRole::Admin);
 });
 
-test('it scopes admins and collaborators', function () {
+test('it scopes admins and staff', function () {
     $business = Business::factory()->create();
     $admin = User::factory()->create();
-    $collaborator = User::factory()->create();
+    $staff = User::factory()->create();
 
-    $business->users()->attach($admin, ['role' => BusinessUserRole::Admin]);
-    $business->users()->attach($collaborator, ['role' => BusinessUserRole::Collaborator]);
+    $business->members()->attach($admin, ['role' => BusinessMemberRole::Admin]);
+    $business->members()->attach($staff, ['role' => BusinessMemberRole::Staff]);
 
     expect($business->admins)->toHaveCount(1)
         ->and($business->admins->first()->id)->toBe($admin->id)
-        ->and($business->collaborators)->toHaveCount(1)
-        ->and($business->collaborators->first()->id)->toBe($collaborator->id);
+        ->and($business->staff)->toHaveCount(1)
+        ->and($business->staff->first()->id)->toBe($staff->id);
+});
+
+test('it has many providers', function () {
+    $business = Business::factory()->create();
+    $user1 = User::factory()->create();
+    $user2 = User::factory()->create();
+
+    attachProvider($business, $user1);
+    attachProvider($business, $user2);
+
+    expect($business->providers)->toHaveCount(2);
 });
 
 test('it has many business hours', function () {

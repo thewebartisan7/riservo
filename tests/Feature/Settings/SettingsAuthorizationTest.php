@@ -6,25 +6,25 @@ use App\Models\User;
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create();
     $this->admin = User::factory()->create();
-    $this->business->users()->attach($this->admin, ['role' => 'admin']);
+    attachAdmin($this->business, $this->admin);
 
-    $this->collaborator = User::factory()->create();
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    $this->staff = User::factory()->create();
+    attachStaff($this->business, $this->staff);
 });
 
-test('collaborator cannot access any settings page', function () {
+test('staff cannot access any settings page', function () {
     $routes = [
         '/dashboard/settings/profile',
         '/dashboard/settings/booking',
         '/dashboard/settings/hours',
         '/dashboard/settings/exceptions',
         '/dashboard/settings/services',
-        '/dashboard/settings/collaborators',
+        '/dashboard/settings/staff',
         '/dashboard/settings/embed',
     ];
 
     foreach ($routes as $route) {
-        $this->actingAs($this->collaborator)
+        $this->actingAs($this->staff)
             ->get($route)
             ->assertForbidden();
     }
@@ -42,7 +42,7 @@ test('admin can access all settings pages', function () {
         '/dashboard/settings/hours',
         '/dashboard/settings/exceptions',
         '/dashboard/settings/services',
-        '/dashboard/settings/collaborators',
+        '/dashboard/settings/staff',
         '/dashboard/settings/embed',
     ];
 

@@ -30,7 +30,7 @@ use Illuminate\Support\Carbon;
     'timezone',
     'payment_mode',
     'confirmation_mode',
-    'allow_collaborator_choice',
+    'allow_provider_choice',
     'cancellation_window_hours',
     'assignment_strategy',
     'reminder_hours',
@@ -47,32 +47,38 @@ class Business extends Model
         return [
             'payment_mode' => PaymentMode::class,
             'confirmation_mode' => ConfirmationMode::class,
-            'allow_collaborator_choice' => 'boolean',
+            'allow_provider_choice' => 'boolean',
             'assignment_strategy' => AssignmentStrategy::class,
             'reminder_hours' => 'array',
             'onboarding_completed_at' => 'datetime',
         ];
     }
 
-    /** @return BelongsToMany<User, $this, BusinessUser, 'pivot'> */
-    public function users(): BelongsToMany
+    /** @return BelongsToMany<User, $this, BusinessMember, 'pivot'> */
+    public function members(): BelongsToMany
     {
-        return $this->belongsToMany(User::class)
-            ->using(BusinessUser::class)
-            ->withPivot(['role', 'is_active'])
+        return $this->belongsToMany(User::class, 'business_members')
+            ->using(BusinessMember::class)
+            ->withPivot(['role'])
             ->withTimestamps();
     }
 
-    /** @return BelongsToMany<User, $this, BusinessUser, 'pivot'> */
+    /** @return BelongsToMany<User, $this, BusinessMember, 'pivot'> */
     public function admins(): BelongsToMany
     {
-        return $this->users()->wherePivot('role', 'admin');
+        return $this->members()->wherePivot('role', 'admin');
     }
 
-    /** @return BelongsToMany<User, $this, BusinessUser, 'pivot'> */
-    public function collaborators(): BelongsToMany
+    /** @return BelongsToMany<User, $this, BusinessMember, 'pivot'> */
+    public function staff(): BelongsToMany
     {
-        return $this->users()->wherePivot('role', 'collaborator');
+        return $this->members()->wherePivot('role', 'staff');
+    }
+
+    /** @return HasMany<Provider, $this> */
+    public function providers(): HasMany
+    {
+        return $this->hasMany(Provider::class);
     }
 
     /** @return HasMany<BusinessHour, $this> */

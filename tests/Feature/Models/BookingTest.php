@@ -6,8 +6,8 @@ use App\Enums\PaymentStatus;
 use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Customer;
+use App\Models\Provider;
 use App\Models\Service;
-use App\Models\User;
 use Illuminate\Support\Carbon;
 
 test('it creates a booking with factory defaults', function () {
@@ -25,12 +25,12 @@ test('it belongs to a business', function () {
     expect($booking->business)->toBeInstanceOf(Business::class);
 });
 
-test('it belongs to a collaborator (user)', function () {
-    $user = User::factory()->create();
-    $booking = Booking::factory()->create(['collaborator_id' => $user->id]);
+test('it belongs to a provider', function () {
+    $provider = Provider::factory()->create();
+    $booking = Booking::factory()->create(['provider_id' => $provider->id]);
 
-    expect($booking->collaborator)->toBeInstanceOf(User::class)
-        ->and($booking->collaborator->id)->toBe($user->id);
+    expect($booking->provider)->toBeInstanceOf(Provider::class)
+        ->and($booking->provider->id)->toBe($provider->id);
 });
 
 test('it belongs to a service', function () {

@@ -1,6 +1,5 @@
 <?php
 
-use App\Enums\BusinessUserRole;
 use App\Models\Business;
 use App\Models\User;
 use Illuminate\Auth\Notifications\VerifyEmail;
@@ -20,7 +19,7 @@ test('verified user is redirected from verification notice', function () {
     $this->withoutVite();
     $user = User::factory()->create();
     $business = Business::factory()->create();
-    $business->users()->attach($user->id, ['role' => BusinessUserRole::Admin->value]);
+    attachAdmin($business, $user);
 
     $response = $this->actingAs($user)->get('/email/verify');
 
@@ -31,7 +30,7 @@ test('unverified user cannot access dashboard', function () {
     $this->withoutVite();
     $user = User::factory()->unverified()->create();
     $business = Business::factory()->create();
-    $business->users()->attach($user->id, ['role' => BusinessUserRole::Admin->value]);
+    attachAdmin($business, $user);
 
     $response = $this->actingAs($user)->get('/dashboard');
 

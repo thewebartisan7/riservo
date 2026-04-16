@@ -10,17 +10,17 @@ use Carbon\CarbonImmutable;
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create(['timezone' => 'Europe/Zurich']);
     $this->admin = User::factory()->create();
-    $this->business->users()->attach($this->admin, ['role' => 'admin']);
+    attachAdmin($this->business, $this->admin);
 
-    $this->collaborator = User::factory()->create();
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    $this->staff = User::factory()->create();
+    $this->provider = attachProvider($this->business, $this->staff);
 
     $this->service = Service::factory()->create([
         'business_id' => $this->business->id,
         'is_active' => true,
         'name' => 'Haircut',
     ]);
-    $this->service->collaborators()->attach($this->collaborator);
+    $this->provider->services()->attach($this->service);
 
     $this->customer = Customer::factory()->create();
 
@@ -37,7 +37,7 @@ test('calendar page loads with default week view and today date', function () {
             ->where('date', '2026-04-15')
             ->where('isAdmin', true)
             ->has('bookings')
-            ->has('collaborators')
+            ->has('providers')
             ->has('services')
             ->has('timezone')
         );
@@ -47,7 +47,7 @@ test('calendar returns bookings within the visible week range', function () {
     // Within the week of April 13–19, 2026
     $inRange = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-16 09:00', 'Europe/Zurich')->utc(),
@@ -57,7 +57,7 @@ test('calendar returns bookings within the visible week range', function () {
     // Outside the week
     Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-22 09:00', 'Europe/Zurich')->utc(),
@@ -93,7 +93,7 @@ test('date parameter navigates to specified date', function () {
 test('day view returns only bookings for that day', function () {
     $todayBooking = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-15 09:00', 'Europe/Zurich')->utc(),
@@ -102,7 +102,7 @@ test('day view returns only bookings for that day', function () {
 
     Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-16 09:00', 'Europe/Zurich')->utc(),
@@ -121,7 +121,7 @@ test('day view returns only bookings for that day', function () {
 test('month view returns bookings for the padded month range', function () {
     $booking = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-30 09:00', 'Europe/Zurich')->utc(),
@@ -135,12 +135,12 @@ test('month view returns bookings for the padded month range', function () {
 });
 
 test('admin sees all business bookings on calendar', function () {
-    $otherCollaborator = User::factory()->create();
-    $this->business->users()->attach($otherCollaborator, ['role' => 'collaborator']);
+    $otherStaff = User::factory()->create();
+    $otherProvider = attachProvider($this->business, $otherStaff);
 
     Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-15 09:00', 'Europe/Zurich')->utc(),
@@ -149,7 +149,7 @@ test('admin sees all business bookings on calendar', function () {
 
     Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $otherCollaborator->id,
+        'provider_id' => $otherProvider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-15 11:00', 'Europe/Zurich')->utc(),
@@ -162,13 +162,13 @@ test('admin sees all business bookings on calendar', function () {
         ->assertInertia(fn ($page) => $page->has('bookings', 2));
 });
 
-test('collaborator sees only own bookings on calendar', function () {
-    $otherCollaborator = User::factory()->create();
-    $this->business->users()->attach($otherCollaborator, ['role' => 'collaborator']);
+test('staff sees only own bookings on calendar', function () {
+    $otherStaff = User::factory()->create();
+    $otherProvider = attachProvider($this->business, $otherStaff);
 
     Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-15 09:00', 'Europe/Zurich')->utc(),
@@ -177,14 +177,14 @@ test('collaborator sees only own bookings on calendar', function () {
 
     Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $otherCollaborator->id,
+        'provider_id' => $otherProvider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-15 11:00', 'Europe/Zurich')->utc(),
         'ends_at' => CarbonImmutable::parse('2026-04-15 12:00', 'Europe/Zurich')->utc(),
     ]);
 
-    $response = $this->actingAs($this->collaborator)->get('/dashboard/calendar');
+    $response = $this->actingAs($this->staff)->get('/dashboard/calendar');
 
     $response->assertSuccessful()
         ->assertInertia(fn ($page) => $page

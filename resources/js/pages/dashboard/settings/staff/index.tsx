@@ -12,22 +12,23 @@ import { useTrans } from '@/hooks/use-trans';
 import { Link, router } from '@inertiajs/react';
 import {
     show,
-    toggleActive,
     resendInvitation,
     cancelInvitation,
-} from '@/actions/App/Http/Controllers/Dashboard/Settings/CollaboratorController';
-import { CollaboratorInviteDialog } from '@/components/settings/collaborator-invite-dialog';
+} from '@/actions/App/Http/Controllers/Dashboard/Settings/StaffController';
+import { toggle } from '@/actions/App/Http/Controllers/Dashboard/Settings/ProviderController';
+import { StaffInviteDialog } from '@/components/settings/staff-invite-dialog';
 import { getInitials } from '@/lib/booking-format';
 import { useState } from 'react';
 import { ArrowRightIcon, PlusIcon } from 'lucide-react';
 
-interface CollaboratorItem {
+interface StaffItem {
     id: number;
     name: string;
     email: string;
     avatar_url: string | null;
     is_active: boolean;
     services_count: number;
+    provider_id: number | null;
 }
 
 interface InvitationItem {
@@ -39,20 +40,20 @@ interface InvitationItem {
 }
 
 interface Props {
-    collaborators: CollaboratorItem[];
+    staff: StaffItem[];
     invitations: InvitationItem[];
     services: { id: number; name: string }[];
 }
 
-export default function Collaborators({ collaborators, invitations, services }: Props) {
+export default function Staff({ staff, invitations, services }: Props) {
     const { t } = useTrans();
     const [inviteOpen, setInviteOpen] = useState(false);
 
     return (
         <SettingsLayout
-            title={t('Collaborators')}
+            title={t('Staff')}
             eyebrow={t('Settings · Team')}
-            heading={t('Collaborators')}
+            heading={t('Staff')}
             description={t(
                 'Everyone who performs services. Each has their own schedule, exceptions, and service list.',
             )}
@@ -64,10 +65,10 @@ export default function Collaborators({ collaborators, invitations, services }: 
             }
         >
             <div className="flex flex-col gap-10">
-                {collaborators.length === 0 ? (
+                {staff.length === 0 ? (
                     <Frame>
                         <FrameHeader className="items-center gap-2 py-12 text-center">
-                            <p className="text-sm text-foreground">{t('No collaborators yet.')}</p>
+                            <p className="text-sm text-foreground">{t('No staff yet.')}</p>
                             <p className="max-w-sm text-sm text-muted-foreground">
                                 {t('Invite a team member to hand them their own calendar and customer list.')}
                             </p>
@@ -75,54 +76,56 @@ export default function Collaborators({ collaborators, invitations, services }: 
                     </Frame>
                 ) : (
                     <ul className="flex flex-col divide-y divide-border/70 border-y border-border/70">
-                        {collaborators.map((collab) => (
-                            <li key={collab.id}>
+                        {staff.map((member) => (
+                            <li key={member.id}>
                                 <div className="group flex items-start gap-4 py-4 sm:items-center">
                                     <Link
-                                        href={show.url(collab.id)}
+                                        href={show.url(member.id)}
                                         className="flex min-w-0 flex-1 items-center gap-3 transition-opacity hover:opacity-90"
                                     >
                                         <Avatar className="size-9 shrink-0 rounded-xl border border-border bg-muted">
                                             <AvatarImage
-                                                src={collab.avatar_url ?? undefined}
+                                                src={member.avatar_url ?? undefined}
                                                 alt=""
                                                 className="rounded-xl object-cover"
                                             />
                                             <AvatarFallback className="rounded-xl bg-muted font-display text-xs font-semibold text-muted-foreground">
-                                                {getInitials(collab.name)}
+                                                {getInitials(member.name)}
                                             </AvatarFallback>
                                         </Avatar>
                                         <div className="flex min-w-0 flex-col gap-0.5">
                                             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
                                                 <Display className="text-sm font-medium text-foreground">
-                                                    {collab.name}
+                                                    {member.name}
                                                 </Display>
-                                                {!collab.is_active && (
+                                                {!member.is_active && (
                                                     <span className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
                                                         {t('Inactive')}
                                                     </span>
                                                 )}
                                             </div>
                                             <span className="truncate text-xs text-muted-foreground">
-                                                {collab.email}
+                                                {member.email}
                                             </span>
                                         </div>
                                     </Link>
                                     <div className="flex shrink-0 items-center gap-4">
                                         <span className="hidden font-display text-xs tabular-nums text-muted-foreground sm:block">
-                                            {t(':n services', { n: collab.services_count })}
+                                            {t(':n services', { n: member.services_count })}
                                         </span>
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={() => router.post(toggleActive.url(collab.id))}
-                                            className="text-muted-foreground hover:text-foreground"
-                                        >
-                                            {collab.is_active ? t('Deactivate') : t('Activate')}
-                                        </Button>
+                                        {member.provider_id !== null && (
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => router.post(toggle.url(member.provider_id as number))}
+                                                className="text-muted-foreground hover:text-foreground"
+                                            >
+                                                {member.is_active ? t('Deactivate') : t('Activate')}
+                                            </Button>
+                                        )}
                                         <Link
-                                            href={show.url(collab.id)}
-                                            aria-label={t('Open :name', { name: collab.name })}
+                                            href={show.url(member.id)}
+                                            aria-label={t('Open :name', { name: member.name })}
                                             className="inline-flex items-center text-muted-foreground/60 transition-all group-hover:translate-x-0.5 group-hover:text-foreground"
                                         >
                                             <ArrowRightIcon className="size-4" aria-hidden="true" />
@@ -185,7 +188,7 @@ export default function Collaborators({ collaborators, invitations, services }: 
                 )}
             </div>
 
-            <CollaboratorInviteDialog
+            <StaffInviteDialog
                 open={inviteOpen}
                 onOpenChange={setInviteOpen}
                 services={services}

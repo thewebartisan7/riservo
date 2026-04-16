@@ -22,13 +22,13 @@ beforeEach(function () {
     $this->sundayDate = '2026-04-19';
 
     $this->business = Business::factory()->create(['timezone' => 'Europe/Zurich']);
-    $this->collaborator = User::factory()->create();
+    $this->staff = User::factory()->create();
 
-    // Attach collaborator to business
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    // Attach staff to business and create a provider
+    $this->provider = attachProvider($this->business, $this->staff);
 });
 
-test('returns windows from collaborator weekly schedule', function () {
+test('returns windows from provider weekly schedule', function () {
     BusinessHour::factory()->create([
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
@@ -37,21 +37,21 @@ test('returns windows from collaborator weekly schedule', function () {
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
         'end_time' => '17:00',
     ]);
 
-    $windows = $this->service->getAvailableWindows($this->business, $this->collaborator, $this->monday);
+    $windows = $this->service->getAvailableWindows($this->business, $this->provider, $this->monday);
 
     expect($windows)->toHaveCount(1);
     expect($windows[0]->start->format('H:i'))->toBe('09:00');
     expect($windows[0]->end->format('H:i'))->toBe('17:00');
 });
 
-test('returns empty when collaborator has no rules for weekday', function () {
+test('returns empty when provider has no rules for weekday', function () {
     BusinessHour::factory()->create([
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
@@ -60,7 +60,7 @@ test('returns empty when collaborator has no rules for weekday', function () {
     ]);
 
     // No AvailabilityRule for Monday
-    $windows = $this->service->getAvailableWindows($this->business, $this->collaborator, $this->monday);
+    $windows = $this->service->getAvailableWindows($this->business, $this->provider, $this->monday);
 
     expect($windows)->toBeEmpty();
 });
@@ -68,14 +68,14 @@ test('returns empty when collaborator has no rules for weekday', function () {
 test('returns empty when business is closed on that day', function () {
     // No BusinessHour for Monday
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
         'end_time' => '17:00',
     ]);
 
-    $windows = $this->service->getAvailableWindows($this->business, $this->collaborator, $this->monday);
+    $windows = $this->service->getAvailableWindows($this->business, $this->provider, $this->monday);
 
     expect($windows)->toBeEmpty();
 });
@@ -96,21 +96,21 @@ test('supports multiple windows per day (morning + afternoon)', function () {
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
         'end_time' => '13:00',
     ]);
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '14:00',
         'end_time' => '18:00',
     ]);
 
-    $windows = $this->service->getAvailableWindows($this->business, $this->collaborator, $this->monday);
+    $windows = $this->service->getAvailableWindows($this->business, $this->provider, $this->monday);
 
     expect($windows)->toHaveCount(2);
     expect($windows[0]->start->format('H:i'))->toBe('09:00');
@@ -119,7 +119,7 @@ test('supports multiple windows per day (morning + afternoon)', function () {
     expect($windows[1]->end->format('H:i'))->toBe('18:00');
 });
 
-test('business hours clip collaborator availability', function () {
+test('business hours clip provider availability', function () {
     BusinessHour::factory()->create([
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
@@ -128,14 +128,14 @@ test('business hours clip collaborator availability', function () {
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
         'end_time' => '18:00',
     ]);
 
-    $windows = $this->service->getAvailableWindows($this->business, $this->collaborator, $this->monday);
+    $windows = $this->service->getAvailableWindows($this->business, $this->provider, $this->monday);
 
     expect($windows)->toHaveCount(1);
     expect($windows[0]->start->format('H:i'))->toBe('10:00');
@@ -151,7 +151,7 @@ test('business-level full-day block removes all availability', function () {
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
@@ -160,7 +160,7 @@ test('business-level full-day block removes all availability', function () {
 
     AvailabilityException::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => null,
+        'provider_id' => null,
         'start_date' => $this->mondayDate,
         'end_date' => $this->mondayDate,
         'type' => ExceptionType::Block,
@@ -168,7 +168,7 @@ test('business-level full-day block removes all availability', function () {
         'end_time' => null,
     ]);
 
-    $windows = $this->service->getAvailableWindows($this->business, $this->collaborator, $this->monday);
+    $windows = $this->service->getAvailableWindows($this->business, $this->provider, $this->monday);
 
     expect($windows)->toBeEmpty();
 });
@@ -182,7 +182,7 @@ test('business-level partial block splits availability window', function () {
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
@@ -192,7 +192,7 @@ test('business-level partial block splits availability window', function () {
     // Business closes 12:00-14:00 for an event
     AvailabilityException::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => null,
+        'provider_id' => null,
         'start_date' => $this->mondayDate,
         'end_date' => $this->mondayDate,
         'type' => ExceptionType::Block,
@@ -200,7 +200,7 @@ test('business-level partial block splits availability window', function () {
         'end_time' => '14:00',
     ]);
 
-    $windows = $this->service->getAvailableWindows($this->business, $this->collaborator, $this->monday);
+    $windows = $this->service->getAvailableWindows($this->business, $this->provider, $this->monday);
 
     expect($windows)->toHaveCount(2);
     expect($windows[0]->start->format('H:i'))->toBe('09:00');
@@ -209,7 +209,7 @@ test('business-level partial block splits availability window', function () {
     expect($windows[1]->end->format('H:i'))->toBe('18:00');
 });
 
-test('collaborator-level full-day block removes collaborator availability', function () {
+test('provider-level full-day block removes provider availability', function () {
     BusinessHour::factory()->create([
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
@@ -218,15 +218,15 @@ test('collaborator-level full-day block removes collaborator availability', func
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
         'end_time' => '17:00',
     ]);
 
-    // Collaborator is sick
-    AvailabilityException::factory()->forCollaborator($this->collaborator)->create([
+    // Provider is sick
+    AvailabilityException::factory()->forProvider($this->provider)->create([
         'business_id' => $this->business->id,
         'start_date' => $this->mondayDate,
         'end_date' => $this->mondayDate,
@@ -235,12 +235,12 @@ test('collaborator-level full-day block removes collaborator availability', func
         'end_time' => null,
     ]);
 
-    $windows = $this->service->getAvailableWindows($this->business, $this->collaborator, $this->monday);
+    $windows = $this->service->getAvailableWindows($this->business, $this->provider, $this->monday);
 
     expect($windows)->toBeEmpty();
 });
 
-test('collaborator-level partial block reduces availability', function () {
+test('provider-level partial block reduces availability', function () {
     BusinessHour::factory()->create([
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
@@ -249,7 +249,7 @@ test('collaborator-level partial block reduces availability', function () {
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
@@ -257,14 +257,14 @@ test('collaborator-level partial block reduces availability', function () {
     ]);
 
     // Doctor appointment 10:00-11:00
-    AvailabilityException::factory()->forCollaborator($this->collaborator)->partialDay('10:00', '11:00')->create([
+    AvailabilityException::factory()->forProvider($this->provider)->partialDay('10:00', '11:00')->create([
         'business_id' => $this->business->id,
         'start_date' => $this->mondayDate,
         'end_date' => $this->mondayDate,
         'type' => ExceptionType::Block,
     ]);
 
-    $windows = $this->service->getAvailableWindows($this->business, $this->collaborator, $this->monday);
+    $windows = $this->service->getAvailableWindows($this->business, $this->provider, $this->monday);
 
     expect($windows)->toHaveCount(2);
     expect($windows[0]->start->format('H:i'))->toBe('09:00');
@@ -273,7 +273,7 @@ test('collaborator-level partial block reduces availability', function () {
     expect($windows[1]->end->format('H:i'))->toBe('17:00');
 });
 
-test('collaborator open exception extends availability', function () {
+test('provider open exception extends availability', function () {
     BusinessHour::factory()->create([
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
@@ -282,15 +282,15 @@ test('collaborator open exception extends availability', function () {
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
         'end_time' => '17:00',
     ]);
 
-    // Collaborator available 17:00-19:00 extra
-    AvailabilityException::factory()->forCollaborator($this->collaborator)->open()->create([
+    // Provider available 17:00-19:00 extra
+    AvailabilityException::factory()->forProvider($this->provider)->open()->create([
         'business_id' => $this->business->id,
         'start_date' => $this->mondayDate,
         'end_date' => $this->mondayDate,
@@ -298,20 +298,20 @@ test('collaborator open exception extends availability', function () {
         'end_time' => '19:00',
     ]);
 
-    $windows = $this->service->getAvailableWindows($this->business, $this->collaborator, $this->monday);
+    $windows = $this->service->getAvailableWindows($this->business, $this->provider, $this->monday);
 
     expect($windows)->toHaveCount(1);
     expect($windows[0]->start->format('H:i'))->toBe('09:00');
     expect($windows[0]->end->format('H:i'))->toBe('19:00');
 });
 
-test('open exception on normally closed day requires both business and collaborator exceptions', function () {
-    // Sunday: business normally closed, collaborator has no rules
+test('open exception on normally closed day requires both business and provider exceptions', function () {
+    // Sunday: business normally closed, provider has no rules
 
     // Business opens specially on this Sunday
     AvailabilityException::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => null,
+        'provider_id' => null,
         'start_date' => $this->sundayDate,
         'end_date' => $this->sundayDate,
         'type' => ExceptionType::Open,
@@ -319,8 +319,8 @@ test('open exception on normally closed day requires both business and collabora
         'end_time' => '14:00',
     ]);
 
-    // Collaborator also available
-    AvailabilityException::factory()->forCollaborator($this->collaborator)->open()->create([
+    // Provider also available
+    AvailabilityException::factory()->forProvider($this->provider)->open()->create([
         'business_id' => $this->business->id,
         'start_date' => $this->sundayDate,
         'end_date' => $this->sundayDate,
@@ -328,7 +328,7 @@ test('open exception on normally closed day requires both business and collabora
         'end_time' => '14:00',
     ]);
 
-    $windows = $this->service->getAvailableWindows($this->business, $this->collaborator, $this->sunday);
+    $windows = $this->service->getAvailableWindows($this->business, $this->provider, $this->sunday);
 
     expect($windows)->toHaveCount(1);
     expect($windows[0]->start->format('H:i'))->toBe('10:00');
@@ -344,7 +344,7 @@ test('block then re-open composes correctly on same day', function () {
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
@@ -352,7 +352,7 @@ test('block then re-open composes correctly on same day', function () {
     ]);
 
     // Full-day block (holiday)
-    AvailabilityException::factory()->forCollaborator($this->collaborator)->create([
+    AvailabilityException::factory()->forProvider($this->provider)->create([
         'business_id' => $this->business->id,
         'start_date' => $this->mondayDate,
         'end_date' => $this->mondayDate,
@@ -361,8 +361,8 @@ test('block then re-open composes correctly on same day', function () {
         'end_time' => null,
     ]);
 
-    // But collaborator works a half day anyway
-    AvailabilityException::factory()->forCollaborator($this->collaborator)->open()->create([
+    // But provider works a half day anyway
+    AvailabilityException::factory()->forProvider($this->provider)->open()->create([
         'business_id' => $this->business->id,
         'start_date' => $this->mondayDate,
         'end_date' => $this->mondayDate,
@@ -370,7 +370,7 @@ test('block then re-open composes correctly on same day', function () {
         'end_time' => '14:00',
     ]);
 
-    $windows = $this->service->getAvailableWindows($this->business, $this->collaborator, $this->monday);
+    $windows = $this->service->getAvailableWindows($this->business, $this->provider, $this->monday);
 
     expect($windows)->toHaveCount(1);
     expect($windows[0]->start->format('H:i'))->toBe('10:00');
@@ -386,7 +386,7 @@ test('multi-day exception applies to each date in range', function () {
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
@@ -396,7 +396,7 @@ test('multi-day exception applies to each date in range', function () {
     // 3-day holiday covering Monday
     AvailabilityException::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => null,
+        'provider_id' => null,
         'start_date' => '2026-04-12',
         'end_date' => '2026-04-14',
         'type' => ExceptionType::Block,
@@ -404,7 +404,7 @@ test('multi-day exception applies to each date in range', function () {
         'end_time' => null,
     ]);
 
-    $windows = $this->service->getAvailableWindows($this->business, $this->collaborator, $this->monday);
+    $windows = $this->service->getAvailableWindows($this->business, $this->provider, $this->monday);
 
     expect($windows)->toBeEmpty();
 });

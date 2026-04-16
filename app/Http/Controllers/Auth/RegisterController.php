@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers\Auth;
 
-use App\Enums\BusinessUserRole;
+use App\Enums\BusinessMemberRole;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\RegisterRequest;
 use App\Models\Business;
@@ -33,8 +33,8 @@ class RegisterController extends Controller
             'slug' => $slugService->generateUniqueSlug($request->validated('business_name')),
         ]);
 
-        $business->users()->attach($user->id, [
-            'role' => BusinessUserRole::Admin->value,
+        $business->members()->attach($user->id, [
+            'role' => BusinessMemberRole::Admin->value,
         ]);
 
         Auth::login($user);

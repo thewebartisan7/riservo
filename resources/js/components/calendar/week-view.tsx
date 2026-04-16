@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef } from 'react';
 import { parseISO, startOfWeek, addDays, format, isToday } from 'date-fns';
 import type { DashboardBooking } from '@/types';
-import type { CollaboratorColor } from '@/lib/calendar-colors';
+import type { ProviderColor } from '@/lib/calendar-colors';
 import {
     CalendarEvent,
     getBookingGridPosition,
@@ -14,13 +14,13 @@ interface WeekViewProps {
     bookings: DashboardBooking[];
     date: string;
     timezone: string;
-    colorMap: Map<number, CollaboratorColor>;
+    colorMap: Map<number, ProviderColor>;
     onBookingClick: (booking: DashboardBooking) => void;
 }
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
-const DEFAULT_COLOR: CollaboratorColor = {
+const DEFAULT_COLOR: ProviderColor = {
     bg: 'bg-muted',
     hoverBg: 'hover:bg-muted/80',
     text: 'text-foreground',
@@ -171,7 +171,7 @@ export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }:
                                                 booking.ends_at,
                                                 timezone,
                                             );
-                                            const color = colorMap.get(booking.collaborator.id) ?? DEFAULT_COLOR;
+                                            const color = colorMap.get(booking.provider.id) ?? DEFAULT_COLOR;
 
                                             return (
                                                 <li

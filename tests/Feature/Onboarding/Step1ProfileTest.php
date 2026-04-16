@@ -1,6 +1,5 @@
 <?php
 
-use App\Enums\BusinessUserRole;
 use App\Models\Business;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
@@ -14,7 +13,7 @@ beforeEach(function () {
         'slug' => 'test-business',
         'onboarding_step' => 1,
     ]);
-    $this->business->users()->attach($this->user->id, ['role' => BusinessUserRole::Admin->value]);
+    attachAdmin($this->business, $this->user);
 });
 
 test('step 1 page renders with pre-filled business data', function () {

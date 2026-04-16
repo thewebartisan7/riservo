@@ -11,7 +11,7 @@ beforeEach(function () {
         'slug' => 'test-salon',
     ]);
     $this->admin = User::factory()->create();
-    $this->business->users()->attach($this->admin, ['role' => 'admin']);
+    attachAdmin($this->business, $this->admin);
 });
 
 test('admin can view profile settings', function () {
@@ -90,11 +90,11 @@ test('admin can upload logo', function () {
     Storage::disk('public')->assertExists($this->business->fresh()->logo);
 });
 
-test('collaborator cannot access profile settings', function () {
-    $collaborator = User::factory()->create();
-    $this->business->users()->attach($collaborator, ['role' => 'collaborator']);
+test('staff cannot access profile settings', function () {
+    $staff = User::factory()->create();
+    attachStaff($this->business, $staff);
 
-    $this->actingAs($collaborator)
+    $this->actingAs($staff)
         ->get('/dashboard/settings/profile')
         ->assertForbidden();
 });

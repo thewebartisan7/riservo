@@ -1,6 +1,6 @@
 <?php
 
-use App\Enums\BusinessUserRole;
+use App\Enums\BusinessMemberRole;
 use App\Models\Business;
 use App\Models\BusinessInvitation;
 use App\Models\User;
@@ -40,26 +40,26 @@ test('invitation can be accepted', function () {
     $business = Business::factory()->create();
     $invitation = BusinessInvitation::factory()->create([
         'business_id' => $business->id,
-        'email' => 'collab@example.com',
-        'role' => BusinessUserRole::Collaborator,
+        'email' => 'newstaff@example.com',
+        'role' => BusinessMemberRole::Staff,
     ]);
 
     $response = $this->post('/invite/'.$invitation->token, [
-        'name' => 'New Collaborator',
+        'name' => 'New Staff Member',
         'password' => 'password123',
         'password_confirmation' => 'password123',
     ]);
 
     $this->assertAuthenticated();
 
-    $user = User::where('email', 'collab@example.com')->first();
+    $user = User::where('email', 'newstaff@example.com')->first();
     expect($user)->not->toBeNull()
-        ->and($user->name)->toBe('New Collaborator')
+        ->and($user->name)->toBe('New Staff Member')
         ->and($user->hasVerifiedEmail())->toBeTrue();
 
     // Check business pivot
     expect($user->businesses()->first()->id)->toBe($business->id);
-    expect($user->businesses()->first()->pivot->role)->toBe(BusinessUserRole::Collaborator);
+    expect($user->businesses()->first()->pivot->role)->toBe(BusinessMemberRole::Staff);
 
     // Invitation marked as accepted
     expect($invitation->fresh()->isAccepted())->toBeTrue();

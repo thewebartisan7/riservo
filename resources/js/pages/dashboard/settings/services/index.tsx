@@ -18,7 +18,7 @@ interface ServiceItem {
     price: number | null;
     is_active: boolean;
     bookings_count: number;
-    collaborators: { id: number; name: string }[];
+    providers: { id: number; name: string }[];
 }
 
 interface Props {
@@ -91,11 +91,11 @@ export default function Services({ services }: Props) {
                                         <span className="font-display tabular-nums">
                                             {formatPrice(service.price)}
                                         </span>
-                                        {service.collaborators.length > 0 && (
+                                        {service.providers.length > 0 && (
                                             <>
                                                 <span aria-hidden="true" className="size-0.5 rounded-full bg-muted-foreground/40" />
                                                 <span className="truncate">
-                                                    {service.collaborators.map((c) => c.name).join(', ')}
+                                                    {service.providers.map((p) => p.name).join(', ')}
                                                 </span>
                                             </>
                                         )}

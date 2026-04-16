@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['collaborator_id', 'business_id', 'day_of_week', 'start_time', 'end_time'])]
+#[Fillable(['provider_id', 'business_id', 'day_of_week', 'start_time', 'end_time'])]
 class AvailabilityRule extends Model
 {
     /** @use HasFactory<AvailabilityRuleFactory> */
@@ -22,10 +22,10 @@ class AvailabilityRule extends Model
         ];
     }
 
-    /** @return BelongsTo<User, $this> */
-    public function collaborator(): BelongsTo
+    /** @return BelongsTo<Provider, $this> */
+    public function provider(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'collaborator_id');
+        return $this->belongsTo(Provider::class);
     }
 
     /** @return BelongsTo<Business, $this> */

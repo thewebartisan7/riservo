@@ -7,7 +7,7 @@ use App\Models\User;
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create();
     $this->admin = User::factory()->create();
-    $this->business->users()->attach($this->admin, ['role' => 'admin']);
+    attachAdmin($this->business, $this->admin);
 });
 
 test('admin can view services list', function () {
@@ -40,7 +40,7 @@ test('admin can create a service', function () {
             'buffer_after' => 10,
             'slot_interval_minutes' => 15,
             'is_active' => true,
-            'collaborator_ids' => [],
+            'provider_ids' => [],
         ])
         ->assertRedirect('/dashboard/settings/services');
 
@@ -59,7 +59,7 @@ test('service slug is unique within business', function () {
             'name' => 'Haircut',
             'duration_minutes' => 30,
             'slot_interval_minutes' => 15,
-            'collaborator_ids' => [],
+            'provider_ids' => [],
         ])
         ->assertRedirect();
 
@@ -94,29 +94,29 @@ test('admin can update a service', function () {
             'buffer_after' => 0,
             'slot_interval_minutes' => 30,
             'is_active' => true,
-            'collaborator_ids' => [],
+            'provider_ids' => [],
         ])
         ->assertRedirect();
 
     expect($service->fresh()->name)->toBe('New Name');
 });
 
-test('admin can assign collaborators to a service', function () {
+test('admin can assign providers to a service', function () {
     $service = Service::factory()->create(['business_id' => $this->business->id]);
-    $collaborator = User::factory()->create();
-    $this->business->users()->attach($collaborator, ['role' => 'collaborator']);
+    $staff = User::factory()->create();
+    $provider = attachProvider($this->business, $staff);
 
     $this->actingAs($this->admin)
         ->put("/dashboard/settings/services/{$service->id}", [
             'name' => $service->name,
             'duration_minutes' => $service->duration_minutes,
             'slot_interval_minutes' => $service->slot_interval_minutes,
-            'collaborator_ids' => [$collaborator->id],
+            'provider_ids' => [$provider->id],
         ])
         ->assertRedirect();
 
-    expect($service->collaborators()->count())->toBe(1);
-    expect($service->collaborators()->first()->id)->toBe($collaborator->id);
+    expect($service->providers()->count())->toBe(1);
+    expect($service->providers()->first()->id)->toBe($provider->id);
 });
 
 test('cannot edit service from another business', function () {
@@ -133,7 +133,7 @@ test('service name is required', function () {
         ->post('/dashboard/settings/services', [
             'duration_minutes' => 30,
             'slot_interval_minutes' => 15,
-            'collaborator_ids' => [],
+            'provider_ids' => [],
         ])
         ->assertSessionHasErrors('name');
 });

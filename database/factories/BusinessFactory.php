@@ -33,7 +33,7 @@ class BusinessFactory extends Factory
             'timezone' => 'Europe/Zurich',
             'payment_mode' => PaymentMode::Offline,
             'confirmation_mode' => ConfirmationMode::Auto,
-            'allow_collaborator_choice' => true,
+            'allow_provider_choice' => true,
             'cancellation_window_hours' => 24,
             'assignment_strategy' => AssignmentStrategy::FirstAvailable,
             'reminder_hours' => [24, 1],
@@ -47,10 +47,10 @@ class BusinessFactory extends Factory
         ]);
     }
 
-    public function noCollaboratorChoice(): static
+    public function noProviderChoice(): static
     {
         return $this->state(fn (array $attributes) => [
-            'allow_collaborator_choice' => false,
+            'allow_provider_choice' => false,
         ]);
     }
 

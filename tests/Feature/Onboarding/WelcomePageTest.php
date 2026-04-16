@@ -1,6 +1,5 @@
 <?php
 
-use App\Enums\BusinessUserRole;
 use App\Models\Business;
 use App\Models\User;
 
@@ -8,7 +7,7 @@ test('welcome page renders after onboarding', function () {
     $this->withoutVite();
     $user = User::factory()->create(['email_verified_at' => now()]);
     $business = Business::factory()->onboarded()->create();
-    $business->users()->attach($user->id, ['role' => BusinessUserRole::Admin->value]);
+    attachAdmin($business, $user);
 
     $response = $this->actingAs($user)->get('/dashboard/welcome');
 
@@ -24,7 +23,7 @@ test('welcome page shows correct public url', function () {
     $this->withoutVite();
     $user = User::factory()->create(['email_verified_at' => now()]);
     $business = Business::factory()->onboarded()->create(['slug' => 'test-biz']);
-    $business->users()->attach($user->id, ['role' => BusinessUserRole::Admin->value]);
+    attachAdmin($business, $user);
 
     $response = $this->actingAs($user)->get('/dashboard/welcome');
 

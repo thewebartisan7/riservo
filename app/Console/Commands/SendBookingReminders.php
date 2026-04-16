@@ -42,7 +42,7 @@ class SendBookingReminders extends Command
             $bookings = Booking::where('status', BookingStatus::Confirmed)
                 ->whereBetween('starts_at', [$targetStart, $targetEnd])
                 ->whereDoesntHave('reminders', fn ($q) => $q->where('hours_before', $hoursBefore))
-                ->with(['business', 'service', 'collaborator', 'customer'])
+                ->with(['business', 'service', 'provider.user', 'customer'])
                 ->get();
 
             foreach ($bookings as $booking) {

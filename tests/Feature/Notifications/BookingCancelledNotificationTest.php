@@ -15,9 +15,9 @@ beforeEach(function () {
         'cancellation_window_hours' => 0,
     ]);
     $this->admin = User::factory()->create(['name' => 'Admin']);
-    $this->business->users()->attach($this->admin, ['role' => 'admin']);
-    $this->collaborator = User::factory()->create(['name' => 'Alice']);
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    attachAdmin($this->business, $this->admin);
+    $this->staff = User::factory()->create(['name' => 'Alice']);
+    $this->provider = attachProvider($this->business, $this->staff);
 
     $this->service = Service::factory()->create([
         'business_id' => $this->business->id,
@@ -29,12 +29,12 @@ beforeEach(function () {
     $this->travelTo(CarbonImmutable::parse('2026-04-13 08:00', 'Europe/Zurich'));
 });
 
-test('customer cancellation via token dispatches to admins and collaborator', function () {
+test('customer cancellation via token dispatches to admins and staff', function () {
     Notification::fake();
 
     $booking = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => now()->addDay(),
@@ -46,7 +46,7 @@ test('customer cancellation via token dispatches to admins and collaborator', fu
     Notification::assertSentTo($this->admin, BookingCancelledNotification::class, function ($notification) {
         return $notification->cancelledBy === 'customer';
     });
-    Notification::assertSentTo($this->collaborator, BookingCancelledNotification::class);
+    Notification::assertSentTo($this->staff, BookingCancelledNotification::class);
 });
 
 test('dashboard cancellation dispatches to customer', function () {
@@ -54,7 +54,7 @@ test('dashboard cancellation dispatches to customer', function () {
 
     $booking = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => now()->addDay(),
@@ -78,7 +78,7 @@ test('customer cancellation via auth route dispatches correctly', function () {
 
     $booking = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => now()->addDay(),
@@ -96,7 +96,7 @@ test('customer cancellation via auth route dispatches correctly', function () {
 test('BookingCancelledNotification has correct subject for customer cancellation', function () {
     $booking = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
     ]);
@@ -110,7 +110,7 @@ test('BookingCancelledNotification has correct subject for customer cancellation
 test('BookingCancelledNotification has correct subject for business cancellation', function () {
     $booking = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
     ]);

@@ -69,7 +69,7 @@ class CustomerController extends Controller
 
         $bookings = Booking::where('business_id', $business->id)
             ->where('customer_id', $customer->id)
-            ->with(['service:id,name,duration_minutes,price', 'collaborator:id,name'])
+            ->with(['service:id,name,duration_minutes,price', 'provider.user:id,name'])
             ->orderByDesc('starts_at')
             ->get();
 
@@ -98,9 +98,9 @@ class CustomerController extends Controller
                     'duration_minutes' => $booking->service->duration_minutes,
                     'price' => $booking->service->price,
                 ],
-                'collaborator' => [
-                    'id' => $booking->collaborator->id,
-                    'name' => $booking->collaborator->name,
+                'provider' => [
+                    'id' => $booking->provider->id,
+                    'name' => $booking->provider->user?->name ?? '',
                 ],
             ])->values(),
         ]);

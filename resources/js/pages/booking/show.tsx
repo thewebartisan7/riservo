@@ -2,16 +2,16 @@ import { useState, useMemo } from 'react';
 import { usePage } from '@inertiajs/react';
 import BookingLayout from '@/layouts/booking-layout';
 import ServiceList from '@/components/booking/service-list';
-import CollaboratorPicker from '@/components/booking/collaborator-picker';
+import ProviderPicker from '@/components/booking/provider-picker';
 import DateTimePicker from '@/components/booking/date-time-picker';
 import CustomerForm, { type CustomerData } from '@/components/booking/customer-form';
 import BookingSummary from '@/components/booking/booking-summary';
 import BookingConfirmation from '@/components/booking/booking-confirmation';
 import StepIndicator from '@/components/booking/step-indicator';
 import { useTrans } from '@/hooks/use-trans';
-import type { PageProps, PublicBusiness, PublicCollaborator, PublicService } from '@/types';
+import type { PageProps, PublicBusiness, PublicProvider, PublicService } from '@/types';
 
-type BookingStep = 'service' | 'collaborator' | 'datetime' | 'details' | 'summary' | 'confirmation';
+type BookingStep = 'service' | 'provider' | 'datetime' | 'details' | 'summary' | 'confirmation';
 
 interface BookingPageProps extends PageProps {
     business: PublicBusiness;
@@ -33,9 +33,9 @@ export default function BookingShow() {
         return null;
     }, [preSelectedServiceSlug, services]);
 
-    const [step, setStep] = useState<BookingStep>(preSelectedService ? 'collaborator' : 'service');
+    const [step, setStep] = useState<BookingStep>(preSelectedService ? 'provider' : 'service');
     const [selectedService, setSelectedService] = useState<PublicService | null>(preSelectedService);
-    const [selectedCollaborator, setSelectedCollaborator] = useState<PublicCollaborator | null>(null);
+    const [selectedProvider, setSelectedProvider] = useState<PublicProvider | null>(null);
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [selectedTime, setSelectedTime] = useState<string | null>(null);
     const [customerData, setCustomerData] = useState<CustomerData>({
@@ -48,15 +48,15 @@ export default function BookingShow() {
 
     function handleServiceSelect(service: PublicService) {
         setSelectedService(service);
-        if (business.allow_collaborator_choice) {
-            setStep('collaborator');
+        if (business.allow_provider_choice) {
+            setStep('provider');
         } else {
             setStep('datetime');
         }
     }
 
-    function handleCollaboratorSelect(collaborator: PublicCollaborator | null) {
-        setSelectedCollaborator(collaborator);
+    function handleProviderSelect(provider: PublicProvider | null) {
+        setSelectedProvider(provider);
         setStep('datetime');
     }
 
@@ -78,7 +78,7 @@ export default function BookingShow() {
 
     function handleBookAnother() {
         setSelectedService(null);
-        setSelectedCollaborator(null);
+        setSelectedProvider(null);
         setSelectedDate(null);
         setSelectedTime(null);
         setBookingResult(null);
@@ -87,11 +87,11 @@ export default function BookingShow() {
 
     function goBack() {
         switch (step) {
-            case 'collaborator':
+            case 'provider':
                 setStep('service');
                 break;
             case 'datetime':
-                setStep(business.allow_collaborator_choice ? 'collaborator' : 'service');
+                setStep(business.allow_provider_choice ? 'provider' : 'service');
                 break;
             case 'details':
                 setStep('datetime');
@@ -102,14 +102,14 @@ export default function BookingShow() {
         }
     }
 
-    const totalSteps = business.allow_collaborator_choice ? 5 : 4;
-    const stepOrder: BookingStep[] = business.allow_collaborator_choice
-        ? ['service', 'collaborator', 'datetime', 'details', 'summary', 'confirmation']
+    const totalSteps = business.allow_provider_choice ? 5 : 4;
+    const stepOrder: BookingStep[] = business.allow_provider_choice
+        ? ['service', 'provider', 'datetime', 'details', 'summary', 'confirmation']
         : ['service', 'datetime', 'details', 'summary', 'confirmation'];
     const stepIndex = stepOrder.indexOf(step);
     const stepLabels: Record<BookingStep, string> = {
         service: t('Service'),
-        collaborator: t('Specialist'),
+        provider: t('Specialist'),
         datetime: t('Date & time'),
         details: t('Your details'),
         summary: t('Review'),
@@ -142,11 +142,11 @@ export default function BookingShow() {
                 <ServiceList services={services} onSelect={handleServiceSelect} />
             )}
 
-            {step === 'collaborator' && selectedService && (
-                <CollaboratorPicker
+            {step === 'provider' && selectedService && (
+                <ProviderPicker
                     slug={business.slug}
                     serviceId={selectedService.id}
-                    onSelect={handleCollaboratorSelect}
+                    onSelect={handleProviderSelect}
                 />
             )}
 
@@ -154,7 +154,7 @@ export default function BookingShow() {
                 <DateTimePicker
                     slug={business.slug}
                     serviceId={selectedService.id}
-                    collaboratorId={selectedCollaborator?.id ?? null}
+                    providerId={selectedProvider?.id ?? null}
                     onSelect={handleDateTimeSelect}
                 />
             )}
@@ -171,7 +171,7 @@ export default function BookingShow() {
                 <BookingSummary
                     slug={business.slug}
                     service={selectedService}
-                    collaborator={selectedCollaborator}
+                    provider={selectedProvider}
                     date={selectedDate}
                     time={selectedTime}
                     customer={customerData}
@@ -185,7 +185,7 @@ export default function BookingShow() {
                     status={bookingResult.status}
                     token={bookingResult.token}
                     service={selectedService}
-                    collaborator={selectedCollaborator}
+                    provider={selectedProvider}
                     date={selectedDate}
                     time={selectedTime}
                     businessName={business.name}

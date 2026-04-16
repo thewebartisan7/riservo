@@ -8,13 +8,13 @@ use App\Models\User;
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create();
     $this->admin = User::factory()->create();
-    $this->business->users()->attach($this->admin, ['role' => 'admin']);
+    attachAdmin($this->business, $this->admin);
 });
 
 test('admin can view business exceptions', function () {
     AvailabilityException::factory()->count(2)->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => null,
+        'provider_id' => null,
     ]);
 
     $this->actingAs($this->admin)
@@ -27,16 +27,16 @@ test('admin can view business exceptions', function () {
 });
 
 test('only business-level exceptions are shown', function () {
-    $collaborator = User::factory()->create();
-    $this->business->users()->attach($collaborator, ['role' => 'collaborator']);
+    $staff = User::factory()->create();
+    $provider = attachProvider($this->business, $staff);
 
     AvailabilityException::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => null,
+        'provider_id' => null,
     ]);
     AvailabilityException::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $collaborator->id,
+        'provider_id' => $provider->id,
     ]);
 
     $this->actingAs($this->admin)
@@ -56,7 +56,7 @@ test('admin can create a full-day exception', function () {
         ])
         ->assertRedirect('/dashboard/settings/exceptions');
 
-    expect($this->business->availabilityExceptions()->whereNull('collaborator_id')->count())->toBe(1);
+    expect($this->business->availabilityExceptions()->whereNull('provider_id')->count())->toBe(1);
     $exception = $this->business->availabilityExceptions()->first();
     expect($exception->reason)->toBe('Christmas');
     expect($exception->type)->toBe(ExceptionType::Block);
@@ -83,7 +83,7 @@ test('admin can create a partial-day exception', function () {
 test('admin can update an exception', function () {
     $exception = AvailabilityException::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => null,
+        'provider_id' => null,
         'reason' => 'Old reason',
     ]);
 
@@ -104,7 +104,7 @@ test('admin can update an exception', function () {
 test('admin can delete an exception', function () {
     $exception = AvailabilityException::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => null,
+        'provider_id' => null,
     ]);
 
     $this->actingAs($this->admin)
@@ -118,7 +118,7 @@ test('cannot modify exception from another business', function () {
     $otherBusiness = Business::factory()->onboarded()->create();
     $exception = AvailabilityException::factory()->create([
         'business_id' => $otherBusiness->id,
-        'collaborator_id' => null,
+        'provider_id' => null,
     ]);
 
     $this->actingAs($this->admin)

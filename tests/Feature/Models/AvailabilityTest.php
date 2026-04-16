@@ -5,15 +5,15 @@ use App\Enums\ExceptionType;
 use App\Models\AvailabilityException;
 use App\Models\AvailabilityRule;
 use App\Models\Business;
-use App\Models\User;
+use App\Models\Provider;
 use Illuminate\Support\Carbon;
 
-test('availability rule belongs to a collaborator', function () {
-    $user = User::factory()->create();
-    $rule = AvailabilityRule::factory()->create(['collaborator_id' => $user->id]);
+test('availability rule belongs to a provider', function () {
+    $provider = Provider::factory()->create();
+    $rule = AvailabilityRule::factory()->create(['provider_id' => $provider->id]);
 
-    expect($rule->collaborator)->toBeInstanceOf(User::class)
-        ->and($rule->collaborator->id)->toBe($user->id);
+    expect($rule->provider)->toBeInstanceOf(Provider::class)
+        ->and($rule->provider->id)->toBe($provider->id);
 });
 
 test('availability rule belongs to a business', function () {
@@ -28,19 +28,19 @@ test('availability rule casts day_of_week to DayOfWeek enum', function () {
     expect($rule->day_of_week)->toBe(DayOfWeek::Monday);
 });
 
-test('business-level exception has null collaborator_id', function () {
+test('business-level exception has null provider_id', function () {
     $exception = AvailabilityException::factory()->create();
 
-    expect($exception->collaborator_id)->toBeNull()
+    expect($exception->provider_id)->toBeNull()
         ->and($exception->business)->toBeInstanceOf(Business::class);
 });
 
-test('collaborator-level exception has collaborator', function () {
-    $user = User::factory()->create();
-    $exception = AvailabilityException::factory()->forCollaborator($user)->create();
+test('provider-level exception has provider', function () {
+    $provider = Provider::factory()->create();
+    $exception = AvailabilityException::factory()->forProvider($provider)->create();
 
-    expect($exception->collaborator)->toBeInstanceOf(User::class)
-        ->and($exception->collaborator->id)->toBe($user->id);
+    expect($exception->provider)->toBeInstanceOf(Provider::class)
+        ->and($exception->provider->id)->toBe($provider->id);
 });
 
 test('exception supports date ranges', function () {

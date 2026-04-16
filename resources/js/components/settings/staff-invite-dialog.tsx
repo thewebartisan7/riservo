@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { useTrans } from '@/hooks/use-trans';
 import { Form } from '@inertiajs/react';
-import { invite } from '@/actions/App/Http/Controllers/Dashboard/Settings/CollaboratorController';
+import { invite } from '@/actions/App/Http/Controllers/Dashboard/Settings/StaffController';
 import { useState } from 'react';
 
 interface Service {
@@ -23,13 +23,13 @@ interface Service {
     name: string;
 }
 
-interface CollaboratorInviteDialogProps {
+interface StaffInviteDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     services: Service[];
 }
 
-export function CollaboratorInviteDialog({ open, onOpenChange, services }: CollaboratorInviteDialogProps) {
+export function StaffInviteDialog({ open, onOpenChange, services }: StaffInviteDialogProps) {
     const { t } = useTrans();
     const [selectedServices, setSelectedServices] = useState<number[]>([]);
 
@@ -53,7 +53,7 @@ export function CollaboratorInviteDialog({ open, onOpenChange, services }: Colla
                     {({ errors, processing }) => (
                         <>
                             <DialogHeader>
-                                <DialogTitle>{t('Invite a collaborator')}</DialogTitle>
+                                <DialogTitle>{t('Invite a team member')}</DialogTitle>
                                 <DialogDescription>
                                     {t('They receive an email to set up a password. The invite expires in 7 days.')}
                                 </DialogDescription>
@@ -112,7 +112,7 @@ export function CollaboratorInviteDialog({ open, onOpenChange, services }: Colla
 
                                     {services.length === 0 && (
                                         <p className="text-xs leading-relaxed text-muted-foreground">
-                                            {t('Once you have services, you can assign them to this collaborator from their profile.')}
+                                            {t('Once you have services, you can assign them to this team member from their profile.')}
                                         </p>
                                     )}
                                 </div>

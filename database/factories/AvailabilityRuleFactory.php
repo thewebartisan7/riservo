@@ -4,7 +4,7 @@ namespace Database\Factories;
 
 use App\Models\AvailabilityRule;
 use App\Models\Business;
-use App\Models\User;
+use App\Models\Provider;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
@@ -20,7 +20,7 @@ class AvailabilityRuleFactory extends Factory
     public function definition(): array
     {
         return [
-            'collaborator_id' => User::factory(),
+            'provider_id' => Provider::factory(),
             'business_id' => Business::factory(),
             'day_of_week' => fake()->numberBetween(1, 5),
             'start_time' => '09:00',

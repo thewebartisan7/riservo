@@ -19,7 +19,7 @@ export interface BookingDetail {
     status: string;
     notes: string | null;
     service: { name: string; duration_minutes: number; price: number | null };
-    collaborator: { name: string };
+    provider: { name: string };
     business: { name: string; timezone: string; cancellation_window_hours: number };
     customer: { name: string };
     can_cancel: boolean;
@@ -32,7 +32,7 @@ export interface BookingSummary {
     ends_at: string;
     status: string;
     service: { name: string };
-    collaborator: { name: string };
+    provider: { name: string };
     business: { name: string };
     can_cancel: boolean;
 }
@@ -53,7 +53,7 @@ export interface PublicBusiness {
     email: string | null;
     address: string | null;
     timezone: string;
-    allow_collaborator_choice: boolean;
+    allow_provider_choice: boolean;
     confirmation_mode: 'auto' | 'manual';
 }
 
@@ -66,7 +66,7 @@ export interface PublicService {
     price: number | null;
 }
 
-export interface PublicCollaborator {
+export interface PublicProvider {
     id: number;
     name: string;
     avatar_url: string | null;
@@ -84,7 +84,7 @@ export interface DashboardBooking {
     created_at: string;
     cancellation_token: string;
     service: { id: number; name: string; duration_minutes: number; price: number | null };
-    collaborator: { id: number; name: string; avatar_url: string | null };
+    provider: { id: number; name: string; avatar_url: string | null };
     customer: { id: number; name: string; email: string; phone: string | null };
 }
 
@@ -94,7 +94,7 @@ export interface TodayBooking {
     ends_at: string;
     status: string;
     service: { name: string; duration_minutes: number };
-    collaborator: { id: number; name: string };
+    provider: { id: number; name: string };
     customer: { name: string };
 }
 
@@ -128,7 +128,7 @@ export interface CustomerBookingHistory {
     status: string;
     source: string;
     service: { name: string; duration_minutes: number; price: number | null };
-    collaborator: { id: number; name: string };
+    provider: { id: number; name: string };
 }
 
 export interface FilterOption {
@@ -136,10 +136,10 @@ export interface FilterOption {
     name: string;
 }
 
-export interface ServiceWithCollaborators extends FilterOption {
+export interface ServiceWithProviders extends FilterOption {
     duration_minutes: number;
     price: number | null;
-    collaborators: FilterOption[];
+    providers: FilterOption[];
 }
 
 // useHttp response shapes
@@ -179,7 +179,7 @@ export interface CustomerSearchResponse {
 }
 
 // Calendar types
-export interface CalendarCollaborator {
+export interface CalendarProvider {
     id: number;
     name: string;
     avatar_url: string | null;
@@ -188,7 +188,7 @@ export interface CalendarCollaborator {
 export interface PageProps {
     auth: {
         user: User | null;
-        role: 'admin' | 'collaborator' | 'customer' | null;
+        role: 'admin' | 'staff' | 'customer' | null;
         business: Business | null;
         email_verified: boolean;
     };

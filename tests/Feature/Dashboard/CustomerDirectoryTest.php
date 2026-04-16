@@ -9,10 +9,10 @@ use App\Models\User;
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create();
     $this->admin = User::factory()->create();
-    $this->business->users()->attach($this->admin, ['role' => 'admin']);
+    attachAdmin($this->business, $this->admin);
 
-    $this->collaborator = User::factory()->create();
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    $this->staff = User::factory()->create();
+    $this->provider = attachProvider($this->business, $this->staff);
 
     $this->service = Service::factory()->create(['business_id' => $this->business->id]);
 });
@@ -21,7 +21,7 @@ test('lists customers with booking counts', function () {
     $customer = Customer::factory()->create(['name' => 'Jane Doe']);
     Booking::factory()->count(3)->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $customer->id,
     ]);
@@ -43,13 +43,13 @@ test('search by name', function () {
 
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $jane->id,
     ]);
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $john->id,
     ]);
@@ -66,7 +66,7 @@ test('search by email', function () {
     $customer = Customer::factory()->create(['email' => 'specific@test.com']);
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $customer->id,
     ]);
@@ -82,7 +82,7 @@ test('search by phone', function () {
     $customer = Customer::factory()->create(['phone' => '+41 79 999 00 00']);
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $customer->id,
     ]);
@@ -113,7 +113,7 @@ test('customer detail shows booking history', function () {
     $customer = Customer::factory()->create(['name' => 'Jane Doe']);
     Booking::factory()->count(2)->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $customer->id,
     ]);
@@ -138,8 +138,8 @@ test('customer detail for unrelated customer returns 404', function () {
     $response->assertNotFound();
 });
 
-test('collaborator cannot access customer directory', function () {
-    $response = $this->actingAs($this->collaborator)->get('/dashboard/customers');
+test('staff cannot access customer directory', function () {
+    $response = $this->actingAs($this->staff)->get('/dashboard/customers');
 
     $response->assertForbidden();
 });
@@ -148,7 +148,7 @@ test('customer search API returns results', function () {
     $customer = Customer::factory()->create(['name' => 'Jane Doe', 'email' => 'jane@test.com']);
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $customer->id,
     ]);
@@ -165,7 +165,7 @@ test('pagination works for customers', function () {
     foreach ($customers as $customer) {
         Booking::factory()->create([
             'business_id' => $this->business->id,
-            'collaborator_id' => $this->collaborator->id,
+            'provider_id' => $this->provider->id,
             'service_id' => $this->service->id,
             'customer_id' => $customer->id,
         ]);

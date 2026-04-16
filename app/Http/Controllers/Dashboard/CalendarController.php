@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
+use App\Models\Provider;
 use App\Models\Service;
 use App\Models\User;
 use Carbon\CarbonImmutable;
@@ -21,13 +22,11 @@ class CalendarController extends Controller
         $isAdmin = $user->currentBusinessRole()->value === 'admin';
         $timezone = $business->timezone;
 
-        // Validate view parameter — default to week (D-058)
         $view = $request->string('view', 'week')->toString();
         if (! in_array($view, ['day', 'week', 'month'], true)) {
             $view = 'week';
         }
 
-        // Anchor date in business timezone — default to today
         $dateParam = $request->string('date')->toString();
         $date = $dateParam
             ? CarbonImmutable::createFromFormat('Y-m-d', $dateParam, $timezone)?->startOfDay()
@@ -37,42 +36,37 @@ class CalendarController extends Controller
             $date = CarbonImmutable::now($timezone)->startOfDay();
         }
 
-        // Compute visible date range based on view
         [$rangeStart, $rangeEnd] = $this->getDateRange($view, $date);
 
-        // Convert to UTC for database query
         $utcStart = $rangeStart->setTimezone('UTC');
         $utcEnd = $rangeEnd->setTimezone('UTC');
 
-        // Query bookings within range
         $query = Booking::where('business_id', $business->id)
             ->where('starts_at', '<', $utcEnd)
             ->where('ends_at', '>', $utcStart)
             ->with([
                 'service:id,name,duration_minutes,price',
-                'collaborator:id,name,avatar',
+                'provider.user:id,name,avatar',
                 'customer:id,name,email,phone',
             ])
             ->orderBy('starts_at');
 
         if (! $isAdmin) {
-            $query->where('collaborator_id', $user->id);
+            $query->whereHas('provider', fn ($q) => $q->where('user_id', $user->id));
         }
 
         $bookings = $query->get();
 
-        // Collaborators for the filter (admin only) — D-060
-        $collaborators = $isAdmin
-            ? $business->users()
-                ->wherePivotIn('role', ['admin', 'collaborator'])
-                ->orderBy('users.id')
-                ->get(['users.id', 'users.name', 'users.avatar'])
+        $providers = $isAdmin
+            ? $business->providers()
+                ->with('user:id,name,avatar')
+                ->orderBy('id')
+                ->get()
             : collect();
 
-        // Services for manual booking dialog
         $services = $business->services()
             ->where('is_active', true)
-            ->with('collaborators:users.id,users.name,users.avatar')
+            ->with(['providers' => fn ($q) => $q->where('providers.business_id', $business->id)->with('user:id,name,avatar')])
             ->get(['id', 'name', 'duration_minutes', 'price', 'slug']);
 
         return Inertia::render('dashboard/calendar', [
@@ -92,11 +86,11 @@ class CalendarController extends Controller
                     'duration_minutes' => $booking->service->duration_minutes,
                     'price' => $booking->service->price,
                 ],
-                'collaborator' => [
-                    'id' => $booking->collaborator->id,
-                    'name' => $booking->collaborator->name,
-                    'avatar_url' => $booking->collaborator->avatar
-                        ? asset('storage/'.$booking->collaborator->avatar)
+                'provider' => [
+                    'id' => $booking->provider->id,
+                    'name' => $booking->provider->user?->name ?? '',
+                    'avatar_url' => $booking->provider->user?->avatar
+                        ? asset('storage/'.$booking->provider->user->avatar)
                         : null,
                 ],
                 'customer' => [
@@ -106,19 +100,19 @@ class CalendarController extends Controller
                     'phone' => $booking->customer->phone,
                 ],
             ]),
-            'collaborators' => $collaborators->map(fn (User $u) => [
-                'id' => $u->id,
-                'name' => $u->name,
-                'avatar_url' => $u->avatar ? asset('storage/'.$u->avatar) : null,
+            'providers' => $providers->map(fn (Provider $p) => [
+                'id' => $p->id,
+                'name' => $p->user?->name ?? '',
+                'avatar_url' => $p->user?->avatar ? asset('storage/'.$p->user->avatar) : null,
             ])->values(),
             'services' => $services->map(fn (Service $service) => [
                 'id' => $service->id,
                 'name' => $service->name,
                 'duration_minutes' => $service->duration_minutes,
                 'price' => $service->price,
-                'collaborators' => $service->collaborators->map(fn (User $u) => [
-                    'id' => $u->id,
-                    'name' => $u->name,
+                'providers' => $service->providers->map(fn (Provider $p) => [
+                    'id' => $p->id,
+                    'name' => $p->user?->name ?? '',
                 ])->values(),
             ])->values(),
             'view' => $view,

@@ -8,8 +8,8 @@ use App\Enums\PaymentStatus;
 use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Customer;
+use App\Models\Provider;
 use App\Models\Service;
-use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
@@ -31,7 +31,7 @@ class BookingFactory extends Factory
 
         return [
             'business_id' => Business::factory(),
-            'collaborator_id' => User::factory(),
+            'provider_id' => Provider::factory(),
             'service_id' => Service::factory(),
             'customer_id' => Customer::factory(),
             'starts_at' => $startsAt,

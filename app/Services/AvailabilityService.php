@@ -9,20 +9,20 @@ use App\Models\AvailabilityException;
 use App\Models\AvailabilityRule;
 use App\Models\Business;
 use App\Models\BusinessHour;
-use App\Models\User;
+use App\Models\Provider;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 
 class AvailabilityService
 {
     /**
-     * Get available time windows for a collaborator on a given date.
+     * Get available time windows for a provider on a given date.
      *
      * @return array<TimeWindow>
      */
     public function getAvailableWindows(
         Business $business,
-        User $collaborator,
+        Provider $provider,
         CarbonImmutable $date,
     ): array {
         $timezone = $business->timezone;
@@ -37,17 +37,17 @@ class AvailabilityService
             return [];
         }
 
-        // Step 2: Compute effective collaborator availability
-        $collaboratorWindows = $this->getCollaboratorWindows($collaborator, $business, $dayOfWeek, $date, $timezone);
-        $collaboratorExceptions = $this->getExceptionsForDate($business, $collaborator, $date);
-        $effectiveCollaborator = $this->applyExceptions($collaboratorWindows, $collaboratorExceptions, $date, $timezone);
+        // Step 2: Compute effective provider availability
+        $providerWindows = $this->getProviderWindows($provider, $business, $dayOfWeek, $date, $timezone);
+        $providerExceptions = $this->getExceptionsForDate($business, $provider, $date);
+        $effectiveProvider = $this->applyExceptions($providerWindows, $providerExceptions, $date, $timezone);
 
-        if (empty($effectiveCollaborator)) {
+        if (empty($effectiveProvider)) {
             return [];
         }
 
-        // Step 3: Intersect — collaborator bounded by business hours
-        return TimeWindow::intersect($effectiveBusinessHours, $effectiveCollaborator);
+        // Step 3: Intersect — provider bounded by business hours
+        return TimeWindow::intersect($effectiveBusinessHours, $effectiveProvider);
     }
 
     /**
@@ -73,14 +73,14 @@ class AvailabilityService
     /**
      * @return array<TimeWindow>
      */
-    private function getCollaboratorWindows(
-        User $collaborator,
+    private function getProviderWindows(
+        Provider $provider,
         Business $business,
         DayOfWeek $dayOfWeek,
         CarbonImmutable $date,
         string $timezone,
     ): array {
-        return AvailabilityRule::where('collaborator_id', $collaborator->id)
+        return AvailabilityRule::where('provider_id', $provider->id)
             ->where('business_id', $business->id)
             ->where('day_of_week', $dayOfWeek->value)
             ->orderBy('start_time')
@@ -93,20 +93,20 @@ class AvailabilityService
     }
 
     /**
-     * Get exceptions for a specific date. Pass null collaborator for business-level exceptions.
+     * Get exceptions for a specific date. Pass null provider for business-level exceptions.
      *
      * @return Collection<int, AvailabilityException>
      */
     private function getExceptionsForDate(
         Business $business,
-        ?User $collaborator,
+        ?Provider $provider,
         CarbonImmutable $date,
     ): Collection {
         return AvailabilityException::where('business_id', $business->id)
             ->when(
-                $collaborator === null,
-                fn ($q) => $q->whereNull('collaborator_id'),
-                fn ($q) => $q->where('collaborator_id', $collaborator->id),
+                $provider === null,
+                fn ($q) => $q->whereNull('provider_id'),
+                fn ($q) => $q->where('provider_id', $provider->id),
             )
             ->whereDate('start_date', '<=', $date->toDateString())
             ->whereDate('end_date', '>=', $date->toDateString())

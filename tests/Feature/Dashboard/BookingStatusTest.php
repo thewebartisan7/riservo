@@ -10,10 +10,10 @@ use App\Models\User;
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create();
     $this->admin = User::factory()->create();
-    $this->business->users()->attach($this->admin, ['role' => 'admin']);
+    attachAdmin($this->business, $this->admin);
 
-    $this->collaborator = User::factory()->create();
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    $this->staff = User::factory()->create();
+    $this->provider = attachProvider($this->business, $this->staff);
 
     $this->service = Service::factory()->create(['business_id' => $this->business->id]);
     $this->customer = Customer::factory()->create();
@@ -23,7 +23,7 @@ function createBooking(BookingStatus $status): Booking
 {
     return Booking::factory()->create([
         'business_id' => test()->business->id,
-        'collaborator_id' => test()->collaborator->id,
+        'provider_id' => test()->provider->id,
         'service_id' => test()->service->id,
         'customer_id' => test()->customer->id,
         'status' => $status,
@@ -92,28 +92,28 @@ test('completed to pending fails', function () {
     expect($booking->fresh()->status)->toBe(BookingStatus::Completed);
 });
 
-test('collaborator can change own booking status', function () {
+test('staff can change own booking status', function () {
     $booking = createBooking(BookingStatus::Pending);
 
-    $response = $this->actingAs($this->collaborator)
+    $response = $this->actingAs($this->staff)
         ->patch("/dashboard/bookings/{$booking->id}/status", ['status' => 'confirmed']);
 
     $response->assertRedirect();
     expect($booking->fresh()->status)->toBe(BookingStatus::Confirmed);
 });
 
-test('collaborator cannot change other collaborator booking status', function () {
-    $otherCollaborator = User::factory()->create();
-    $this->business->users()->attach($otherCollaborator, ['role' => 'collaborator']);
+test('staff cannot change other staff booking status', function () {
+    $otherStaff = User::factory()->create();
+    $otherProvider = attachProvider($this->business, $otherStaff);
 
     $booking = Booking::factory()->pending()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $otherCollaborator->id,
+        'provider_id' => $otherProvider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
     ]);
 
-    $response = $this->actingAs($this->collaborator)
+    $response = $this->actingAs($this->staff)
         ->patch("/dashboard/bookings/{$booking->id}/status", ['status' => 'confirmed']);
 
     $response->assertForbidden();

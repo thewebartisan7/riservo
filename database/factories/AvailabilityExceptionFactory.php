@@ -5,7 +5,7 @@ namespace Database\Factories;
 use App\Enums\ExceptionType;
 use App\Models\AvailabilityException;
 use App\Models\Business;
-use App\Models\User;
+use App\Models\Provider;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
@@ -24,7 +24,7 @@ class AvailabilityExceptionFactory extends Factory
 
         return [
             'business_id' => Business::factory(),
-            'collaborator_id' => null,
+            'provider_id' => null,
             'start_date' => $date,
             'end_date' => $date,
             'start_time' => null,
@@ -34,10 +34,10 @@ class AvailabilityExceptionFactory extends Factory
         ];
     }
 
-    public function forCollaborator(?User $user = null): static
+    public function forProvider(?Provider $provider = null): static
     {
         return $this->state(fn (array $attributes) => [
-            'collaborator_id' => $user ?? User::factory(),
+            'provider_id' => $provider ?? Provider::factory(),
         ]);
     }
 

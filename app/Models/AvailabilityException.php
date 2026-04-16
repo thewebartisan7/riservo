@@ -17,7 +17,7 @@ use Illuminate\Support\Carbon;
  */
 #[Fillable([
     'business_id',
-    'collaborator_id',
+    'provider_id',
     'start_date',
     'end_date',
     'start_time',
@@ -45,9 +45,9 @@ class AvailabilityException extends Model
         return $this->belongsTo(Business::class);
     }
 
-    /** @return BelongsTo<User, $this> */
-    public function collaborator(): BelongsTo
+    /** @return BelongsTo<Provider, $this> */
+    public function provider(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'collaborator_id');
+        return $this->belongsTo(Provider::class);
     }
 }

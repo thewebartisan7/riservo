@@ -3,11 +3,11 @@ import { Button } from '@/components/ui/button';
 import { useTrans } from '@/hooks/use-trans';
 import { formatTimeShort } from '@/lib/datetime-format';
 import type { DashboardBooking } from '@/types';
-import type { CollaboratorColor } from '@/lib/calendar-colors';
+import type { ProviderColor } from '@/lib/calendar-colors';
 
 interface CalendarEventProps {
     booking: DashboardBooking;
-    color: CollaboratorColor;
+    color: ProviderColor;
     timezone: string;
     onClick: (booking: DashboardBooking) => void;
     /** True when the event's grid span is too small to fit all content inline. */
@@ -65,7 +65,7 @@ export function CalendarEvent({
                                 <time dateTime={booking.ends_at}>{endTime}</time>
                             </dd>
                             <dt className="text-muted-foreground">{t('With')}</dt>
-                            <dd className="truncate text-foreground">{booking.collaborator.name}</dd>
+                            <dd className="truncate text-foreground">{booking.provider.name}</dd>
                         </dl>
                         <Button
                             size="sm"

@@ -18,7 +18,7 @@ class BusinessExceptionController extends Controller
         $business = $request->user()->currentBusiness();
 
         $exceptions = $business->availabilityExceptions()
-            ->whereNull('collaborator_id')
+            ->whereNull('provider_id')
             ->orderByDesc('start_date')
             ->get()
             ->map(fn (AvailabilityException $e) => [
@@ -41,7 +41,7 @@ class BusinessExceptionController extends Controller
         $business = $request->user()->currentBusiness();
 
         $business->availabilityExceptions()->create(
-            array_merge($request->validated(), ['collaborator_id' => null])
+            array_merge($request->validated(), ['provider_id' => null])
         );
 
         return redirect()->route('settings.exceptions')->with('success', __('Exception added.'));
@@ -51,7 +51,7 @@ class BusinessExceptionController extends Controller
     {
         $business = $request->user()->currentBusiness();
 
-        if ($exception->business_id !== $business->id || $exception->collaborator_id !== null) {
+        if ($exception->business_id !== $business->id || $exception->provider_id !== null) {
             abort(403);
         }
 
@@ -64,7 +64,7 @@ class BusinessExceptionController extends Controller
     {
         $business = $request->user()->currentBusiness();
 
-        if ($exception->business_id !== $business->id || $exception->collaborator_id !== null) {
+        if ($exception->business_id !== $business->id || $exception->provider_id !== null) {
             abort(403);
         }
 

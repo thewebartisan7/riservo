@@ -32,7 +32,7 @@ import {
     PaginationPrevious,
 } from '@/components/ui/pagination';
 import { formatDateTimeShort } from '@/lib/datetime-format';
-import type { DashboardBooking, FilterOption, PageProps, ServiceWithCollaborators } from '@/types';
+import type { DashboardBooking, FilterOption, PageProps, ServiceWithProviders } from '@/types';
 
 interface PaginatedData<T> {
     data: T[];
@@ -45,12 +45,12 @@ interface PaginatedData<T> {
 
 interface BookingsPageProps extends PageProps {
     bookings: PaginatedData<DashboardBooking>;
-    services: ServiceWithCollaborators[];
-    collaborators: FilterOption[];
+    services: ServiceWithProviders[];
+    providers: FilterOption[];
     filters: {
         status: string;
         service_id: string;
-        collaborator_id: string;
+        provider_id: string;
         date_from: string;
         date_to: string;
         sort: string;
@@ -75,7 +75,7 @@ function formatShortDate(date: Date): string {
 }
 
 export default function BookingsPage() {
-    const { bookings, services, collaborators, filters, isAdmin, timezone } =
+    const { bookings, services, providers, filters, isAdmin, timezone } =
         usePage<BookingsPageProps>().props;
     const { t } = useTrans();
     const [selectedBooking, setSelectedBooking] = useState<DashboardBooking | null>(null);
@@ -113,7 +113,7 @@ export default function BookingsPage() {
         filters.date_to !== '' ||
         filters.status !== '' ||
         filters.service_id !== '' ||
-        filters.collaborator_id !== '';
+        filters.provider_id !== '';
 
     function clearFilters() {
         router.get(
@@ -228,22 +228,22 @@ export default function BookingsPage() {
                     {isAdmin && (
                         <Field className="w-40">
                             <FieldLabel className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                                {t('Collaborator')}
+                                {t('Provider')}
                             </FieldLabel>
                             <Select
-                                value={filters.collaborator_id}
-                                onValueChange={(val) => applyFilter('collaborator_id', val ?? '')}
+                                value={filters.provider_id}
+                                onValueChange={(val) => applyFilter('provider_id', val ?? '')}
                             >
                                 <SelectTrigger className="w-full">
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectPopup>
                                     <SelectItem value="">
-                                        {t('All collaborators')}
+                                        {t('All providers')}
                                     </SelectItem>
-                                    {collaborators.map((c) => (
-                                        <SelectItem key={c.id} value={String(c.id)}>
-                                            {c.name}
+                                    {providers.map((p) => (
+                                        <SelectItem key={p.id} value={String(p.id)}>
+                                            {p.name}
                                         </SelectItem>
                                     ))}
                                 </SelectPopup>
@@ -269,7 +269,7 @@ export default function BookingsPage() {
                                 <TableHead className="w-44">{t('When')}</TableHead>
                                 <TableHead>{t('Customer')}</TableHead>
                                 <TableHead>{t('Service')}</TableHead>
-                                {isAdmin && <TableHead>{t('Collaborator')}</TableHead>}
+                                {isAdmin && <TableHead>{t('Provider')}</TableHead>}
                                 <TableHead>{t('Status')}</TableHead>
                                 <TableHead>{t('Source')}</TableHead>
                             </TableRow>
@@ -316,7 +316,7 @@ export default function BookingsPage() {
                                         </TableCell>
                                         {isAdmin && (
                                             <TableCell className="text-muted-foreground text-sm">
-                                                {booking.collaborator.name}
+                                                {booking.provider.name}
                                             </TableCell>
                                         )}
                                         <TableCell>

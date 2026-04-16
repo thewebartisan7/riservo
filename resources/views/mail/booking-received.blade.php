@@ -12,7 +12,7 @@
 <x-mail::panel>
 **{{ __('Customer') }}:** {{ $customerName }}<br>
 **{{ __('Service') }}:** {{ $serviceName }}<br>
-**{{ __('Collaborator') }}:** {{ $collaboratorName }}<br>
+**{{ __('Provider') }}:** {{ $providerName }}<br>
 **{{ __('Date') }}:** {{ $date }}<br>
 **{{ __('Time') }}:** {{ $time }}<br>
 **{{ __('Status') }}:** {{ $status }}

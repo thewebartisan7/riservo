@@ -2,13 +2,16 @@
 
 namespace App\Http\Controllers\Auth;
 
+use App\Enums\BusinessMemberRole;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\AcceptInvitationRequest;
 use App\Models\BusinessInvitation;
+use App\Models\Provider;
 use App\Models\Service;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -32,27 +35,35 @@ class InvitationController extends Controller
     {
         $invitation = $this->findPendingInvitation($token);
 
-        $user = User::create([
-            'name' => $request->validated('name'),
-            'email' => $invitation->email,
-            'password' => $request->validated('password'),
-        ]);
+        $user = DB::transaction(function () use ($request, $invitation): User {
+            $user = User::create([
+                'name' => $request->validated('name'),
+                'email' => $invitation->email,
+                'password' => $request->validated('password'),
+            ]);
 
-        $user->markEmailAsVerified();
+            $user->markEmailAsVerified();
 
-        $invitation->business->users()->attach($user->id, [
-            'role' => $invitation->role->value,
-        ]);
+            $invitation->business->members()->attach($user->id, [
+                'role' => BusinessMemberRole::Staff->value,
+            ]);
 
-        // Auto-assign services from invitation (see D-041)
-        if ($invitation->service_ids) {
-            $validServiceIds = Service::where('business_id', $invitation->business_id)
-                ->whereIn('id', $invitation->service_ids)
-                ->pluck('id');
-            $user->services()->attach($validServiceIds);
-        }
+            $provider = Provider::create([
+                'business_id' => $invitation->business_id,
+                'user_id' => $user->id,
+            ]);
 
-        $invitation->update(['accepted_at' => now()]);
+            if ($invitation->service_ids) {
+                $validServiceIds = Service::where('business_id', $invitation->business_id)
+                    ->whereIn('id', $invitation->service_ids)
+                    ->pluck('id');
+                $provider->services()->attach($validServiceIds);
+            }
+
+            $invitation->update(['accepted_at' => now()]);
+
+            return $user;
+        });
 
         Auth::login($user);
 

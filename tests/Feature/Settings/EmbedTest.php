@@ -7,7 +7,7 @@ use App\Models\User;
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create(['slug' => 'test-salon']);
     $this->admin = User::factory()->create();
-    $this->business->users()->attach($this->admin, ['role' => 'admin']);
+    attachAdmin($this->business, $this->admin);
 });
 
 test('admin can view embed settings', function () {

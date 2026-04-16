@@ -91,3 +91,24 @@ This file contains live decisions about auth boundaries, roles, invitations, ver
 - **Context**: During onboarding step 4, the admin invites collaborators and can select which services they should be assigned to. However, collaborators don't exist as Users until they accept the invite (D-036). The `collaborator_service` pivot requires a `user_id`.
 - **Decision**: A `service_ids` nullable JSON column on `business_invitations` stores an array of service IDs that should be auto-assigned when the collaborator accepts. `InvitationController@accept` reads this field and creates `collaborator_service` records for valid service IDs that still exist.
 - **Consequences**: If a service is deleted between invitation and acceptance, the orphaned ID is silently ignored. Service assignment can also happen later in Session 9's collaborator management UI.
+
+---
+
+### D-061 — Provider is a first-class entity; role governs dashboard access only
+- **Date**: 2026-04-16
+- **Status**: accepted
+- **Supersedes**: the "collaborator" half of D-014, D-036, D-041.
+- **Context**: D-014 defined three roles (`admin`, `collaborator`, `customer`). The role model conflated "dashboard permissions" and "customer can book this person". Eligibility queries branched on role string across the slot engine, public booking, manual booking, settings, and calendar. Solo-business owners could not be providers; admins were excluded from schedules and service assignment. REVIEW-1 flagged this as the root of the "unbookable business" failure mode.
+- **Decision**:
+  - The `business_user` pivot is renamed to `business_members`; the `collaborator` role value is retired and replaced with `staff`. The role now names a permission level only (`admin`, `staff`), not a bookability capability.
+  - `providers` becomes a first-class table: one row per bookable person per business, with soft-delete, and its own schedule, exceptions, service attachments, and bookings. `providers.user_id` is kept nullable-capable in schema (for a future subcontractor-without-login case) but enforced `NOT NULL` in application logic for MVP.
+  - `collaborator_service` is renamed to `provider_service`. `bookings.collaborator_id`, `availability_rules.collaborator_id`, and `availability_exceptions.collaborator_id` are repointed to `provider_id` (FK → providers).
+  - The `is_active` pivot flag is replaced with `SoftDeletes` on both `business_members` and `providers`. Soft-delete is authoritative for deactivation.
+  - `businesses.allow_collaborator_choice` is renamed `allow_provider_choice`.
+- **Consequences**:
+  - Role-based authorization uses `business_members.role`; bookability uses `Business::providers()`. They no longer share a column.
+  - Admin-as-provider becomes a data-model-supported state. R-1B builds the onboarding opt-in, Settings → Account toggle, step-5 launch gate, and public-page service filtering on top of this foundation.
+  - The legacy term "collaborator" is fully removed. Identifiers that carried the word are renamed throughout: relations, enum values, middleware role strings, route segments, Inertia props, frontend types, translation keys, and file names.
+  - `collaborator_id` ceases to exist as an application column. Form Requests, URLs, and API payloads use `provider_id`.
+  - `$provider->delete()` makes a provider unbookable without losing history; `$provider->restore()` brings them back. Historical bookings reference a soft-deleted provider row.
+  - The unique index on providers is `(business_id, user_id, deleted_at)`, permitting one active row plus any number of soft-deleted rows per (business, user).

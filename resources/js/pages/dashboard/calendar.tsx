@@ -2,20 +2,20 @@ import { useState, useCallback } from 'react';
 import { usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/layouts/authenticated-layout';
 import { useTrans } from '@/hooks/use-trans';
-import { getCollaboratorColorMap } from '@/lib/calendar-colors';
+import { getProviderColorMap } from '@/lib/calendar-colors';
 import { CalendarHeader } from '@/components/calendar/calendar-header';
-import { CollaboratorFilter } from '@/components/calendar/collaborator-filter';
+import { ProviderFilter } from '@/components/calendar/provider-filter';
 import { WeekView } from '@/components/calendar/week-view';
 import { DayView } from '@/components/calendar/day-view';
 import { MonthView } from '@/components/calendar/month-view';
 import BookingDetailSheet from '@/components/dashboard/booking-detail-sheet';
 import ManualBookingDialog from '@/components/dashboard/manual-booking-dialog';
-import type { PageProps, DashboardBooking, CalendarCollaborator, ServiceWithCollaborators } from '@/types';
+import type { PageProps, DashboardBooking, CalendarProvider, ServiceWithProviders } from '@/types';
 
 interface CalendarPageProps extends PageProps {
     bookings: DashboardBooking[];
-    collaborators: CalendarCollaborator[];
-    services: ServiceWithCollaborators[];
+    providers: CalendarProvider[];
+    services: ServiceWithProviders[];
     view: 'day' | 'week' | 'month';
     date: string;
     isAdmin: boolean;
@@ -23,7 +23,7 @@ interface CalendarPageProps extends PageProps {
 }
 
 export default function CalendarPage() {
-    const { bookings, collaborators, services, view, date, isAdmin, timezone } =
+    const { bookings, providers, services, view, date, isAdmin, timezone } =
         usePage<CalendarPageProps>().props;
     const { t } = useTrans();
 
@@ -32,13 +32,13 @@ export default function CalendarPage() {
     const [dialogOpen, setDialogOpen] = useState(false);
 
     const [visibleIds, setVisibleIds] = useState<Set<number>>(
-        () => new Set(collaborators.map((c) => c.id)),
+        () => new Set(providers.map((p) => p.id)),
     );
 
-    const colorMap = getCollaboratorColorMap(collaborators.map((c) => c.id));
+    const colorMap = getProviderColorMap(providers.map((p) => p.id));
 
     const filteredBookings = isAdmin
-        ? bookings.filter((b) => visibleIds.has(b.collaborator.id))
+        ? bookings.filter((b) => visibleIds.has(b.provider.id))
         : bookings;
 
     const handleBookingClick = useCallback((booking: DashboardBooking) => {
@@ -46,7 +46,7 @@ export default function CalendarPage() {
         setSheetOpen(true);
     }, []);
 
-    function toggleCollaborator(id: number) {
+    function toggleProvider(id: number) {
         setVisibleIds((prev) => {
             const next = new Set(prev);
             if (next.has(id)) {
@@ -60,15 +60,15 @@ export default function CalendarPage() {
 
     function toggleAll() {
         setVisibleIds((prev) => {
-            if (prev.size === collaborators.length) {
+            if (prev.size === providers.length) {
                 return new Set();
             }
-            return new Set(collaborators.map((c) => c.id));
+            return new Set(providers.map((p) => p.id));
         });
     }
 
     const ViewComponent = view === 'day' ? DayView : view === 'month' ? MonthView : WeekView;
-    const showFilter = isAdmin && collaborators.length > 1;
+    const showFilter = isAdmin && providers.length > 1;
 
     return (
         <AuthenticatedLayout title={t('Calendar')} fullBleed>
@@ -82,11 +82,11 @@ export default function CalendarPage() {
 
                 {showFilter && (
                     <div className="flex-none border-b border-border/70 bg-background/80 px-5 py-2.5 backdrop-blur-sm sm:px-7">
-                        <CollaboratorFilter
-                            collaborators={collaborators}
+                        <ProviderFilter
+                            providers={providers}
                             visibleIds={visibleIds}
                             colorMap={colorMap}
-                            onToggle={toggleCollaborator}
+                            onToggle={toggleProvider}
                             onToggleAll={toggleAll}
                         />
                     </div>

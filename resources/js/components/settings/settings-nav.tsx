@@ -21,7 +21,7 @@ const navGroups = [
         label: 'Team',
         items: [
             { label: 'Services', href: '/dashboard/settings/services' },
-            { label: 'Collaborators', href: '/dashboard/settings/collaborators' },
+            { label: 'Staff', href: '/dashboard/settings/staff' },
         ],
     },
     {

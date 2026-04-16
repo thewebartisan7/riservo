@@ -1,6 +1,5 @@
 <?php
 
-use App\Enums\BusinessUserRole;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\User;
@@ -39,7 +38,7 @@ test('business users are redirected to dashboard', function () {
     $this->withoutVite();
     $user = User::factory()->create();
     $business = Business::factory()->create();
-    $business->users()->attach($user->id, ['role' => BusinessUserRole::Admin->value]);
+    attachAdmin($business, $user);
 
     $response = $this->post('/login', [
         'email' => $user->email,

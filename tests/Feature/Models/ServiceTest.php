@@ -2,8 +2,8 @@
 
 use App\Models\Booking;
 use App\Models\Business;
+use App\Models\Provider;
 use App\Models\Service;
-use App\Models\User;
 use Illuminate\Database\UniqueConstraintViolationException;
 
 test('it creates a service with factory defaults', function () {
@@ -19,14 +19,14 @@ test('it belongs to a business', function () {
     expect($service->business)->toBeInstanceOf(Business::class);
 });
 
-test('it has many collaborators through pivot', function () {
+test('it has many providers through pivot', function () {
     $service = Service::factory()->create();
-    $user1 = User::factory()->create();
-    $user2 = User::factory()->create();
+    $provider1 = Provider::factory()->create();
+    $provider2 = Provider::factory()->create();
 
-    $service->collaborators()->attach([$user1->id, $user2->id]);
+    $service->providers()->attach([$provider1->id, $provider2->id]);
 
-    expect($service->collaborators)->toHaveCount(2);
+    expect($service->providers)->toHaveCount(2);
 });
 
 test('it has many bookings', function () {

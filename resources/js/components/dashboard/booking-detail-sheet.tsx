@@ -146,7 +146,7 @@ export default function BookingDetailSheet({
                             )}
                         </Meta>
                         <Meta label={t('With')}>
-                            <p className="font-medium">{booking.collaborator.name}</p>
+                            <p className="font-medium">{booking.provider.name}</p>
                         </Meta>
                     </div>
 

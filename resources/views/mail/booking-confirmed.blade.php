@@ -5,7 +5,7 @@
 
 <x-mail::panel>
 **{{ __('Service') }}:** {{ $serviceName }}<br>
-**{{ __('Collaborator') }}:** {{ $collaboratorName }}<br>
+**{{ __('Provider') }}:** {{ $providerName }}<br>
 **{{ __('Date') }}:** {{ $date }}<br>
 **{{ __('Time') }}:** {{ $time }}
 </x-mail::panel>

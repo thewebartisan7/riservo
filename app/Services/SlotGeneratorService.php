@@ -7,8 +7,8 @@ use App\Enums\AssignmentStrategy;
 use App\Enums\BookingStatus;
 use App\Models\Booking;
 use App\Models\Business;
+use App\Models\Provider;
 use App\Models\Service;
-use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 
@@ -19,7 +19,7 @@ class SlotGeneratorService
     ) {}
 
     /**
-     * Get available booking slots for a specific collaborator on a given date.
+     * Get available booking slots for a specific provider on a given date.
      *
      * @return array<CarbonImmutable> Slot start times in business timezone
      */
@@ -27,32 +27,32 @@ class SlotGeneratorService
         Business $business,
         Service $service,
         CarbonImmutable $date,
-        ?User $collaborator = null,
+        ?Provider $provider = null,
     ): array {
-        if ($collaborator) {
-            return $this->getSlotsForCollaborator($business, $service, $collaborator, $date);
+        if ($provider) {
+            return $this->getSlotsForProvider($business, $service, $provider, $date);
         }
 
-        return $this->getSlotsForAnyCollaborator($business, $service, $date);
+        return $this->getSlotsForAnyProvider($business, $service, $date);
     }
 
     /**
-     * Assign the best collaborator for a given slot using the business strategy.
+     * Assign the best provider for a given slot using the business strategy.
      */
-    public function assignCollaborator(
+    public function assignProvider(
         Business $business,
         Service $service,
         CarbonImmutable $startsAt,
-    ): ?User {
-        $eligible = $this->getEligibleCollaborators($business, $service);
+    ): ?Provider {
+        $eligible = $this->getEligibleProviders($business, $service);
 
         if ($eligible->isEmpty()) {
             return null;
         }
 
         $date = $startsAt->startOfDay();
-        $available = $eligible->filter(function (User $collaborator) use ($business, $service, $date, $startsAt) {
-            $slots = $this->getSlotsForCollaborator($business, $service, $collaborator, $date);
+        $available = $eligible->filter(function (Provider $provider) use ($business, $service, $date, $startsAt) {
+            $slots = $this->getSlotsForProvider($business, $service, $provider, $date);
 
             return collect($slots)->contains(fn (CarbonImmutable $slot) => $slot->eq($startsAt));
         });
@@ -65,26 +65,26 @@ class SlotGeneratorService
 
         return match ($strategy) {
             AssignmentStrategy::FirstAvailable => $available->first(),
-            AssignmentStrategy::RoundRobin => $this->leastBusyCollaborator($business, $available),
+            AssignmentStrategy::RoundRobin => $this->leastBusyProvider($business, $available),
         };
     }
 
     /**
      * @return array<CarbonImmutable>
      */
-    private function getSlotsForCollaborator(
+    private function getSlotsForProvider(
         Business $business,
         Service $service,
-        User $collaborator,
+        Provider $provider,
         CarbonImmutable $date,
     ): array {
-        $windows = $this->availabilityService->getAvailableWindows($business, $collaborator, $date);
+        $windows = $this->availabilityService->getAvailableWindows($business, $provider, $date);
 
         if (empty($windows)) {
             return [];
         }
 
-        $bookings = $this->getBlockingBookings($business, $collaborator, $date);
+        $bookings = $this->getBlockingBookings($business, $provider, $date);
 
         $slots = [];
         foreach ($windows as $window) {
@@ -98,18 +98,18 @@ class SlotGeneratorService
     /**
      * @return array<CarbonImmutable>
      */
-    private function getSlotsForAnyCollaborator(
+    private function getSlotsForAnyProvider(
         Business $business,
         Service $service,
         CarbonImmutable $date,
     ): array {
-        $eligible = $this->getEligibleCollaborators($business, $service);
+        $eligible = $this->getEligibleProviders($business, $service);
 
         $seen = [];
         $allSlots = [];
 
-        foreach ($eligible as $collaborator) {
-            $slots = $this->getSlotsForCollaborator($business, $service, $collaborator, $date);
+        foreach ($eligible as $provider) {
+            $slots = $this->getSlotsForProvider($business, $service, $provider, $date);
 
             foreach ($slots as $slot) {
                 $key = $slot->format('H:i');
@@ -205,14 +205,14 @@ class SlotGeneratorService
      */
     private function getBlockingBookings(
         Business $business,
-        User $collaborator,
+        Provider $provider,
         CarbonImmutable $date,
     ): Collection {
         $dayStart = $date->startOfDay()->setTimezone('UTC');
         $dayEnd = $date->endOfDay()->setTimezone('UTC');
 
         return Booking::where('business_id', $business->id)
-            ->where('collaborator_id', $collaborator->id)
+            ->where('provider_id', $provider->id)
             ->whereIn('status', [BookingStatus::Confirmed, BookingStatus::Pending])
             ->where('starts_at', '<', $dayEnd)
             ->where('ends_at', '>', $dayStart)
@@ -221,27 +221,27 @@ class SlotGeneratorService
     }
 
     /**
-     * @return Collection<int, User>
+     * @return Collection<int, Provider>
      */
-    private function getEligibleCollaborators(Business $business, Service $service): Collection
+    private function getEligibleProviders(Business $business, Service $service): Collection
     {
-        return $service->collaborators()
-            ->wherePivot('service_id', $service->id)
+        return $service->providers()
+            ->where('providers.business_id', $business->id)
             ->get()
             ->sortBy('id')
             ->values();
     }
 
     /**
-     * Pick the collaborator with the fewest upcoming confirmed/pending bookings (D-028).
+     * Pick the provider with the fewest upcoming confirmed/pending bookings (D-028).
      *
-     * @param  Collection<int, User>  $candidates
+     * @param  Collection<int, Provider>  $candidates
      */
-    private function leastBusyCollaborator(Business $business, Collection $candidates): User
+    private function leastBusyProvider(Business $business, Collection $candidates): Provider
     {
-        return $candidates->sortBy(function (User $collaborator) use ($business) {
+        return $candidates->sortBy(function (Provider $provider) use ($business) {
             return Booking::where('business_id', $business->id)
-                ->where('collaborator_id', $collaborator->id)
+                ->where('provider_id', $provider->id)
                 ->whereIn('status', [BookingStatus::Confirmed, BookingStatus::Pending])
                 ->where('starts_at', '>=', now())
                 ->count();

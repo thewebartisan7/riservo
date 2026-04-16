@@ -16,10 +16,11 @@ use App\Http\Controllers\Dashboard\CustomerController as DashboardCustomerContro
 use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Dashboard\Settings\BookingSettingsController;
 use App\Http\Controllers\Dashboard\Settings\BusinessExceptionController;
-use App\Http\Controllers\Dashboard\Settings\CollaboratorController as SettingsCollaboratorController;
 use App\Http\Controllers\Dashboard\Settings\EmbedController;
 use App\Http\Controllers\Dashboard\Settings\ProfileController as SettingsProfileController;
+use App\Http\Controllers\Dashboard\Settings\ProviderController as SettingsProviderController;
 use App\Http\Controllers\Dashboard\Settings\ServiceController as SettingsServiceController;
+use App\Http\Controllers\Dashboard\Settings\StaffController as SettingsStaffController;
 use App\Http\Controllers\Dashboard\Settings\WorkingHoursController;
 use App\Http\Controllers\OnboardingController;
 use App\Http\Controllers\WelcomeController;
@@ -86,7 +87,7 @@ Route::middleware('auth')->group(function () {
     });
 
     // Business dashboard (auth + verified + business role + onboarded)
-    Route::middleware(['verified', 'role:admin,collaborator', 'onboarded'])->group(function () {
+    Route::middleware(['verified', 'role:admin,staff', 'onboarded'])->group(function () {
         Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
         Route::get('/dashboard/welcome', [WelcomeController::class, 'show'])->name('dashboard.welcome');
 
@@ -139,18 +140,23 @@ Route::middleware('auth')->group(function () {
             Route::get('/services/{service}', [SettingsServiceController::class, 'edit'])->name('settings.services.edit');
             Route::put('/services/{service}', [SettingsServiceController::class, 'update'])->name('settings.services.update');
 
-            // Collaborators
-            Route::get('/collaborators', [SettingsCollaboratorController::class, 'index'])->name('settings.collaborators');
-            Route::post('/collaborators/invite', [SettingsCollaboratorController::class, 'invite'])->name('settings.collaborators.invite');
-            Route::post('/collaborators/invitations/{invitation}/resend', [SettingsCollaboratorController::class, 'resendInvitation'])->name('settings.collaborators.resend-invitation');
-            Route::delete('/collaborators/invitations/{invitation}', [SettingsCollaboratorController::class, 'cancelInvitation'])->name('settings.collaborators.cancel-invitation');
-            Route::get('/collaborators/{user}', [SettingsCollaboratorController::class, 'show'])->name('settings.collaborators.show');
-            Route::put('/collaborators/{user}/schedule', [SettingsCollaboratorController::class, 'updateSchedule'])->name('settings.collaborators.update-schedule');
-            Route::post('/collaborators/{user}/exceptions', [SettingsCollaboratorController::class, 'storeException'])->name('settings.collaborators.store-exception');
-            Route::put('/collaborators/{user}/exceptions/{exception}', [SettingsCollaboratorController::class, 'updateException'])->name('settings.collaborators.update-exception');
-            Route::delete('/collaborators/{user}/exceptions/{exception}', [SettingsCollaboratorController::class, 'destroyException'])->name('settings.collaborators.destroy-exception');
-            Route::post('/collaborators/{user}/toggle-active', [SettingsCollaboratorController::class, 'toggleActive'])->name('settings.collaborators.toggle-active');
-            Route::post('/collaborators/{user}/avatar', [SettingsCollaboratorController::class, 'uploadAvatar'])->name('settings.collaborators.upload-avatar');
+            // Staff (team membership + invitations)
+            Route::get('/staff', [SettingsStaffController::class, 'index'])->name('settings.staff');
+            Route::post('/staff/invite', [SettingsStaffController::class, 'invite'])->name('settings.staff.invite');
+            Route::post('/staff/invitations/{invitation}/resend', [SettingsStaffController::class, 'resendInvitation'])->name('settings.staff.resend-invitation');
+            Route::delete('/staff/invitations/{invitation}', [SettingsStaffController::class, 'cancelInvitation'])->name('settings.staff.cancel-invitation');
+            Route::get('/staff/{user}', [SettingsStaffController::class, 'show'])->name('settings.staff.show');
+            Route::post('/staff/{user}/avatar', [SettingsStaffController::class, 'uploadAvatar'])->name('settings.staff.upload-avatar');
+
+            // Providers (bookability: schedule, services, exceptions, activation)
+            Route::post('/providers/{provider}/toggle', [SettingsProviderController::class, 'toggle'])
+                ->withTrashed()
+                ->name('settings.providers.toggle');
+            Route::put('/providers/{provider}/schedule', [SettingsProviderController::class, 'updateSchedule'])->name('settings.providers.update-schedule');
+            Route::put('/providers/{provider}/services', [SettingsProviderController::class, 'syncServices'])->name('settings.providers.sync-services');
+            Route::post('/providers/{provider}/exceptions', [SettingsProviderController::class, 'storeException'])->name('settings.providers.store-exception');
+            Route::put('/providers/{provider}/exceptions/{exception}', [SettingsProviderController::class, 'updateException'])->name('settings.providers.update-exception');
+            Route::delete('/providers/{provider}/exceptions/{exception}', [SettingsProviderController::class, 'destroyException'])->name('settings.providers.destroy-exception');
 
             // Embed & Share
             Route::get('/embed', [EmbedController::class, 'edit'])->name('settings.embed');
@@ -170,7 +176,7 @@ Route::post('/bookings/{token}/cancel', [BookingManagementController::class, 'ca
 
 // Public booking API (JSON) — rate limited
 Route::prefix('booking/{slug}')->middleware('throttle:booking-api')->group(function () {
-    Route::get('/collaborators', [PublicBookingController::class, 'collaborators'])->name('booking.collaborators');
+    Route::get('/providers', [PublicBookingController::class, 'providers'])->name('booking.providers');
     Route::get('/available-dates', [PublicBookingController::class, 'availableDates'])->name('booking.available-dates');
     Route::get('/slots', [PublicBookingController::class, 'slots'])->name('booking.slots');
 });

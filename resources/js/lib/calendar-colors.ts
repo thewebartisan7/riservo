@@ -1,12 +1,12 @@
 /**
- * Collaborator color palette for the calendar view (D-059).
+ * Provider color palette for the calendar view (D-059).
  * Tailwind utility classes for consistent event styling across light and dark themes.
  *
  * Colors lean on Tailwind's 500-level base for dots (bright, unambiguous), with
  * lightened backgrounds for light mode and tinted dark-mode variants that survive
  * the shift to the dark palette without going washed out or neon.
  */
-export interface CollaboratorColor {
+export interface ProviderColor {
     bg: string;
     hoverBg: string;
     text: string;
@@ -14,7 +14,7 @@ export interface CollaboratorColor {
     dot: string;
 }
 
-const COLLABORATOR_COLORS: CollaboratorColor[] = [
+const PROVIDER_COLORS: ProviderColor[] = [
     {
         bg: 'bg-blue-50 dark:bg-blue-500/15',
         hoverBg: 'hover:bg-blue-100 dark:hover:bg-blue-500/22',
@@ -73,14 +73,14 @@ const COLLABORATOR_COLORS: CollaboratorColor[] = [
     },
 ];
 
-export function getCollaboratorColor(index: number): CollaboratorColor {
-    return COLLABORATOR_COLORS[index % COLLABORATOR_COLORS.length];
+export function getProviderColor(index: number): ProviderColor {
+    return PROVIDER_COLORS[index % PROVIDER_COLORS.length];
 }
 
-export function getCollaboratorColorMap(collaboratorIds: number[]): Map<number, CollaboratorColor> {
-    const map = new Map<number, CollaboratorColor>();
-    collaboratorIds.forEach((id, index) => {
-        map.set(id, getCollaboratorColor(index));
+export function getProviderColorMap(providerIds: number[]): Map<number, ProviderColor> {
+    const map = new Map<number, ProviderColor>();
+    providerIds.forEach((id, index) => {
+        map.set(id, getProviderColor(index));
     });
     return map;
 }

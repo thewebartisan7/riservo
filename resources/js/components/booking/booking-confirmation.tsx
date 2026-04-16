@@ -1,6 +1,6 @@
 import { useTrans } from '@/hooks/use-trans';
 import { show } from '@/actions/App/Http/Controllers/Booking/BookingManagementController';
-import type { PublicCollaborator, PublicService } from '@/types';
+import type { PublicProvider, PublicService } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Display } from '@/components/ui/display';
 import {
@@ -13,7 +13,7 @@ interface BookingConfirmationProps {
     status: string;
     token: string;
     service: PublicService;
-    collaborator: PublicCollaborator | null;
+    provider: PublicProvider | null;
     date: string;
     time: string;
     businessName: string;
@@ -24,7 +24,7 @@ export default function BookingConfirmation({
     status,
     token,
     service,
-    collaborator,
+    provider,
     date,
     time,
     businessName,
@@ -104,9 +104,9 @@ export default function BookingConfirmation({
                     <p className="tabular-nums mt-1 text-sm text-primary-foreground opacity-80">
                         {formatDateLong(date)} · {time}
                     </p>
-                    {collaborator && (
+                    {provider && (
                         <p className="mt-0.5 text-xs text-primary-foreground opacity-70">
-                            {t('with :name', { name: collaborator.name })}
+                            {t('with :name', { name: provider.name })}
                         </p>
                     )}
                 </div>

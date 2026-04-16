@@ -25,12 +25,12 @@ import { Spinner } from '@/components/ui/spinner';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Display } from '@/components/ui/display';
 import { formatDurationShort, formatPrice } from '@/lib/booking-format';
-import type { FilterOption, ServiceWithCollaborators } from '@/types';
+import type { FilterOption, ServiceWithProviders } from '@/types';
 
 interface ManualBookingDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    services: ServiceWithCollaborators[];
+    services: ServiceWithProviders[];
     timezone: string;
 }
 
@@ -41,12 +41,12 @@ interface CustomerResult {
     phone: string | null;
 }
 
-type Step = 'customer' | 'service' | 'collaborator' | 'datetime' | 'confirm';
+type Step = 'customer' | 'service' | 'provider' | 'datetime' | 'confirm';
 
 const STEP_LABELS: Record<Step, string> = {
     customer: 'Customer',
     service: 'Service',
-    collaborator: 'With',
+    provider: 'With',
     datetime: 'When',
     confirm: 'Review',
 };
@@ -68,8 +68,8 @@ export default function ManualBookingDialog({
     const [isNewCustomer, setIsNewCustomer] = useState(false);
     const customerSearch = useHttp({});
 
-    const [selectedService, setSelectedService] = useState<ServiceWithCollaborators | null>(null);
-    const [selectedCollaborator, setSelectedCollaborator] = useState<FilterOption | null>(null);
+    const [selectedService, setSelectedService] = useState<ServiceWithProviders | null>(null);
+    const [selectedProvider, setSelectedProvider] = useState<FilterOption | null>(null);
 
     const [selectedDate, setSelectedDate] = useState<Date | undefined>();
     const [selectedTime, setSelectedTime] = useState<string | null>(null);
@@ -90,7 +90,7 @@ export default function ManualBookingDialog({
             setSearchResults([]);
             setIsNewCustomer(false);
             setSelectedService(null);
-            setSelectedCollaborator(null);
+            setSelectedProvider(null);
             setSelectedDate(undefined);
             setSelectedTime(null);
             setAvailableDates({});
@@ -137,8 +137,8 @@ export default function ManualBookingDialog({
             service_id: String(selectedService.id),
             month,
         };
-        if (selectedCollaborator) {
-            params.collaborator_id = String(selectedCollaborator.id);
+        if (selectedProvider) {
+            params.provider_id = String(selectedProvider.id);
         }
         datesHttp.get(availableDatesAction.url({ query: params }), {
             onSuccess: (resp: unknown) => {
@@ -156,8 +156,8 @@ export default function ManualBookingDialog({
             service_id: String(selectedService.id),
             date: dateStr,
         };
-        if (selectedCollaborator) {
-            params.collaborator_id = String(selectedCollaborator.id);
+        if (selectedProvider) {
+            params.provider_id = String(selectedProvider.id);
         }
         slotsHttp.get(slotsAction.url({ query: params }), {
             onSuccess: (resp: unknown) => {
@@ -165,7 +165,7 @@ export default function ManualBookingDialog({
                 setAvailableSlots(data.slots);
             },
         });
-    }, [selectedDate, selectedService, selectedCollaborator]);
+    }, [selectedDate, selectedService, selectedProvider]);
 
     function handleSubmit() {
         if (!selectedService || !selectedDate || !selectedTime) return;
@@ -177,7 +177,7 @@ export default function ManualBookingDialog({
                 customer_email: customerEmail,
                 customer_phone: customerPhone || null,
                 service_id: selectedService.id,
-                collaborator_id: selectedCollaborator?.id ?? null,
+                provider_id: selectedProvider?.id ?? null,
                 date: dateStr,
                 time: selectedTime,
                 notes: notes || null,
@@ -192,7 +192,7 @@ export default function ManualBookingDialog({
     const canProceedService = !!selectedService;
     const canProceedDateTime = !!selectedDate && !!selectedTime;
 
-    const steps: Step[] = ['customer', 'service', 'collaborator', 'datetime', 'confirm'];
+    const steps: Step[] = ['customer', 'service', 'provider', 'datetime', 'confirm'];
     const stepIndex = steps.indexOf(step);
     const currentLabel = t(STEP_LABELS[step]);
 
@@ -203,14 +203,14 @@ export default function ManualBookingDialog({
     function goNext() {
         if (step === 'customer' && canProceedCustomer) setStep('service');
         else if (step === 'service' && canProceedService) {
-            const serviceCollaborators = selectedService!.collaborators;
-            if (serviceCollaborators.length === 1) {
-                setSelectedCollaborator(serviceCollaborators[0]);
+            const serviceProviders = selectedService!.providers;
+            if (serviceProviders.length === 1) {
+                setSelectedProvider(serviceProviders[0]);
                 setStep('datetime');
             } else {
-                setStep('collaborator');
+                setStep('provider');
             }
-        } else if (step === 'collaborator') {
+        } else if (step === 'provider') {
             setStep('datetime');
         } else if (step === 'datetime' && canProceedDateTime) setStep('confirm');
     }
@@ -408,15 +408,15 @@ export default function ManualBookingDialog({
                         </div>
                     )}
 
-                    {step === 'collaborator' && selectedService && (
+                    {step === 'provider' && selectedService && (
                         <div className="flex flex-col gap-2">
                             <ul className="flex flex-col gap-2">
                                 <li>
                                     <button
                                         type="button"
-                                        aria-pressed={!selectedCollaborator}
+                                        aria-pressed={!selectedProvider}
                                         className="flex w-full items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/40 aria-pressed:border-primary aria-pressed:bg-honey-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                                        onClick={() => setSelectedCollaborator(null)}
+                                        onClick={() => setSelectedProvider(null)}
                                     >
                                         <span className="text-sm font-medium">
                                             {t('Auto-assign')}
@@ -426,16 +426,16 @@ export default function ManualBookingDialog({
                                         </span>
                                     </button>
                                 </li>
-                                {selectedService.collaborators.map((collab) => (
-                                    <li key={collab.id}>
+                                {selectedService.providers.map((provider) => (
+                                    <li key={provider.id}>
                                         <button
                                             type="button"
-                                            aria-pressed={selectedCollaborator?.id === collab.id}
+                                            aria-pressed={selectedProvider?.id === provider.id}
                                             className="flex w-full items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/40 aria-pressed:border-primary aria-pressed:bg-honey-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                                            onClick={() => setSelectedCollaborator(collab)}
+                                            onClick={() => setSelectedProvider(provider)}
                                         >
                                             <span className="text-sm font-medium">
-                                                {collab.name}
+                                                {provider.name}
                                             </span>
                                         </button>
                                     </li>
@@ -541,7 +541,7 @@ export default function ManualBookingDialog({
 
                                 <dt className="text-muted-foreground">{t('With')}</dt>
                                 <dd className="text-foreground">
-                                    {selectedCollaborator?.name ?? t('Auto-assign')}
+                                    {selectedProvider?.name ?? t('Auto-assign')}
                                 </dd>
 
                                 <dt className="text-muted-foreground">{t('When')}</dt>

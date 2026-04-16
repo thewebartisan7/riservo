@@ -15,8 +15,8 @@ beforeEach(function () {
         'timezone' => 'Europe/Zurich',
         'reminder_hours' => [24, 1],
     ]);
-    $this->collaborator = User::factory()->create();
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    $this->staff = User::factory()->create();
+    $this->provider = attachProvider($this->business, $this->staff);
     $this->service = Service::factory()->create(['business_id' => $this->business->id]);
     $this->customer = Customer::factory()->create(['email' => 'jane@example.com']);
 });
@@ -29,7 +29,7 @@ test('sends reminders for bookings within time window', function () {
     // Booking 24 hours from now
     Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => $now->addHours(24),
@@ -53,7 +53,7 @@ test('skips bookings that already have a reminder sent', function () {
 
     $booking = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => $now->addHours(24),
@@ -79,13 +79,13 @@ test('respects per-business reminder_hours configuration', function () {
 
     // Business with NO reminder hours
     $business2 = Business::factory()->onboarded()->create(['reminder_hours' => []]);
-    $collaborator2 = User::factory()->create();
-    $business2->users()->attach($collaborator2, ['role' => 'collaborator']);
+    $staff2 = User::factory()->create();
+    $provider2 = attachProvider($business2, $staff2);
     $service2 = Service::factory()->create(['business_id' => $business2->id]);
 
     Booking::factory()->confirmed()->create([
         'business_id' => $business2->id,
-        'collaborator_id' => $collaborator2->id,
+        'provider_id' => $provider2->id,
         'service_id' => $service2->id,
         'customer_id' => $this->customer->id,
         'starts_at' => $now->addHours(24),
@@ -104,7 +104,7 @@ test('skips cancelled bookings', function () {
 
     Booking::factory()->cancelled()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => $now->addHours(24),

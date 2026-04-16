@@ -10,8 +10,8 @@ use Carbon\CarbonImmutable;
 
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create(['timezone' => 'Europe/Zurich']);
-    $this->collaborator = User::factory()->create();
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    $this->staff = User::factory()->create();
+    $this->provider = attachProvider($this->business, $this->staff);
 
     // Business open Mon-Fri 09:00-18:00
     foreach ([DayOfWeek::Monday, DayOfWeek::Tuesday, DayOfWeek::Wednesday, DayOfWeek::Thursday, DayOfWeek::Friday] as $day) {
@@ -23,7 +23,7 @@ beforeEach(function () {
         ]);
 
         AvailabilityRule::factory()->create([
-            'collaborator_id' => $this->collaborator->id,
+            'provider_id' => $this->provider->id,
             'business_id' => $this->business->id,
             'day_of_week' => $day->value,
             'start_time' => '09:00',
@@ -39,7 +39,7 @@ beforeEach(function () {
         'buffer_after' => 0,
         'slot_interval_minutes' => 60,
     ]);
-    $this->service->collaborators()->attach($this->collaborator);
+    $this->provider->services()->attach($this->service);
 });
 
 test('returns available and unavailable dates for a month', function () {
@@ -77,20 +77,20 @@ test('past dates are always unavailable', function () {
     expect($dates['2026-04-15'])->toBeTrue();
 });
 
-test('respects collaborator filter', function () {
+test('respects provider filter', function () {
     $this->travelTo(CarbonImmutable::parse('2026-04-01 08:00', 'Europe/Zurich'));
 
-    // Create a second collaborator with no availability
-    $collab2 = User::factory()->create();
-    $this->business->users()->attach($collab2, ['role' => 'collaborator']);
-    $this->service->collaborators()->attach($collab2);
-    // collab2 has no availability rules → no slots
+    // Create a second provider with no availability
+    $staff2 = User::factory()->create();
+    $provider2 = attachProvider($this->business, $staff2);
+    $provider2->services()->attach($this->service);
+    // provider2 has no availability rules → no slots
 
-    $response = $this->getJson('/booking/'.$this->business->slug.'/available-dates?service_id='.$this->service->id.'&collaborator_id='.$collab2->id.'&month=2026-04');
+    $response = $this->getJson('/booking/'.$this->business->slug.'/available-dates?service_id='.$this->service->id.'&provider_id='.$provider2->id.'&month=2026-04');
 
     $dates = $response->json('dates');
 
-    // All dates should be unavailable for collab2
+    // All dates should be unavailable for provider2
     expect($dates['2026-04-06'])->toBeFalse();
 });
 

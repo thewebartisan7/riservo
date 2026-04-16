@@ -16,7 +16,7 @@ class BookingManagementController extends Controller
     public function show(string $token): Response
     {
         $booking = Booking::where('cancellation_token', $token)
-            ->with(['service', 'collaborator', 'business', 'customer'])
+            ->with(['service', 'provider.user', 'business', 'customer'])
             ->firstOrFail();
 
         return Inertia::render('bookings/show', [
@@ -32,8 +32,8 @@ class BookingManagementController extends Controller
                     'duration_minutes' => $booking->service->duration_minutes,
                     'price' => $booking->service->price,
                 ],
-                'collaborator' => [
-                    'name' => $booking->collaborator->name,
+                'provider' => [
+                    'name' => $booking->provider->user?->name ?? '',
                 ],
                 'business' => [
                     'name' => $booking->business->name,
@@ -64,11 +64,11 @@ class BookingManagementController extends Controller
 
         $booking->update(['status' => BookingStatus::Cancelled]);
 
-        $booking->loadMissing(['business.admins', 'collaborator']);
+        $booking->loadMissing(['business.admins', 'provider.user']);
 
         $notification = new BookingCancelledNotification($booking, 'customer');
         $staffUsers = $booking->business->admins
-            ->merge([$booking->collaborator])
+            ->when($booking->provider?->user, fn ($c) => $c->merge([$booking->provider->user]))
             ->unique('id');
 
         Notification::send($staffUsers, $notification);

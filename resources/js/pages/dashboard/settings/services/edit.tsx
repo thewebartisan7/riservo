@@ -15,12 +15,12 @@ interface Props {
         buffer_after: number;
         slot_interval_minutes: number;
         is_active: boolean;
-        collaborator_ids: number[];
+        provider_ids: number[];
     };
-    collaborators: { id: number; name: string }[];
+    providers: { id: number; name: string }[];
 }
 
-export default function EditService({ service, collaborators }: Props) {
+export default function EditService({ service, providers }: Props) {
     const { t } = useTrans();
 
     return (
@@ -33,7 +33,7 @@ export default function EditService({ service, collaborators }: Props) {
             <ServiceForm
                 action={update(service.id)}
                 service={service}
-                collaborators={collaborators}
+                providers={providers}
                 submitLabel={t('Save changes')}
             />
         </SettingsLayout>

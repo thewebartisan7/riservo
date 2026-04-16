@@ -99,7 +99,7 @@ export default function Step4({ services, pendingInvitations }: Props) {
             title={t('Invite team')}
             eyebrow={t('Optional — skip if you work alone')}
             heading={t('Bring in your team')}
-            description={t('Collaborators get their own login, availability, and booking link. They accept by email, no account creation needed from you.')}
+            description={t('Team members get their own login, availability, and booking link. They accept by email, no account creation needed from you.')}
         >
             <Card>
                 <form onSubmit={submit}>
@@ -112,7 +112,7 @@ export default function Step4({ services, pendingInvitations }: Props) {
                                         <Field>
                                             <div className="flex items-center justify-between">
                                                 <FieldLabel>
-                                                    {t('Collaborator :n', { n: index + 1 })}
+                                                    {t('Team member :n', { n: index + 1 })}
                                                 </FieldLabel>
                                                 {invitations.length > 1 && (
                                                     <Button
@@ -123,7 +123,7 @@ export default function Step4({ services, pendingInvitations }: Props) {
                                                         onClick={() => removeRow(index)}
                                                     >
                                                         <Trash2Icon />
-                                                        <span className="sr-only">{t('Remove collaborator')}</span>
+                                                        <span className="sr-only">{t('Remove team member')}</span>
                                                     </Button>
                                                 )}
                                             </div>

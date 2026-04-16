@@ -136,7 +136,7 @@ export default function Dashboard() {
                                                 {booking.service.name}
                                             </TableCell>
                                             <TableCell className="text-muted-foreground text-sm">
-                                                {booking.collaborator.name}
+                                                {booking.provider.name}
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <BookingStatusBadge status={booking.status} />

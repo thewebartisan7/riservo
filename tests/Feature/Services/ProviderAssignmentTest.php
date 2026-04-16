@@ -28,15 +28,18 @@ beforeEach(function () {
         'close_time' => '18:00',
     ]);
 
-    // Create 3 collaborators
-    $this->collabA = User::factory()->create(['name' => 'Alice']);
-    $this->collabB = User::factory()->create(['name' => 'Bob']);
-    $this->collabC = User::factory()->create(['name' => 'Charlie']);
+    // Create 3 staff members and their providers
+    $userA = User::factory()->create(['name' => 'Alice']);
+    $userB = User::factory()->create(['name' => 'Bob']);
+    $userC = User::factory()->create(['name' => 'Charlie']);
 
-    foreach ([$this->collabA, $this->collabB, $this->collabC] as $collab) {
-        $this->business->users()->attach($collab, ['role' => 'collaborator']);
+    $this->providerA = attachProvider($this->business, $userA);
+    $this->providerB = attachProvider($this->business, $userB);
+    $this->providerC = attachProvider($this->business, $userC);
+
+    foreach ([$this->providerA, $this->providerB, $this->providerC] as $provider) {
         AvailabilityRule::factory()->create([
-            'collaborator_id' => $collab->id,
+            'provider_id' => $provider->id,
             'business_id' => $this->business->id,
             'day_of_week' => DayOfWeek::Monday->value,
             'start_time' => '09:00',
@@ -52,38 +55,38 @@ beforeEach(function () {
         'slot_interval_minutes' => 60,
     ]);
 
-    foreach ([$this->collabA, $this->collabB, $this->collabC] as $collab) {
-        $this->service->collaborators()->attach($collab);
+    foreach ([$this->providerA, $this->providerB, $this->providerC] as $provider) {
+        $this->service->providers()->attach($provider);
     }
 });
 
-test('first_available returns first collaborator by ID with open slot', function () {
+test('first_available returns first provider by ID with open slot', function () {
     $startsAt = $this->monday->setTimeFromTimeString('10:00');
 
-    $assigned = $this->slotService->assignCollaborator($this->business, $this->service, $startsAt);
+    $assigned = $this->slotService->assignProvider($this->business, $this->service, $startsAt);
 
     expect($assigned)->not->toBeNull();
-    expect($assigned->id)->toBe($this->collabA->id);
+    expect($assigned->id)->toBe($this->providerA->id);
 });
 
-test('first_available skips collaborators not assigned to service', function () {
-    // Remove Alice from service
-    $this->service->collaborators()->detach($this->collabA);
+test('first_available skips providers not assigned to service', function () {
+    // Remove Alice's provider from service
+    $this->service->providers()->detach($this->providerA);
 
     $startsAt = $this->monday->setTimeFromTimeString('10:00');
-    $assigned = $this->slotService->assignCollaborator($this->business, $this->service, $startsAt);
+    $assigned = $this->slotService->assignProvider($this->business, $this->service, $startsAt);
 
     expect($assigned)->not->toBeNull();
-    expect($assigned->id)->toBe($this->collabB->id);
+    expect($assigned->id)->toBe($this->providerB->id);
 });
 
-test('first_available skips collaborator whose slot is booked', function () {
+test('first_available skips provider whose slot is booked', function () {
     $customer = Customer::factory()->create();
 
     // Alice has a booking at 10:00
     Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collabA->id,
+        'provider_id' => $this->providerA->id,
         'service_id' => $this->service->id,
         'customer_id' => $customer->id,
         'starts_at' => $this->monday->setTimeFromTimeString('10:00')->setTimezone('UTC'),
@@ -91,13 +94,13 @@ test('first_available skips collaborator whose slot is booked', function () {
     ]);
 
     $startsAt = $this->monday->setTimeFromTimeString('10:00');
-    $assigned = $this->slotService->assignCollaborator($this->business, $this->service, $startsAt);
+    $assigned = $this->slotService->assignProvider($this->business, $this->service, $startsAt);
 
     expect($assigned)->not->toBeNull();
-    expect($assigned->id)->toBe($this->collabB->id);
+    expect($assigned->id)->toBe($this->providerB->id);
 });
 
-test('round_robin returns collaborator with fewest upcoming bookings', function () {
+test('round_robin returns provider with fewest upcoming bookings', function () {
     $this->business->update(['assignment_strategy' => AssignmentStrategy::RoundRobin]);
 
     $customer = Customer::factory()->create();
@@ -106,7 +109,7 @@ test('round_robin returns collaborator with fewest upcoming bookings', function 
     foreach ([1, 2, 3] as $day) {
         Booking::factory()->confirmed()->create([
             'business_id' => $this->business->id,
-            'collaborator_id' => $this->collabA->id,
+            'provider_id' => $this->providerA->id,
             'service_id' => $this->service->id,
             'customer_id' => $customer->id,
             'starts_at' => now()->addDays($day)->setTime(10, 0),
@@ -117,7 +120,7 @@ test('round_robin returns collaborator with fewest upcoming bookings', function 
     // Bob: 1 upcoming booking
     Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collabB->id,
+        'provider_id' => $this->providerB->id,
         'service_id' => $this->service->id,
         'customer_id' => $customer->id,
         'starts_at' => now()->addDay()->setTime(14, 0),
@@ -127,30 +130,30 @@ test('round_robin returns collaborator with fewest upcoming bookings', function 
     // Charlie: 0 upcoming bookings
 
     $startsAt = $this->monday->setTimeFromTimeString('10:00');
-    $assigned = $this->slotService->assignCollaborator($this->business, $this->service, $startsAt);
+    $assigned = $this->slotService->assignProvider($this->business, $this->service, $startsAt);
 
     // Charlie has fewest bookings (0), so should be assigned
-    expect($assigned->id)->toBe($this->collabC->id);
+    expect($assigned->id)->toBe($this->providerC->id);
 });
 
 test('round_robin tie-breaking uses lowest ID', function () {
     $this->business->update(['assignment_strategy' => AssignmentStrategy::RoundRobin]);
 
-    // All collaborators have 0 upcoming bookings — should pick first by ID
+    // All providers have 0 upcoming bookings — should pick first by ID
     $startsAt = $this->monday->setTimeFromTimeString('10:00');
-    $assigned = $this->slotService->assignCollaborator($this->business, $this->service, $startsAt);
+    $assigned = $this->slotService->assignProvider($this->business, $this->service, $startsAt);
 
-    expect($assigned->id)->toBe($this->collabA->id);
+    expect($assigned->id)->toBe($this->providerA->id);
 });
 
-test('returns null when no collaborator is available', function () {
+test('returns null when no provider is available', function () {
     $customer = Customer::factory()->create();
 
-    // Book all three collaborators at 10:00
-    foreach ([$this->collabA, $this->collabB, $this->collabC] as $collab) {
+    // Book all three providers at 10:00
+    foreach ([$this->providerA, $this->providerB, $this->providerC] as $provider) {
         Booking::factory()->confirmed()->create([
             'business_id' => $this->business->id,
-            'collaborator_id' => $collab->id,
+            'provider_id' => $provider->id,
             'service_id' => $this->service->id,
             'customer_id' => $customer->id,
             'starts_at' => $this->monday->setTimeFromTimeString('10:00')->setTimezone('UTC'),
@@ -159,18 +162,18 @@ test('returns null when no collaborator is available', function () {
     }
 
     $startsAt = $this->monday->setTimeFromTimeString('10:00');
-    $assigned = $this->slotService->assignCollaborator($this->business, $this->service, $startsAt);
+    $assigned = $this->slotService->assignProvider($this->business, $this->service, $startsAt);
 
     expect($assigned)->toBeNull();
 });
 
-test('getAvailableSlots with null collaborator returns union of all slots', function () {
+test('getAvailableSlots with null provider returns union of all slots', function () {
     $customer = Customer::factory()->create();
 
     // Alice booked at 10:00, Bob and Charlie free
     Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collabA->id,
+        'provider_id' => $this->providerA->id,
         'service_id' => $this->service->id,
         'customer_id' => $customer->id,
         'starts_at' => $this->monday->setTimeFromTimeString('10:00')->setTimezone('UTC'),
@@ -178,7 +181,7 @@ test('getAvailableSlots with null collaborator returns union of all slots', func
     ]);
 
     $slotsAll = $this->slotService->getAvailableSlots($this->business, $this->service, $this->monday);
-    $slotsAlice = $this->slotService->getAvailableSlots($this->business, $this->service, $this->monday, $this->collabA);
+    $slotsAlice = $this->slotService->getAvailableSlots($this->business, $this->service, $this->monday, $this->providerA);
 
     $allTimes = array_map(fn ($s) => $s->format('H:i'), $slotsAll);
     $aliceTimes = array_map(fn ($s) => $s->format('H:i'), $slotsAlice);

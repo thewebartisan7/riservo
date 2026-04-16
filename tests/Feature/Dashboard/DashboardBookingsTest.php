@@ -10,17 +10,17 @@ use Carbon\CarbonImmutable;
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create(['timezone' => 'Europe/Zurich']);
     $this->admin = User::factory()->create();
-    $this->business->users()->attach($this->admin, ['role' => 'admin']);
+    attachAdmin($this->business, $this->admin);
 
-    $this->collaborator = User::factory()->create();
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    $this->staff = User::factory()->create();
+    $this->provider = attachProvider($this->business, $this->staff);
 
     $this->service = Service::factory()->create([
         'business_id' => $this->business->id,
         'is_active' => true,
         'name' => 'Haircut',
     ]);
-    $this->service->collaborators()->attach($this->collaborator);
+    $this->provider->services()->attach($this->service);
 
     $this->customer = Customer::factory()->create();
 
@@ -30,7 +30,7 @@ beforeEach(function () {
 test('admin sees all business bookings', function () {
     Booking::factory()->count(3)->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
     ]);
@@ -43,29 +43,29 @@ test('admin sees all business bookings', function () {
             ->has('bookings.data', 3)
             ->where('isAdmin', true)
             ->has('services')
-            ->has('collaborators')
+            ->has('providers')
         );
 });
 
-test('collaborator sees only own bookings', function () {
-    $otherCollaborator = User::factory()->create();
-    $this->business->users()->attach($otherCollaborator, ['role' => 'collaborator']);
+test('staff sees only own bookings', function () {
+    $otherStaff = User::factory()->create();
+    $otherProvider = attachProvider($this->business, $otherStaff);
 
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
     ]);
 
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $otherCollaborator->id,
+        'provider_id' => $otherProvider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
     ]);
 
-    $response = $this->actingAs($this->collaborator)->get('/dashboard/bookings');
+    $response = $this->actingAs($this->staff)->get('/dashboard/bookings');
 
     $response->assertSuccessful()
         ->assertInertia(fn ($page) => $page
@@ -77,14 +77,14 @@ test('collaborator sees only own bookings', function () {
 test('filter by status', function () {
     Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
     ]);
 
     Booking::factory()->pending()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
     ]);
@@ -106,14 +106,14 @@ test('filter by service', function () {
 
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
     ]);
 
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $otherService->id,
         'customer_id' => $this->customer->id,
     ]);
@@ -128,7 +128,7 @@ test('filter by service', function () {
 test('filter by date range', function () {
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-15 14:00', 'UTC'),
@@ -137,7 +137,7 @@ test('filter by date range', function () {
 
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-20 14:00', 'UTC'),
@@ -151,25 +151,25 @@ test('filter by date range', function () {
     );
 });
 
-test('filter by collaborator (admin only)', function () {
-    $otherCollaborator = User::factory()->create();
-    $this->business->users()->attach($otherCollaborator, ['role' => 'collaborator']);
+test('filter by provider (admin only)', function () {
+    $otherStaff = User::factory()->create();
+    $otherProvider = attachProvider($this->business, $otherStaff);
 
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
     ]);
 
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $otherCollaborator->id,
+        'provider_id' => $otherProvider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
     ]);
 
-    $response = $this->actingAs($this->admin)->get('/dashboard/bookings?collaborator_id='.$this->collaborator->id);
+    $response = $this->actingAs($this->admin)->get('/dashboard/bookings?provider_id='.$this->provider->id);
 
     $response->assertInertia(fn ($page) => $page
         ->has('bookings.data', 1)
@@ -179,7 +179,7 @@ test('filter by collaborator (admin only)', function () {
 test('bookings include related data', function () {
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
     ]);
@@ -188,7 +188,7 @@ test('bookings include related data', function () {
 
     $response->assertInertia(fn ($page) => $page
         ->has('bookings.data.0.service.name')
-        ->has('bookings.data.0.collaborator.name')
+        ->has('bookings.data.0.provider.name')
         ->has('bookings.data.0.customer.name')
         ->has('bookings.data.0.customer.email')
         ->has('bookings.data.0.status')
@@ -210,7 +210,7 @@ test('bookings from another business not visible', function () {
 test('default sort is starts_at desc', function () {
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-20 10:00', 'UTC'),
@@ -219,7 +219,7 @@ test('default sort is starts_at desc', function () {
 
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-25 10:00', 'UTC'),
@@ -238,7 +238,7 @@ test('default sort is starts_at desc', function () {
 test('pagination works', function () {
     Booking::factory()->count(25)->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
     ]);

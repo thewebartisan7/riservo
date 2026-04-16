@@ -13,7 +13,7 @@ import {
 } from 'date-fns';
 import { ClockIcon } from 'lucide-react';
 import type { DashboardBooking } from '@/types';
-import type { CollaboratorColor } from '@/lib/calendar-colors';
+import type { ProviderColor } from '@/lib/calendar-colors';
 import { getDateInTimezone } from './calendar-event';
 import { useTrans } from '@/hooks/use-trans';
 import { formatTimeShort } from '@/lib/datetime-format';
@@ -22,11 +22,11 @@ interface MonthViewProps {
     bookings: DashboardBooking[];
     date: string;
     timezone: string;
-    colorMap: Map<number, CollaboratorColor>;
+    colorMap: Map<number, ProviderColor>;
     onBookingClick: (booking: DashboardBooking) => void;
 }
 
-const DEFAULT_COLOR: CollaboratorColor = {
+const DEFAULT_COLOR: ProviderColor = {
     bg: 'bg-muted',
     hoverBg: 'hover:bg-muted/80',
     text: 'text-foreground',
@@ -122,7 +122,7 @@ export function MonthView({ bookings, date, timezone, colorMap, onBookingClick }
                                         <ol className="flex flex-col gap-0.5 overflow-hidden">
                                             {dayBookings.slice(0, 3).map((booking) => {
                                                 const color =
-                                                    colorMap.get(booking.collaborator.id) ??
+                                                    colorMap.get(booking.provider.id) ??
                                                     DEFAULT_COLOR;
                                                 const startTime = formatTimeShort(booking.starts_at, timezone);
 
@@ -206,7 +206,7 @@ export function MonthView({ bookings, date, timezone, colorMap, onBookingClick }
                                     {dayBookings.length > 0 && (
                                         <span className="flex gap-0.5">
                                             {dayBookings.slice(0, 4).map((b) => {
-                                                const color = colorMap.get(b.collaborator.id) ?? DEFAULT_COLOR;
+                                                const color = colorMap.get(b.provider.id) ?? DEFAULT_COLOR;
                                                 return (
                                                     <span
                                                         key={b.id}
@@ -238,7 +238,7 @@ export function MonthView({ bookings, date, timezone, colorMap, onBookingClick }
                 {selectedDayBookings.length > 0 ? (
                     <ol className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto rounded-xl border border-border/60 bg-background p-1 text-sm shadow-xs/5">
                         {selectedDayBookings.map((booking) => {
-                            const color = colorMap.get(booking.collaborator.id) ?? DEFAULT_COLOR;
+                            const color = colorMap.get(booking.provider.id) ?? DEFAULT_COLOR;
                             const startTime = formatTimeShort(booking.starts_at, timezone);
 
                             return (

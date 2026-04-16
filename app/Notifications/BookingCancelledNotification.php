@@ -27,7 +27,7 @@ class BookingCancelledNotification extends Notification implements ShouldQueue
 
     public function toMail(object $notifiable): MailMessage
     {
-        $this->booking->loadMissing(['service', 'collaborator', 'business', 'customer']);
+        $this->booking->loadMissing(['service', 'provider.user', 'business', 'customer']);
 
         $business = $this->booking->business;
         $startsAt = $this->booking->starts_at->setTimezone($business->timezone);
@@ -48,7 +48,7 @@ class BookingCancelledNotification extends Notification implements ShouldQueue
                 'businessName' => $business->name,
                 'customerName' => $this->booking->customer->name,
                 'serviceName' => $this->booking->service->name,
-                'collaboratorName' => $this->booking->collaborator->name,
+                'providerName' => $this->booking->provider->user?->name ?? '',
                 'date' => $startsAt->format('d.m.Y'),
                 'time' => $startsAt->format('H:i'),
             ]);

@@ -22,7 +22,7 @@ class UpdateBookingSettingsRequest extends FormRequest
     {
         return [
             'confirmation_mode' => ['required', Rule::enum(ConfirmationMode::class)],
-            'allow_collaborator_choice' => ['required', 'boolean'],
+            'allow_provider_choice' => ['required', 'boolean'],
             'cancellation_window_hours' => ['required', 'integer', 'min:0', 'max:168'],
             'payment_mode' => ['required', Rule::enum(PaymentMode::class)],
             'assignment_strategy' => ['required', Rule::enum(AssignmentStrategy::class)],

@@ -1,5 +1,9 @@
 <?php
 
+use App\Enums\BusinessMemberRole;
+use App\Models\Business;
+use App\Models\Provider;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -47,4 +51,32 @@ expect()->extend('toBeOne', function () {
 function something()
 {
     // ..
+}
+
+function attachStaff(Business $business, User $user): void
+{
+    $business->members()->attach($user, ['role' => BusinessMemberRole::Staff->value]);
+}
+
+function attachAdmin(Business $business, User $user): void
+{
+    $business->members()->attach($user, ['role' => BusinessMemberRole::Admin->value]);
+}
+
+function attachProvider(Business $business, User $user, bool $active = true): Provider
+{
+    if (! $business->members()->where('users.id', $user->id)->exists()) {
+        $business->members()->attach($user, ['role' => BusinessMemberRole::Staff->value]);
+    }
+
+    $provider = Provider::create([
+        'business_id' => $business->id,
+        'user_id' => $user->id,
+    ]);
+
+    if (! $active) {
+        $provider->delete();
+    }
+
+    return $provider;
 }

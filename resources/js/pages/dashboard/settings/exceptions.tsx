@@ -60,7 +60,7 @@ export default function Exceptions({ exceptions }: Props) {
             eyebrow={t('Settings · Schedule')}
             heading={t('Business exceptions')}
             description={t(
-                'Holidays, closures, and special openings. These override your default working hours for every collaborator.',
+                'Holidays, closures, and special openings. These override your default working hours for every team member.',
             )}
             actions={
                 <Button onClick={handleAdd}>

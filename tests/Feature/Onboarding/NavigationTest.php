@@ -1,6 +1,5 @@
 <?php
 
-use App\Enums\BusinessUserRole;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\User;
@@ -9,7 +8,7 @@ beforeEach(function () {
     $this->withoutVite();
     $this->user = User::factory()->create(['email_verified_at' => now()]);
     $this->business = Business::factory()->create(['onboarding_step' => 3]);
-    $this->business->users()->attach($this->user->id, ['role' => BusinessUserRole::Admin->value]);
+    attachAdmin($this->business, $this->user);
 });
 
 test('cannot skip ahead past current step', function () {

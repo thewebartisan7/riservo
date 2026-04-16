@@ -2,19 +2,19 @@
 
 use App\Models\Booking;
 use App\Models\Business;
+use App\Models\Provider;
 use App\Models\Service;
-use App\Models\User;
 use App\Notifications\BookingReminderNotification;
 use Illuminate\Support\Facades\Notification;
 
 test('BookingReminderNotification has correct subject', function () {
     $business = Business::factory()->onboarded()->create(['timezone' => 'Europe/Zurich']);
-    $collaborator = User::factory()->create();
+    $provider = Provider::factory()->create(['business_id' => $business->id]);
     $service = Service::factory()->create(['business_id' => $business->id]);
 
     $booking = Booking::factory()->confirmed()->create([
         'business_id' => $business->id,
-        'collaborator_id' => $collaborator->id,
+        'provider_id' => $provider->id,
         'service_id' => $service->id,
     ]);
 

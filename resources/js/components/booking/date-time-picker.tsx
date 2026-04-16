@@ -16,7 +16,7 @@ import { formatYmd, pad } from '@/lib/booking-format';
 interface DateTimePickerProps {
     slug: string;
     serviceId: number;
-    collaboratorId: number | null;
+    providerId: number | null;
     onSelect: (date: string, time: string) => void;
 }
 
@@ -42,7 +42,7 @@ function groupSlots(times: string[]) {
 export default function DateTimePicker({
     slug,
     serviceId,
-    collaboratorId,
+    providerId,
     onSelect,
 }: DateTimePickerProps) {
     const { t } = useTrans();
@@ -65,14 +65,14 @@ export default function DateTimePicker({
     useEffect(() => {
         const month = `${viewYear}-${pad(viewMonth + 1)}`;
         const query: Record<string, string | number> = { service_id: serviceId, month };
-        if (collaboratorId) query.collaborator_id = collaboratorId;
+        if (providerId) query.provider_id = providerId;
         datesHttp.get(availableDatesAction.url(slug, { query }), {
             onSuccess: (response: unknown) => {
                 const data = response as AvailableDatesResponse;
                 setAvailableDates(data.dates);
             },
         });
-    }, [slug, serviceId, collaboratorId, viewYear, viewMonth]);
+    }, [slug, serviceId, providerId, viewYear, viewMonth]);
 
     useEffect(() => {
         if (!selectedDate) {
@@ -83,14 +83,14 @@ export default function DateTimePicker({
             service_id: serviceId,
             date: formatYmd(selectedDate),
         };
-        if (collaboratorId) query.collaborator_id = collaboratorId;
+        if (providerId) query.provider_id = providerId;
         slotsHttp.get(slotsAction.url(slug, { query }), {
             onSuccess: (response: unknown) => {
                 const data = response as AvailableSlotsResponse;
                 setSlots(data.slots);
             },
         });
-    }, [slug, serviceId, collaboratorId, selectedDate]);
+    }, [slug, serviceId, providerId, selectedDate]);
 
     const firstOfMonth = new Date(viewYear, viewMonth, 1);
     const lastOfMonth = new Date(viewYear, viewMonth, daysInMonth(viewYear, viewMonth));

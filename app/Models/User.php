@@ -2,7 +2,7 @@
 
 namespace App\Models;
 
-use App\Enums\BusinessUserRole;
+use App\Enums\BusinessMemberRole;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -15,8 +15,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
 /**
- * @property-read BusinessUser|null $pivot
- * @property-read int $services_count
+ * @property-read BusinessMember|null $pivot
  */
 #[Fillable(['name', 'email', 'password', 'avatar', 'magic_link_token'])]
 #[Hidden(['password', 'remember_token', 'magic_link_token'])]
@@ -62,9 +61,9 @@ class User extends Authenticatable implements MustVerifyEmail
     /**
      * Get the user's role in their current business.
      */
-    public function currentBusinessRole(): ?BusinessUserRole
+    public function currentBusinessRole(): ?BusinessMemberRole
     {
-        /** @var (Business&object{pivot: BusinessUser})|null $business */
+        /** @var (Business&object{pivot: BusinessMember})|null $business */
         $business = $this->businesses()->first();
 
         if (! $business) {
@@ -74,38 +73,19 @@ class User extends Authenticatable implements MustVerifyEmail
         return $business->pivot->role;
     }
 
-    /** @return BelongsToMany<Business, $this, BusinessUser, 'pivot'> */
+    /** @return BelongsToMany<Business, $this, BusinessMember, 'pivot'> */
     public function businesses(): BelongsToMany
     {
-        return $this->belongsToMany(Business::class)
-            ->using(BusinessUser::class)
-            ->withPivot(['role', 'is_active'])
+        return $this->belongsToMany(Business::class, 'business_members')
+            ->using(BusinessMember::class)
+            ->withPivot(['role'])
             ->withTimestamps();
     }
 
-    /** @return HasMany<AvailabilityRule, $this> */
-    public function availabilityRules(): HasMany
+    /** @return HasMany<Provider, $this> */
+    public function providers(): HasMany
     {
-        return $this->hasMany(AvailabilityRule::class, 'collaborator_id');
-    }
-
-    /** @return HasMany<AvailabilityException, $this> */
-    public function availabilityExceptions(): HasMany
-    {
-        return $this->hasMany(AvailabilityException::class, 'collaborator_id');
-    }
-
-    /** @return BelongsToMany<Service, $this> */
-    public function services(): BelongsToMany
-    {
-        return $this->belongsToMany(Service::class, 'collaborator_service', 'collaborator_id')
-            ->withTimestamps();
-    }
-
-    /** @return HasMany<Booking, $this> */
-    public function bookingsAsCollaborator(): HasMany
-    {
-        return $this->hasMany(Booking::class, 'collaborator_id');
+        return $this->hasMany(Provider::class);
     }
 
     /** @return HasOne<CalendarIntegration, $this> */

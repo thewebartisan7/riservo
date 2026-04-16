@@ -4,6 +4,7 @@ use App\Enums\DayOfWeek;
 use App\Models\AvailabilityRule;
 use App\Models\Business;
 use App\Models\BusinessHour;
+use App\Models\Provider;
 use App\Models\Service;
 use App\Models\User;
 use App\Services\SlotGeneratorService;
@@ -20,17 +21,18 @@ test('full slot calculation with seeded Salone Bella data', function () {
     $slotService = app(SlotGeneratorService::class);
 
     $business = Business::where('slug', 'salone-bella')->first();
-    $maria = User::where('email', 'maria@salone-bella.ch')->first();
+    $luca = User::where('email', 'luca@salone-bella.ch')->first();
+    $lucaProvider = Provider::where('user_id', $luca->id)->where('business_id', $business->id)->first();
     $taglioDonna = Service::where('slug', 'taglio-donna')->first();
 
     // Next Monday = 2026-04-13
     // Seeder creates bookings in UTC. Business timezone is Europe/Zurich (CEST = UTC+2).
-    // Maria's seeded bookings in local time:
+    // Luca's seeded bookings in local time:
     //   09:00 UTC = 11:00 CEST → Taglio Donna 45min (buffer_after=10) → occupied 11:00-11:55
     //   11:00 UTC = 13:00 CEST → Piega 30min (no buffers) → occupied 13:00-13:30
     $nextMonday = CarbonImmutable::parse('2026-04-13', 'Europe/Zurich');
 
-    $slots = $slotService->getAvailableSlots($business, $taglioDonna, $nextMonday, $maria);
+    $slots = $slotService->getAvailableSlots($business, $taglioDonna, $nextMonday, $lucaProvider);
     $slotTimes = array_map(fn ($s) => $s->format('H:i'), $slots);
 
     // Taglio Donna: 45 min + 10 min buffer_after = 55 min total, slot_interval 15 min
@@ -63,13 +65,14 @@ test('Swiss National Day has no availability', function () {
     $slotService = app(SlotGeneratorService::class);
 
     $business = Business::where('slug', 'salone-bella')->first();
-    $maria = User::where('email', 'maria@salone-bella.ch')->first();
+    $luca = User::where('email', 'luca@salone-bella.ch')->first();
+    $lucaProvider = Provider::where('user_id', $luca->id)->where('business_id', $business->id)->first();
     $taglioDonna = Service::where('slug', 'taglio-donna')->first();
 
     // Aug 1 = Swiss National Day (business-level block in seeder) — Saturday
     $nationalDay = CarbonImmutable::parse('2026-08-01', 'Europe/Zurich');
 
-    $slots = $slotService->getAvailableSlots($business, $taglioDonna, $nationalDay, $maria);
+    $slots = $slotService->getAvailableSlots($business, $taglioDonna, $nationalDay, $lucaProvider);
 
     expect($slots)->toBeEmpty();
 
@@ -80,8 +83,8 @@ test('slots are correct in Europe/Zurich timezone with UTC bookings', function (
     $slotService = app(SlotGeneratorService::class);
 
     $business = Business::factory()->create(['timezone' => 'Europe/Zurich']);
-    $collab = User::factory()->create();
-    $business->users()->attach($collab, ['role' => 'collaborator']);
+    $staff = User::factory()->create();
+    $provider = attachProvider($business, $staff);
 
     // 2026-04-13 is CEST (UTC+2)
     $date = CarbonImmutable::parse('2026-04-13', 'Europe/Zurich');
@@ -93,7 +96,7 @@ test('slots are correct in Europe/Zurich timezone with UTC bookings', function (
         'close_time' => '12:00',
     ]);
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $collab->id,
+        'provider_id' => $provider->id,
         'business_id' => $business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
@@ -107,9 +110,9 @@ test('slots are correct in Europe/Zurich timezone with UTC bookings', function (
         'buffer_after' => 0,
         'slot_interval_minutes' => 60,
     ]);
-    $service->collaborators()->attach($collab);
+    $service->providers()->attach($provider);
 
-    $slots = $slotService->getAvailableSlots($business, $service, $date, $collab);
+    $slots = $slotService->getAvailableSlots($business, $service, $date, $provider);
 
     // Slots should be in Europe/Zurich: 09:00, 10:00, 11:00
     expect($slots)->toHaveCount(3);
@@ -124,8 +127,8 @@ test('DST spring forward does not produce duplicate or missing slots', function 
     $slotService = app(SlotGeneratorService::class);
 
     $business = Business::factory()->create(['timezone' => 'Europe/Zurich']);
-    $collab = User::factory()->create();
-    $business->users()->attach($collab, ['role' => 'collaborator']);
+    $staff = User::factory()->create();
+    $provider = attachProvider($business, $staff);
 
     // March 30, 2026 = Monday, day after spring forward in Europe/Zurich
     // (DST transition: March 29 02:00 → 03:00)
@@ -139,7 +142,7 @@ test('DST spring forward does not produce duplicate or missing slots', function 
         'close_time' => '18:00',
     ]);
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $collab->id,
+        'provider_id' => $provider->id,
         'business_id' => $business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
@@ -153,9 +156,9 @@ test('DST spring forward does not produce duplicate or missing slots', function 
         'buffer_after' => 0,
         'slot_interval_minutes' => 60,
     ]);
-    $service->collaborators()->attach($collab);
+    $service->providers()->attach($provider);
 
-    $slots = $slotService->getAvailableSlots($business, $service, $dstDate, $collab);
+    $slots = $slotService->getAvailableSlots($business, $service, $dstDate, $provider);
 
     // Should still be 9 slots: 09:00 through 17:00
     expect($slots)->toHaveCount(9);

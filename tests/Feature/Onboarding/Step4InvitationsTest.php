@@ -1,6 +1,5 @@
 <?php
 
-use App\Enums\BusinessUserRole;
 use App\Models\Business;
 use App\Models\BusinessInvitation;
 use App\Models\Service;
@@ -12,7 +11,7 @@ beforeEach(function () {
     $this->withoutVite();
     $this->user = User::factory()->create(['email_verified_at' => now()]);
     $this->business = Business::factory()->create(['onboarding_step' => 4]);
-    $this->business->users()->attach($this->user->id, ['role' => BusinessUserRole::Admin->value]);
+    attachAdmin($this->business, $this->user);
     $this->service = Service::factory()->create(['business_id' => $this->business->id]);
 });
 

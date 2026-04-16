@@ -1,6 +1,6 @@
 <?php
 
-use App\Enums\BusinessUserRole;
+use App\Enums\BusinessMemberRole;
 use App\Models\Business;
 use App\Models\User;
 use Illuminate\Auth\Notifications\VerifyEmail;
@@ -36,7 +36,7 @@ test('new users can register', function () {
         ->and($business->name)->toBe('Salone Mario');
 
     expect($user->businesses()->first()->id)->toBe($business->id);
-    expect($user->businesses()->first()->pivot->role)->toBe(BusinessUserRole::Admin);
+    expect($user->businesses()->first()->pivot->role)->toBe(BusinessMemberRole::Admin);
 
     Notification::assertSentTo($user, VerifyEmail::class);
 

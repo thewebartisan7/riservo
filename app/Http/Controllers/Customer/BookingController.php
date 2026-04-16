@@ -21,12 +21,10 @@ class BookingController extends Controller
 
         $bookings = $customer
             ? $customer->bookings()
-                ->with(['service', 'collaborator', 'business'])
+                ->with(['service', 'provider.user', 'business'])
                 ->orderBy('starts_at', 'desc')
                 ->get()
             : collect();
-
-        $now = now();
 
         return Inertia::render('customer/bookings', [
             'upcoming' => $bookings
@@ -61,11 +59,11 @@ class BookingController extends Controller
 
         $booking->update(['status' => BookingStatus::Cancelled]);
 
-        $booking->loadMissing(['business.admins', 'collaborator']);
+        $booking->loadMissing(['business.admins', 'provider.user']);
 
         $notification = new BookingCancelledNotification($booking, 'customer');
         $staffUsers = $booking->business->admins
-            ->merge([$booking->collaborator])
+            ->when($booking->provider?->user, fn ($c) => $c->merge([$booking->provider->user]))
             ->unique('id');
 
         Notification::send($staffUsers, $notification);
@@ -92,8 +90,8 @@ class BookingController extends Controller
             'service' => [
                 'name' => $booking->service->name,
             ],
-            'collaborator' => [
-                'name' => $booking->collaborator->name,
+            'provider' => [
+                'name' => $booking->provider->user?->name ?? '',
             ],
             'business' => [
                 'name' => $booking->business->name,

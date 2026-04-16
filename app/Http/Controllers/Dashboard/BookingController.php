@@ -9,6 +9,7 @@ use App\Http\Requests\Dashboard\StoreManualBookingRequest;
 use App\Http\Requests\Dashboard\UpdateBookingStatusRequest;
 use App\Models\Booking;
 use App\Models\Customer;
+use App\Models\Provider;
 use App\Models\Service;
 use App\Models\User;
 use App\Notifications\BookingCancelledNotification;
@@ -40,15 +41,14 @@ class BookingController extends Controller
         $query = Booking::where('business_id', $business->id)
             ->with([
                 'service:id,name,duration_minutes,price',
-                'collaborator:id,name,avatar',
+                'provider.user:id,name,avatar',
                 'customer:id,name,email,phone',
             ]);
 
         if (! $isAdmin) {
-            $query->where('collaborator_id', $user->id);
+            $query->whereHas('provider', fn ($q) => $q->where('user_id', $user->id));
         }
 
-        // Filters
         if ($request->filled('status')) {
             $query->where('status', $request->string('status'));
         }
@@ -57,8 +57,8 @@ class BookingController extends Controller
             $query->where('service_id', $request->integer('service_id'));
         }
 
-        if ($request->filled('collaborator_id') && $isAdmin) {
-            $query->where('collaborator_id', $request->integer('collaborator_id'));
+        if ($request->filled('provider_id') && $isAdmin) {
+            $query->where('provider_id', $request->integer('provider_id'));
         }
 
         if ($request->filled('date_from')) {
@@ -75,7 +75,6 @@ class BookingController extends Controller
             $query->where('starts_at', '<=', $dateTo);
         }
 
-        // Sort
         $sortField = $request->string('sort', 'starts_at');
         $sortDir = $request->string('direction', 'desc');
         $allowedSorts = ['starts_at', 'created_at'];
@@ -87,16 +86,16 @@ class BookingController extends Controller
 
         $bookings = $query->paginate(20)->withQueryString();
 
-        // Data for filter dropdowns and manual booking dialog
         $services = $business->services()
             ->where('is_active', true)
-            ->with('collaborators:users.id,users.name,users.avatar')
+            ->with(['providers' => fn ($q) => $q->where('providers.business_id', $business->id)->with('user:id,name,avatar')])
             ->get(['id', 'name', 'duration_minutes', 'price', 'slug']);
 
-        $collaborators = $isAdmin
-            ? $business->users()
-                ->wherePivotIn('role', ['admin', 'collaborator'])
-                ->get(['users.id', 'users.name'])
+        $providers = $isAdmin
+            ? $business->providers()
+                ->with('user:id,name')
+                ->orderBy('id')
+                ->get()
             : collect();
 
         return Inertia::render('dashboard/bookings', [
@@ -116,11 +115,11 @@ class BookingController extends Controller
                     'duration_minutes' => $booking->service->duration_minutes,
                     'price' => $booking->service->price,
                 ],
-                'collaborator' => [
-                    'id' => $booking->collaborator->id,
-                    'name' => $booking->collaborator->name,
-                    'avatar_url' => $booking->collaborator->avatar
-                        ? asset('storage/'.$booking->collaborator->avatar)
+                'provider' => [
+                    'id' => $booking->provider->id,
+                    'name' => $booking->provider->user?->name ?? '',
+                    'avatar_url' => $booking->provider->user?->avatar
+                        ? asset('storage/'.$booking->provider->user->avatar)
                         : null,
                 ],
                 'customer' => [
@@ -135,19 +134,19 @@ class BookingController extends Controller
                 'name' => $service->name,
                 'duration_minutes' => $service->duration_minutes,
                 'price' => $service->price,
-                'collaborators' => $service->collaborators->map(fn (User $u) => [
-                    'id' => $u->id,
-                    'name' => $u->name,
+                'providers' => $service->providers->map(fn (Provider $p) => [
+                    'id' => $p->id,
+                    'name' => $p->user?->name ?? '',
                 ])->values(),
             ])->values(),
-            'collaborators' => $collaborators->map(fn (User $u) => [
-                'id' => $u->id,
-                'name' => $u->name,
+            'providers' => $providers->map(fn (Provider $p) => [
+                'id' => $p->id,
+                'name' => $p->user?->name ?? '',
             ])->values(),
             'filters' => [
                 'status' => $request->string('status', ''),
                 'service_id' => $request->string('service_id', ''),
-                'collaborator_id' => $request->string('collaborator_id', ''),
+                'provider_id' => $request->string('provider_id', ''),
                 'date_from' => $request->string('date_from', ''),
                 'date_to' => $request->string('date_to', ''),
                 'sort' => $request->string('sort', 'starts_at'),
@@ -167,7 +166,7 @@ class BookingController extends Controller
         abort_unless($booking->business_id === $business->id, 404);
 
         $isAdmin = $user->currentBusinessRole()->value === 'admin';
-        if (! $isAdmin && $booking->collaborator_id !== $user->id) {
+        if (! $isAdmin && $booking->provider?->user_id !== $user->id) {
             abort(403);
         }
 
@@ -182,7 +181,7 @@ class BookingController extends Controller
 
         $booking->update(['status' => $newStatus]);
 
-        $booking->loadMissing(['customer', 'business.admins', 'collaborator']);
+        $booking->loadMissing(['customer', 'business.admins', 'provider.user']);
 
         if ($newStatus === BookingStatus::Confirmed) {
             Notification::route('mail', $booking->customer->email)
@@ -210,7 +209,7 @@ class BookingController extends Controller
         abort_unless($booking->business_id === $business->id, 404);
 
         $isAdmin = $user->currentBusinessRole()->value === 'admin';
-        if (! $isAdmin && $booking->collaborator_id !== $user->id) {
+        if (! $isAdmin && $booking->provider?->user_id !== $user->id) {
             abort(403);
         }
 
@@ -244,21 +243,20 @@ class BookingController extends Controller
 
         $endsAt = $startsAt->addMinutes($service->duration_minutes);
 
-        // Resolve collaborator
-        $collaborator = null;
-        if (! empty($validated['collaborator_id'])) {
-            $collaborator = $service->collaborators()
-                ->where('users.id', $validated['collaborator_id'])
+        $provider = null;
+        if (! empty($validated['provider_id'])) {
+            $provider = $service->providers()
+                ->where('providers.id', $validated['provider_id'])
+                ->where('providers.business_id', $business->id)
                 ->first();
 
-            if (! $collaborator) {
-                return back()->with('error', __('Selected collaborator is not available for this service.'));
+            if (! $provider) {
+                return back()->with('error', __('Selected provider is not available for this service.'));
             }
         }
 
-        // Verify slot availability
         $dateInTz = CarbonImmutable::createFromFormat('Y-m-d', $validated['date'], $timezone)->startOfDay();
-        $availableSlots = $this->slotGenerator->getAvailableSlots($business, $service, $dateInTz, $collaborator);
+        $availableSlots = $this->slotGenerator->getAvailableSlots($business, $service, $dateInTz, $provider);
 
         $requestedTime = CarbonImmutable::createFromFormat(
             'Y-m-d H:i',
@@ -272,16 +270,14 @@ class BookingController extends Controller
             return back()->with('error', __('This time slot is no longer available. Please select another time.'));
         }
 
-        // Auto-assign collaborator if not specified
-        if (! $collaborator) {
-            $collaborator = $this->slotGenerator->assignCollaborator($business, $service, $requestedTime);
+        if (! $provider) {
+            $provider = $this->slotGenerator->assignProvider($business, $service, $requestedTime);
 
-            if (! $collaborator) {
-                return back()->with('error', __('No collaborator is available for this time slot.'));
+            if (! $provider) {
+                return back()->with('error', __('No provider is available for this time slot.'));
             }
         }
 
-        // Find or create customer — see D-004
         $customer = Customer::firstOrCreate(
             ['email' => $validated['customer_email']],
             ['name' => $validated['customer_name'], 'phone' => $validated['customer_phone'] ?? null],
@@ -296,10 +292,9 @@ class BookingController extends Controller
 
         $cancellationToken = Str::uuid()->toString();
 
-        // Manual bookings are always confirmed — see D-051
         $booking = Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $collaborator->id,
+            'provider_id' => $provider->id,
             'service_id' => $service->id,
             'customer_id' => $customer->id,
             'starts_at' => $startsAt,
@@ -328,7 +323,7 @@ class BookingController extends Controller
 
         $request->validate([
             'service_id' => ['required', 'integer'],
-            'collaborator_id' => ['nullable', 'integer'],
+            'provider_id' => ['nullable', 'integer'],
             'month' => ['required', 'date_format:Y-m'],
         ]);
 
@@ -337,8 +332,8 @@ class BookingController extends Controller
             ->where('is_active', true)
             ->firstOrFail();
 
-        $collaborator = $request->filled('collaborator_id')
-            ? User::findOrFail($request->integer('collaborator_id'))
+        $provider = $request->filled('provider_id')
+            ? $business->providers()->where('id', $request->integer('provider_id'))->firstOrFail()
             : null;
 
         $timezone = $business->timezone;
@@ -355,7 +350,7 @@ class BookingController extends Controller
             if ($current->lt($today)) {
                 $dates[$dateKey] = false;
             } else {
-                $slots = $this->slotGenerator->getAvailableSlots($business, $service, $current, $collaborator);
+                $slots = $this->slotGenerator->getAvailableSlots($business, $service, $current, $provider);
                 $dates[$dateKey] = ! empty($slots);
             }
 
@@ -374,7 +369,7 @@ class BookingController extends Controller
         $request->validate([
             'service_id' => ['required', 'integer'],
             'date' => ['required', 'date_format:Y-m-d'],
-            'collaborator_id' => ['nullable', 'integer'],
+            'provider_id' => ['nullable', 'integer'],
         ]);
 
         $service = $business->services()
@@ -382,8 +377,8 @@ class BookingController extends Controller
             ->where('is_active', true)
             ->firstOrFail();
 
-        $collaborator = $request->filled('collaborator_id')
-            ? User::findOrFail($request->integer('collaborator_id'))
+        $provider = $request->filled('provider_id')
+            ? $business->providers()->where('id', $request->integer('provider_id'))->firstOrFail()
             : null;
 
         $timezone = $business->timezone;
@@ -394,7 +389,7 @@ class BookingController extends Controller
             return response()->json(['slots' => [], 'timezone' => $timezone]);
         }
 
-        $slotTimes = $this->slotGenerator->getAvailableSlots($business, $service, $date, $collaborator);
+        $slotTimes = $this->slotGenerator->getAvailableSlots($business, $service, $date, $provider);
 
         $slots = array_map(fn (CarbonImmutable $slot) => $slot->format('H:i'), $slotTimes);
 
@@ -403,10 +398,10 @@ class BookingController extends Controller
 
     private function notifyStaff(Booking $booking, BookingReceivedNotification $notification, ?int $excludeUserId = null): void
     {
-        $booking->loadMissing(['business.admins', 'collaborator']);
+        $booking->loadMissing(['business.admins', 'provider.user']);
 
         $staffUsers = $booking->business->admins
-            ->merge([$booking->collaborator])
+            ->when($booking->provider?->user, fn ($c) => $c->merge([$booking->provider->user]))
             ->unique('id')
             ->when($excludeUserId, fn ($c) => $c->where('id', '!=', $excludeUserId));
 

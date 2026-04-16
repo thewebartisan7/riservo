@@ -1,53 +1,31 @@
 <?php
 
-use App\Enums\BusinessUserRole;
-use App\Models\AvailabilityException;
-use App\Models\AvailabilityRule;
-use App\Models\Booking;
+use App\Enums\BusinessMemberRole;
 use App\Models\Business;
 use App\Models\CalendarIntegration;
 use App\Models\Customer;
-use App\Models\Service;
+use App\Models\Provider;
 use App\Models\User;
 
 test('it has many businesses through pivot', function () {
     $user = User::factory()->create();
     $business = Business::factory()->create();
-    $business->users()->attach($user, ['role' => BusinessUserRole::Admin]);
+    $business->members()->attach($user, ['role' => BusinessMemberRole::Admin]);
 
     expect($user->businesses)->toHaveCount(1)
-        ->and($user->businesses->first()->pivot->role)->toBe(BusinessUserRole::Admin);
+        ->and($user->businesses->first()->pivot->role)->toBe(BusinessMemberRole::Admin);
 });
 
-test('it has many availability rules as collaborator', function () {
+test('it has many providers', function () {
     $user = User::factory()->create();
-    AvailabilityRule::factory()->count(3)->create(['collaborator_id' => $user->id]);
+    $business1 = Business::factory()->create();
+    $business2 = Business::factory()->create();
 
-    expect($user->availabilityRules)->toHaveCount(3);
-});
+    attachProvider($business1, $user);
+    attachProvider($business2, $user);
 
-test('it has many availability exceptions as collaborator', function () {
-    $user = User::factory()->create();
-    AvailabilityException::factory()->count(2)->forCollaborator($user)->create();
-
-    expect($user->availabilityExceptions)->toHaveCount(2);
-});
-
-test('it has many services as collaborator', function () {
-    $user = User::factory()->create();
-    $service1 = Service::factory()->create();
-    $service2 = Service::factory()->create();
-
-    $user->services()->attach([$service1->id, $service2->id]);
-
-    expect($user->services)->toHaveCount(2);
-});
-
-test('it has many bookings as collaborator', function () {
-    $user = User::factory()->create();
-    Booking::factory()->count(3)->create(['collaborator_id' => $user->id]);
-
-    expect($user->bookingsAsCollaborator)->toHaveCount(3);
+    expect($user->providers)->toHaveCount(2)
+        ->and($user->providers->first())->toBeInstanceOf(Provider::class);
 });
 
 test('it has one calendar integration', function () {

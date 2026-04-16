@@ -67,7 +67,7 @@ class MagicLinkController extends Controller
 
         $request->session()->regenerate();
 
-        if ($user->hasBusinessRole('admin', 'collaborator')) {
+        if ($user->hasBusinessRole('admin', 'staff')) {
             return redirect()->route('dashboard');
         }
 

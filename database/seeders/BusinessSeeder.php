@@ -4,7 +4,7 @@ namespace Database\Seeders;
 
 use App\Enums\BookingSource;
 use App\Enums\BookingStatus;
-use App\Enums\BusinessUserRole;
+use App\Enums\BusinessMemberRole;
 use App\Enums\DayOfWeek;
 use App\Enums\ExceptionType;
 use App\Enums\PaymentStatus;
@@ -14,6 +14,7 @@ use App\Models\Booking;
 use App\Models\Business;
 use App\Models\BusinessHour;
 use App\Models\Customer;
+use App\Models\Provider;
 use App\Models\Service;
 use App\Models\User;
 use Illuminate\Database\Seeder;
@@ -26,13 +27,13 @@ class BusinessSeeder extends Seeder
     {
         $business = $this->createBusiness();
         $this->createBusinessHours($business);
-        $users = $this->createUsers($business);
+        [$users, $providers] = $this->createUsersAndProviders($business);
         $services = $this->createServices($business);
-        $this->assignServicesToCollaborators($users, $services);
-        $this->createAvailabilityRules($business, $users);
-        $this->createAvailabilityExceptions($business, $users);
+        $this->assignServicesToProviders($providers, $services);
+        $this->createAvailabilityRules($business, $providers);
+        $this->createAvailabilityExceptions($business, $providers);
         $customers = $this->createCustomers();
-        $this->createBookings($business, $users, $services, $customers);
+        $this->createBookings($business, $providers, $services, $customers);
     }
 
     private function createBusiness(): Business
@@ -84,35 +85,41 @@ class BusinessSeeder extends Seeder
     }
 
     /**
-     * @return array{maria: User, luca: User, sofia: User, marco: User}
+     * @return array{0: array{maria: User, luca: User, sofia: User, marco: User}, 1: array{luca: Provider, sofia: Provider, marco: Provider}}
      */
-    private function createUsers(Business $business): array
+    private function createUsersAndProviders(Business $business): array
     {
         $maria = User::factory()->create([
             'name' => 'Maria Rossi',
             'email' => 'maria@salone-bella.ch',
         ]);
-        $business->users()->attach($maria, ['role' => BusinessUserRole::Admin]);
+        $business->members()->attach($maria, ['role' => BusinessMemberRole::Admin]);
 
         $luca = User::factory()->create([
             'name' => 'Luca Bianchi',
             'email' => 'luca@salone-bella.ch',
         ]);
-        $business->users()->attach($luca, ['role' => BusinessUserRole::Collaborator]);
+        $business->members()->attach($luca, ['role' => BusinessMemberRole::Staff]);
+        $lucaProvider = Provider::create(['business_id' => $business->id, 'user_id' => $luca->id]);
 
         $sofia = User::factory()->create([
             'name' => 'Sofia Conti',
             'email' => 'sofia@salone-bella.ch',
         ]);
-        $business->users()->attach($sofia, ['role' => BusinessUserRole::Collaborator]);
+        $business->members()->attach($sofia, ['role' => BusinessMemberRole::Staff]);
+        $sofiaProvider = Provider::create(['business_id' => $business->id, 'user_id' => $sofia->id]);
 
         $marco = User::factory()->create([
             'name' => 'Marco Ferretti',
             'email' => 'marco@salone-bella.ch',
         ]);
-        $business->users()->attach($marco, ['role' => BusinessUserRole::Collaborator]);
+        $business->members()->attach($marco, ['role' => BusinessMemberRole::Staff]);
+        $marcoProvider = Provider::create(['business_id' => $business->id, 'user_id' => $marco->id]);
 
-        return compact('maria', 'luca', 'sofia', 'marco');
+        return [
+            compact('maria', 'luca', 'sofia', 'marco'),
+            ['luca' => $lucaProvider, 'sofia' => $sofiaProvider, 'marco' => $marcoProvider],
+        ];
     }
 
     /**
@@ -178,29 +185,20 @@ class BusinessSeeder extends Seeder
     }
 
     /**
-     * @param  array{maria: User, luca: User, sofia: User, marco: User}  $users
+     * @param  array{luca: Provider, sofia: Provider, marco: Provider}  $providers
      * @param  array{taglioDonna: Service, taglioUomo: Service, colore: Service, piega: Service, consulenza: Service}  $services
      */
-    private function assignServicesToCollaborators(array $users, array $services): void
+    private function assignServicesToProviders(array $providers, array $services): void
     {
-        // Maria: all services
-        $users['maria']->services()->attach([
-            $services['taglioDonna']->id,
-            $services['taglioUomo']->id,
-            $services['colore']->id,
-            $services['piega']->id,
-            $services['consulenza']->id,
-        ]);
-
         // Luca: Taglio Donna, Taglio Uomo, Piega
-        $users['luca']->services()->attach([
+        $providers['luca']->services()->attach([
             $services['taglioDonna']->id,
             $services['taglioUomo']->id,
             $services['piega']->id,
         ]);
 
         // Sofia: Taglio Donna, Colore, Piega, Consulenza
-        $users['sofia']->services()->attach([
+        $providers['sofia']->services()->attach([
             $services['taglioDonna']->id,
             $services['colore']->id,
             $services['piega']->id,
@@ -208,47 +206,27 @@ class BusinessSeeder extends Seeder
         ]);
 
         // Marco: Taglio Uomo, Piega
-        $users['marco']->services()->attach([
+        $providers['marco']->services()->attach([
             $services['taglioUomo']->id,
             $services['piega']->id,
         ]);
     }
 
     /**
-     * @param  array{maria: User, luca: User, sofia: User, marco: User}  $users
+     * @param  array{luca: Provider, sofia: Provider, marco: Provider}  $providers
      */
-    private function createAvailabilityRules(Business $business, array $users): void
+    private function createAvailabilityRules(Business $business, array $providers): void
     {
         $morningAfternoon = [
             ['start_time' => '09:00', 'end_time' => '12:30'],
             ['start_time' => '13:30', 'end_time' => '18:30'],
         ];
 
-        // Maria: Mon-Fri full, Sat morning
-        foreach ([DayOfWeek::Monday, DayOfWeek::Tuesday, DayOfWeek::Wednesday, DayOfWeek::Thursday, DayOfWeek::Friday] as $day) {
-            foreach ($morningAfternoon as $slot) {
-                AvailabilityRule::create([
-                    'collaborator_id' => $users['maria']->id,
-                    'business_id' => $business->id,
-                    'day_of_week' => $day,
-                    'start_time' => $slot['start_time'],
-                    'end_time' => $slot['end_time'],
-                ]);
-            }
-        }
-        AvailabilityRule::create([
-            'collaborator_id' => $users['maria']->id,
-            'business_id' => $business->id,
-            'day_of_week' => DayOfWeek::Saturday,
-            'start_time' => '09:00',
-            'end_time' => '13:00',
-        ]);
-
         // Luca: Mon-Thu full
         foreach ([DayOfWeek::Monday, DayOfWeek::Tuesday, DayOfWeek::Wednesday, DayOfWeek::Thursday] as $day) {
             foreach ($morningAfternoon as $slot) {
                 AvailabilityRule::create([
-                    'collaborator_id' => $users['luca']->id,
+                    'provider_id' => $providers['luca']->id,
                     'business_id' => $business->id,
                     'day_of_week' => $day,
                     'start_time' => $slot['start_time'],
@@ -261,7 +239,7 @@ class BusinessSeeder extends Seeder
         foreach ([DayOfWeek::Tuesday, DayOfWeek::Wednesday, DayOfWeek::Thursday, DayOfWeek::Friday, DayOfWeek::Saturday] as $day) {
             foreach ($morningAfternoon as $slot) {
                 AvailabilityRule::create([
-                    'collaborator_id' => $users['sofia']->id,
+                    'provider_id' => $providers['sofia']->id,
                     'business_id' => $business->id,
                     'day_of_week' => $day,
                     'start_time' => $slot['start_time'],
@@ -274,7 +252,7 @@ class BusinessSeeder extends Seeder
         foreach ([DayOfWeek::Monday, DayOfWeek::Wednesday, DayOfWeek::Friday] as $day) {
             foreach ($morningAfternoon as $slot) {
                 AvailabilityRule::create([
-                    'collaborator_id' => $users['marco']->id,
+                    'provider_id' => $providers['marco']->id,
                     'business_id' => $business->id,
                     'day_of_week' => $day,
                     'start_time' => $slot['start_time'],
@@ -283,7 +261,7 @@ class BusinessSeeder extends Seeder
             }
         }
         AvailabilityRule::create([
-            'collaborator_id' => $users['marco']->id,
+            'provider_id' => $providers['marco']->id,
             'business_id' => $business->id,
             'day_of_week' => DayOfWeek::Saturday,
             'start_time' => '09:00',
@@ -292,9 +270,9 @@ class BusinessSeeder extends Seeder
     }
 
     /**
-     * @param  array{maria: User, luca: User, sofia: User, marco: User}  $users
+     * @param  array{luca: Provider, sofia: Provider, marco: Provider}  $providers
      */
-    private function createAvailabilityExceptions(Business $business, array $users): void
+    private function createAvailabilityExceptions(Business $business, array $providers): void
     {
         // Business-level: Swiss National Day (Aug 1)
         AvailabilityException::create([
@@ -314,22 +292,22 @@ class BusinessSeeder extends Seeder
             'reason' => 'Chiusura natalizia',
         ]);
 
-        // Collaborator: Luca sick day next Wednesday
+        // Provider: Luca sick day next Wednesday
         $nextWednesday = Carbon::now()->next(Carbon::WEDNESDAY);
         AvailabilityException::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['luca']->id,
+            'provider_id' => $providers['luca']->id,
             'start_date' => $nextWednesday,
             'end_date' => $nextWednesday,
             'type' => ExceptionType::Block,
             'reason' => 'Malattia',
         ]);
 
-        // Collaborator: Sofia doctor appointment next Thursday 10:00-11:00
+        // Provider: Sofia doctor appointment next Thursday 10:00-11:00
         $nextThursday = Carbon::now()->next(Carbon::THURSDAY);
         AvailabilityException::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['sofia']->id,
+            'provider_id' => $providers['sofia']->id,
             'start_date' => $nextThursday,
             'end_date' => $nextThursday,
             'start_time' => '10:00',
@@ -338,11 +316,11 @@ class BusinessSeeder extends Seeder
             'reason' => 'Appuntamento medico',
         ]);
 
-        // Collaborator: Marco extra Saturday availability
+        // Provider: Marco extra Saturday availability
         $nextSaturday = Carbon::now()->next(Carbon::SATURDAY);
         AvailabilityException::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['marco']->id,
+            'provider_id' => $providers['marco']->id,
             'start_date' => $nextSaturday,
             'end_date' => $nextSaturday,
             'start_time' => '09:00',
@@ -382,11 +360,11 @@ class BusinessSeeder extends Seeder
     }
 
     /**
-     * @param  array{maria: User, luca: User, sofia: User, marco: User}  $users
+     * @param  array{luca: Provider, sofia: Provider, marco: Provider}  $providers
      * @param  array{taglioDonna: Service, taglioUomo: Service, colore: Service, piega: Service, consulenza: Service}  $services
      * @param  array<int, Customer>  $customers
      */
-    private function createBookings(Business $business, array $users, array $services, array $customers): void
+    private function createBookings(Business $business, array $providers, array $services, array $customers): void
     {
         $today = Carbon::today('Europe/Zurich');
         $nextMonday = Carbon::now()->next(Carbon::MONDAY);
@@ -394,7 +372,7 @@ class BusinessSeeder extends Seeder
         // --- TODAY's bookings (visible on dashboard home) ---
         Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['luca']->id,
+            'provider_id' => $providers['luca']->id,
             'service_id' => $services['taglioUomo']->id,
             'customer_id' => $customers[1]->id,
             'starts_at' => $today->copy()->setTime(10, 0)->utc(),
@@ -405,7 +383,7 @@ class BusinessSeeder extends Seeder
 
         Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['sofia']->id,
+            'provider_id' => $providers['sofia']->id,
             'service_id' => $services['colore']->id,
             'customer_id' => $customers[2]->id,
             'starts_at' => $today->copy()->setTime(14, 0)->utc(),
@@ -417,7 +395,7 @@ class BusinessSeeder extends Seeder
 
         Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['marco']->id,
+            'provider_id' => $providers['marco']->id,
             'service_id' => $services['piega']->id,
             'customer_id' => $customers[3]->id,
             'starts_at' => $today->copy()->setTime(15, 30)->utc(),
@@ -427,22 +405,22 @@ class BusinessSeeder extends Seeder
         ]);
 
         // --- Next Monday bookings (used by SlotGenerationIntegrationTest) ---
-        // Maria: Taglio Donna at 09:00 UTC = 11:00 CEST
+        // Luca: Taglio Uomo next Monday
         Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['maria']->id,
-            'service_id' => $services['taglioDonna']->id,
+            'provider_id' => $providers['luca']->id,
+            'service_id' => $services['taglioUomo']->id,
             'customer_id' => $customers[0]->id,
             'starts_at' => $nextMonday->copy()->setTime(9, 0),
-            'ends_at' => $nextMonday->copy()->setTime(9, 45),
+            'ends_at' => $nextMonday->copy()->setTime(9, 30),
             'status' => BookingStatus::Confirmed,
             'cancellation_token' => Str::uuid()->toString(),
         ]);
 
-        // Maria: Piega at 11:00 UTC = 13:00 CEST
+        // Luca: Piega at 11:00
         Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['maria']->id,
+            'provider_id' => $providers['luca']->id,
             'service_id' => $services['piega']->id,
             'customer_id' => $customers[1]->id,
             'starts_at' => $nextMonday->copy()->setTime(11, 0),
@@ -456,7 +434,7 @@ class BusinessSeeder extends Seeder
         // --- More future bookings ---
         Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['luca']->id,
+            'provider_id' => $providers['luca']->id,
             'service_id' => $services['taglioUomo']->id,
             'customer_id' => $customers[1]->id,
             'starts_at' => $nextMonday->copy()->setTime(10, 0),
@@ -467,7 +445,7 @@ class BusinessSeeder extends Seeder
 
         Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['sofia']->id,
+            'provider_id' => $providers['sofia']->id,
             'service_id' => $services['colore']->id,
             'customer_id' => $customers[2]->id,
             'starts_at' => $nextMonday->copy()->addDay()->setTime(14, 0),
@@ -478,7 +456,7 @@ class BusinessSeeder extends Seeder
 
         Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['marco']->id,
+            'provider_id' => $providers['marco']->id,
             'service_id' => $services['piega']->id,
             'customer_id' => $customers[3]->id,
             'starts_at' => $nextMonday->copy()->addDays(2)->setTime(9, 30),
@@ -490,7 +468,7 @@ class BusinessSeeder extends Seeder
 
         Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['maria']->id,
+            'provider_id' => $providers['sofia']->id,
             'service_id' => $services['consulenza']->id,
             'customer_id' => $customers[4]->id,
             'starts_at' => $nextMonday->copy()->addDays(3)->setTime(11, 0),
@@ -504,7 +482,7 @@ class BusinessSeeder extends Seeder
 
         Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['luca']->id,
+            'provider_id' => $providers['luca']->id,
             'service_id' => $services['taglioUomo']->id,
             'customer_id' => $customers[0]->id,
             'starts_at' => $lastMonday->copy()->setTime(14, 0),
@@ -516,7 +494,7 @@ class BusinessSeeder extends Seeder
 
         Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['sofia']->id,
+            'provider_id' => $providers['sofia']->id,
             'service_id' => $services['piega']->id,
             'customer_id' => $customers[5]->id,
             'starts_at' => $lastMonday->copy()->addDay()->setTime(10, 0),
@@ -528,7 +506,7 @@ class BusinessSeeder extends Seeder
 
         Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['maria']->id,
+            'provider_id' => $providers['luca']->id,
             'service_id' => $services['taglioDonna']->id,
             'customer_id' => $customers[3]->id,
             'starts_at' => $lastMonday->copy()->addDays(4)->setTime(15, 0),
@@ -539,7 +517,7 @@ class BusinessSeeder extends Seeder
 
         Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $users['marco']->id,
+            'provider_id' => $providers['marco']->id,
             'service_id' => $services['taglioUomo']->id,
             'customer_id' => $customers[4]->id,
             'starts_at' => $lastMonday->copy()->addDays(2)->setTime(9, 0),
@@ -550,19 +528,19 @@ class BusinessSeeder extends Seeder
         ]);
 
         // --- Bookings for factory-generated customers (for pagination) ---
-        $collaborators = [$users['maria'], $users['luca'], $users['sofia'], $users['marco']];
+        $providerList = [$providers['luca'], $providers['sofia'], $providers['marco']];
         $serviceList = [$services['taglioDonna'], $services['taglioUomo'], $services['colore'], $services['piega']];
         $statuses = [BookingStatus::Completed, BookingStatus::Confirmed, BookingStatus::Pending];
 
         foreach (array_slice($customers, 6) as $i => $customer) {
-            $collab = $collaborators[$i % count($collaborators)];
+            $provider = $providerList[$i % count($providerList)];
             $service = $serviceList[$i % count($serviceList)];
             $day = $lastMonday->copy()->subDays($i % 30);
             $hour = 9 + ($i % 8);
 
             Booking::create([
                 'business_id' => $business->id,
-                'collaborator_id' => $collab->id,
+                'provider_id' => $provider->id,
                 'service_id' => $service->id,
                 'customer_id' => $customer->id,
                 'starts_at' => $day->copy()->setTime($hour, 0)->utc(),

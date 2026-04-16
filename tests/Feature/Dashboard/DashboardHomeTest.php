@@ -11,10 +11,10 @@ use Carbon\CarbonImmutable;
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create(['timezone' => 'Europe/Zurich']);
     $this->admin = User::factory()->create();
-    $this->business->users()->attach($this->admin, ['role' => 'admin']);
+    attachAdmin($this->business, $this->admin);
 
-    $this->collaborator = User::factory()->create();
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    $this->staff = User::factory()->create();
+    $this->provider = attachProvider($this->business, $this->staff);
 
     $this->service = Service::factory()->create(['business_id' => $this->business->id, 'is_active' => true]);
     $this->customer = Customer::factory()->create();
@@ -27,7 +27,7 @@ test('admin sees business-wide stats', function () {
     // Create bookings for today
     Booking::factory()->count(3)->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-15 14:00', 'UTC'),
@@ -38,7 +38,7 @@ test('admin sees business-wide stats', function () {
     // Create a pending booking
     Booking::factory()->pending()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-15 16:00', 'UTC'),
@@ -58,14 +58,14 @@ test('admin sees business-wide stats', function () {
         );
 });
 
-test('collaborator sees only own bookings in stats', function () {
-    $otherCollaborator = User::factory()->create();
-    $this->business->users()->attach($otherCollaborator, ['role' => 'collaborator']);
+test('staff sees only own bookings in stats', function () {
+    $otherStaff = User::factory()->create();
+    $otherProvider = attachProvider($this->business, $otherStaff);
 
-    // Booking for this collaborator
+    // Booking for this staff
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-15 14:00', 'UTC'),
@@ -73,10 +73,10 @@ test('collaborator sees only own bookings in stats', function () {
         'status' => BookingStatus::Confirmed,
     ]);
 
-    // Booking for other collaborator
+    // Booking for other staff
     Booking::factory()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $otherCollaborator->id,
+        'provider_id' => $otherProvider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-15 16:00', 'UTC'),
@@ -84,7 +84,7 @@ test('collaborator sees only own bookings in stats', function () {
         'status' => BookingStatus::Confirmed,
     ]);
 
-    $response = $this->actingAs($this->collaborator)->get('/dashboard');
+    $response = $this->actingAs($this->staff)->get('/dashboard');
 
     $response->assertSuccessful()
         ->assertInertia(fn ($page) => $page
@@ -112,7 +112,7 @@ test('unauthenticated user redirected to login', function () {
 test('cancelled bookings not included in today count', function () {
     Booking::factory()->cancelled()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => $this->customer->id,
         'starts_at' => CarbonImmutable::parse('2026-04-15 14:00', 'UTC'),

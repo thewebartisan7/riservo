@@ -9,8 +9,8 @@ use Carbon\CarbonImmutable;
 
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create();
-    $this->collaborator = User::factory()->create();
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    $this->staff = User::factory()->create();
+    $this->provider = attachProvider($this->business, $this->staff);
     $this->service = Service::factory()->create(['business_id' => $this->business->id]);
 });
 
@@ -20,7 +20,7 @@ test('confirmed bookings past ends_at transition to completed', function () {
 
     $booking = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'starts_at' => $now->subHours(2),
         'ends_at' => $now->subHour(),
@@ -37,7 +37,7 @@ test('pending bookings are NOT auto-completed', function () {
 
     $booking = Booking::factory()->pending()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'starts_at' => $now->subHours(2),
         'ends_at' => $now->subHour(),
@@ -54,7 +54,7 @@ test('future bookings are NOT touched', function () {
 
     $booking = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'starts_at' => $now->addHour(),
         'ends_at' => $now->addHours(2),
@@ -71,7 +71,7 @@ test('cancelled bookings are NOT touched', function () {
 
     $booking = Booking::factory()->cancelled()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'starts_at' => $now->subHours(2),
         'ends_at' => $now->subHour(),

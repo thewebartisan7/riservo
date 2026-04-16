@@ -4,10 +4,10 @@ import { ServiceForm } from '@/components/settings/service-form';
 import { store } from '@/actions/App/Http/Controllers/Dashboard/Settings/ServiceController';
 
 interface Props {
-    collaborators: { id: number; name: string }[];
+    providers: { id: number; name: string }[];
 }
 
-export default function CreateService({ collaborators }: Props) {
+export default function CreateService({ providers }: Props) {
     const { t } = useTrans();
 
     return (
@@ -19,7 +19,7 @@ export default function CreateService({ collaborators }: Props) {
         >
             <ServiceForm
                 action={store()}
-                collaborators={collaborators}
+                providers={providers}
                 submitLabel={t('Create service')}
             />
         </SettingsLayout>

@@ -15,9 +15,9 @@ use Illuminate\Support\Facades\Notification;
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create(['timezone' => 'Europe/Zurich']);
     $this->admin = User::factory()->create(['name' => 'Admin']);
-    $this->business->users()->attach($this->admin, ['role' => 'admin']);
-    $this->collaborator = User::factory()->create(['name' => 'Alice']);
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    attachAdmin($this->business, $this->admin);
+    $this->staff = User::factory()->create(['name' => 'Alice']);
+    $this->provider = attachProvider($this->business, $this->staff);
 
     BusinessHour::factory()->create([
         'business_id' => $this->business->id,
@@ -27,7 +27,7 @@ beforeEach(function () {
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
@@ -42,17 +42,17 @@ beforeEach(function () {
         'buffer_after' => 0,
         'slot_interval_minutes' => 60,
     ]);
-    $this->service->collaborators()->attach($this->collaborator);
+    $this->service->providers()->attach($this->provider);
 
     $this->travelTo(CarbonImmutable::parse('2026-04-13 08:00', 'Europe/Zurich'));
 });
 
-test('new booking dispatches BookingReceivedNotification to admins and collaborator', function () {
+test('new booking dispatches BookingReceivedNotification to admins and staff', function () {
     Notification::fake();
 
     $this->postJson('/booking/'.$this->business->slug.'/book', [
         'service_id' => $this->service->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'date' => '2026-04-13',
         'time' => '10:00',
         'name' => 'Jane Doe',
@@ -62,7 +62,7 @@ test('new booking dispatches BookingReceivedNotification to admins and collabora
     ]);
 
     Notification::assertSentTo($this->admin, BookingReceivedNotification::class);
-    Notification::assertSentTo($this->collaborator, BookingReceivedNotification::class);
+    Notification::assertSentTo($this->staff, BookingReceivedNotification::class);
 });
 
 test('pending booking also dispatches BookingReceivedNotification to staff', function () {
@@ -71,7 +71,7 @@ test('pending booking also dispatches BookingReceivedNotification to staff', fun
 
     $this->postJson('/booking/'.$this->business->slug.'/book', [
         'service_id' => $this->service->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'date' => '2026-04-13',
         'time' => '10:00',
         'name' => 'Jane Doe',
@@ -81,7 +81,7 @@ test('pending booking also dispatches BookingReceivedNotification to staff', fun
     ]);
 
     Notification::assertSentTo($this->admin, BookingReceivedNotification::class);
-    Notification::assertSentTo($this->collaborator, BookingReceivedNotification::class);
+    Notification::assertSentTo($this->staff, BookingReceivedNotification::class);
 });
 
 test('manual booking from dashboard dispatches BookingReceivedNotification', function () {
@@ -90,7 +90,7 @@ test('manual booking from dashboard dispatches BookingReceivedNotification', fun
     $this->actingAs($this->admin)
         ->post(route('dashboard.bookings.store'), [
             'service_id' => $this->service->id,
-            'collaborator_id' => $this->collaborator->id,
+            'provider_id' => $this->provider->id,
             'date' => '2026-04-13',
             'time' => '10:00',
             'customer_name' => 'Jane Doe',
@@ -99,13 +99,13 @@ test('manual booking from dashboard dispatches BookingReceivedNotification', fun
         ]);
 
     // Admin is excluded from receiving since they created it
-    Notification::assertSentTo($this->collaborator, BookingReceivedNotification::class);
+    Notification::assertSentTo($this->staff, BookingReceivedNotification::class);
 });
 
 test('BookingReceivedNotification has context-aware subject', function () {
     $booking = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
     ]);
 

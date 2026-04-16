@@ -4,7 +4,7 @@ namespace App\Http\Requests\Dashboard\Settings;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-class UpdateCollaboratorScheduleRequest extends FormRequest
+class UpdateProviderScheduleRequest extends FormRequest
 {
     public function authorize(): bool
     {

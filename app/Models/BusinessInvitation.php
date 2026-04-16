@@ -2,7 +2,7 @@
 
 namespace App\Models;
 
-use App\Enums\BusinessUserRole;
+use App\Enums\BusinessMemberRole;
 use Database\Factories\BusinessInvitationFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
 
 /**
- * @property BusinessUserRole $role
+ * @property BusinessMemberRole $role
  * @property array<int, int>|null $service_ids
  * @property Carbon $expires_at
  * @property Carbon|null $accepted_at
@@ -25,7 +25,7 @@ class BusinessInvitation extends Model
     protected function casts(): array
     {
         return [
-            'role' => BusinessUserRole::class,
+            'role' => BusinessMemberRole::class,
             'service_ids' => 'array',
             'expires_at' => 'datetime',
             'accepted_at' => 'datetime',

@@ -1,34 +1,34 @@
 import { useEffect, useState } from 'react';
 import { useHttp } from '@inertiajs/react';
-import { collaborators as collaboratorsAction } from '@/actions/App/Http/Controllers/Booking/PublicBookingController';
+import { providers as providersAction } from '@/actions/App/Http/Controllers/Booking/PublicBookingController';
 import { useTrans } from '@/hooks/use-trans';
-import type { PublicCollaborator } from '@/types';
+import type { PublicProvider } from '@/types';
 import { Users } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Display } from '@/components/ui/display';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getInitials } from '@/lib/booking-format';
 
-interface CollaboratorPickerProps {
+interface ProviderPickerProps {
     slug: string;
     serviceId: number;
-    onSelect: (collaborator: PublicCollaborator | null) => void;
+    onSelect: (provider: PublicProvider | null) => void;
 }
 
-export default function CollaboratorPicker({
+export default function ProviderPicker({
     slug,
     serviceId,
     onSelect,
-}: CollaboratorPickerProps) {
+}: ProviderPickerProps) {
     const { t } = useTrans();
-    const [collaborators, setCollaborators] = useState<PublicCollaborator[]>([]);
+    const [providers, setProviders] = useState<PublicProvider[]>([]);
     const http = useHttp({});
 
     useEffect(() => {
-        http.get(collaboratorsAction.url(slug, { query: { service_id: serviceId } }), {
+        http.get(providersAction.url(slug, { query: { service_id: serviceId } }), {
             onSuccess: (response: unknown) => {
-                const data = response as { collaborators: PublicCollaborator[] };
-                setCollaborators(data.collaborators);
+                const data = response as { providers: PublicProvider[] };
+                setProviders(data.providers);
             },
         });
     }, [slug, serviceId]);
@@ -60,28 +60,28 @@ export default function CollaboratorPicker({
         );
     }
 
-    function CollabButton({
-        collaborator,
+    function ProviderButton({
+        provider,
         isAny,
     }: {
-        collaborator?: PublicCollaborator;
+        provider?: PublicProvider;
         isAny?: boolean;
     }) {
         return (
             <button
                 type="button"
-                onClick={() => onSelect(collaborator ?? null)}
+                onClick={() => onSelect(provider ?? null)}
                 className="group flex w-full items-center gap-4 rounded-xl border border-border bg-background px-4 py-3.5 text-left transition-all hover:border-primary hover:bg-honey-soft focus-visible:border-primary focus-visible:shadow-[0_0_0_3px_var(--ring)] focus-visible:outline-none"
             >
                 <Avatar className="h-11 w-11 shrink-0">
-                    {!isAny && collaborator?.avatar_url && (
-                        <AvatarImage src={collaborator.avatar_url} alt={collaborator.name} />
+                    {!isAny && provider?.avatar_url && (
+                        <AvatarImage src={provider.avatar_url} alt={provider.name} />
                     )}
                     <AvatarFallback className="font-display bg-accent text-sm font-semibold text-secondary-foreground">
                         {isAny ? (
                             <Users className="h-4 w-4" aria-hidden />
-                        ) : collaborator ? (
-                            getInitials(collaborator.name)
+                        ) : provider ? (
+                            getInitials(provider.name)
                         ) : (
                             ''
                         )}
@@ -92,7 +92,7 @@ export default function CollaboratorPicker({
                         render={<p />}
                         className="text-base font-semibold text-foreground"
                     >
-                        {isAny ? t('Any specialist') : collaborator?.name}
+                        {isAny ? t('Any specialist') : provider?.name}
                     </Display>
                     <p className="mt-0.5 text-xs text-muted-foreground">
                         {isAny
@@ -114,9 +114,9 @@ export default function CollaboratorPicker({
         <div className="flex flex-col gap-6">
             {heading}
             <div className="flex flex-col gap-2.5">
-                <CollabButton isAny />
-                {collaborators.map((collab) => (
-                    <CollabButton key={collab.id} collaborator={collab} />
+                <ProviderButton isAny />
+                {providers.map((provider) => (
+                    <ProviderButton key={provider.id} provider={provider} />
                 ))}
             </div>
         </div>

@@ -10,6 +10,7 @@ use App\Http\Requests\Booking\StorePublicBookingRequest;
 use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Customer;
+use App\Models\Provider;
 use App\Models\Service;
 use App\Models\User;
 use App\Notifications\BookingConfirmedNotification;
@@ -35,7 +36,7 @@ class PublicBookingController extends Controller
 
         $services = $business->services()
             ->where('is_active', true)
-            ->withCount('collaborators')
+            ->withCount('providers')
             ->get();
 
         $preSelectedServiceSlug = null;
@@ -68,7 +69,7 @@ class PublicBookingController extends Controller
                 'email' => $business->email,
                 'address' => $business->address,
                 'timezone' => $business->timezone,
-                'allow_collaborator_choice' => $business->allow_collaborator_choice,
+                'allow_provider_choice' => $business->allow_provider_choice,
                 'confirmation_mode' => $business->confirmation_mode->value,
             ],
             'services' => $services->map(fn (Service $service) => [
@@ -85,7 +86,7 @@ class PublicBookingController extends Controller
         ]);
     }
 
-    public function collaborators(string $slug, Request $request): JsonResponse
+    public function providers(string $slug, Request $request): JsonResponse
     {
         $business = $this->resolveBusiness($slug);
 
@@ -98,15 +99,19 @@ class PublicBookingController extends Controller
             ->where('is_active', true)
             ->firstOrFail();
 
-        $collaborators = $service->collaborators()->get()->map(fn (User $user) => [
-            'id' => $user->id,
-            'name' => $user->name,
-            'avatar_url' => $user->avatar
-                ? asset('storage/'.$user->avatar)
-                : null,
-        ]);
+        $providers = $service->providers()
+            ->where('providers.business_id', $business->id)
+            ->with('user:id,name,avatar')
+            ->get()
+            ->map(fn (Provider $provider) => [
+                'id' => $provider->id,
+                'name' => $provider->user?->name ?? '',
+                'avatar_url' => $provider->user?->avatar
+                    ? asset('storage/'.$provider->user->avatar)
+                    : null,
+            ]);
 
-        return response()->json(['collaborators' => $collaborators->values()]);
+        return response()->json(['providers' => $providers->values()]);
     }
 
     public function availableDates(string $slug, Request $request): JsonResponse
@@ -115,7 +120,7 @@ class PublicBookingController extends Controller
 
         $request->validate([
             'service_id' => ['required', 'integer'],
-            'collaborator_id' => ['nullable', 'integer'],
+            'provider_id' => ['nullable', 'integer'],
             'month' => ['required', 'date_format:Y-m'],
         ]);
 
@@ -124,8 +129,8 @@ class PublicBookingController extends Controller
             ->where('is_active', true)
             ->firstOrFail();
 
-        $collaborator = $request->filled('collaborator_id')
-            ? User::findOrFail($request->integer('collaborator_id'))
+        $provider = $request->filled('provider_id')
+            ? $business->providers()->where('id', $request->integer('provider_id'))->firstOrFail()
             : null;
 
         $timezone = $business->timezone;
@@ -142,7 +147,7 @@ class PublicBookingController extends Controller
             if ($current->lt($today)) {
                 $dates[$dateKey] = false;
             } else {
-                $slots = $this->slotGenerator->getAvailableSlots($business, $service, $current, $collaborator);
+                $slots = $this->slotGenerator->getAvailableSlots($business, $service, $current, $provider);
                 $dates[$dateKey] = ! empty($slots);
             }
 
@@ -159,7 +164,7 @@ class PublicBookingController extends Controller
         $request->validate([
             'service_id' => ['required', 'integer'],
             'date' => ['required', 'date_format:Y-m-d'],
-            'collaborator_id' => ['nullable', 'integer'],
+            'provider_id' => ['nullable', 'integer'],
         ]);
 
         $service = $business->services()
@@ -167,8 +172,8 @@ class PublicBookingController extends Controller
             ->where('is_active', true)
             ->firstOrFail();
 
-        $collaborator = $request->filled('collaborator_id')
-            ? User::findOrFail($request->integer('collaborator_id'))
+        $provider = $request->filled('provider_id')
+            ? $business->providers()->where('id', $request->integer('provider_id'))->firstOrFail()
             : null;
 
         $timezone = $business->timezone;
@@ -179,7 +184,7 @@ class PublicBookingController extends Controller
             return response()->json(['slots' => [], 'timezone' => $timezone]);
         }
 
-        $slotTimes = $this->slotGenerator->getAvailableSlots($business, $service, $date, $collaborator);
+        $slotTimes = $this->slotGenerator->getAvailableSlots($business, $service, $date, $provider);
 
         $slots = array_map(fn (CarbonImmutable $slot) => $slot->format('H:i'), $slotTimes);
 
@@ -191,7 +196,6 @@ class PublicBookingController extends Controller
         $business = $this->resolveBusiness($slug);
         $validated = $request->validated();
 
-        // Honeypot check — see D-045
         if (! empty($validated['website'])) {
             return response()->json(['message' => __('Something went wrong.')], 422);
         }
@@ -210,21 +214,20 @@ class PublicBookingController extends Controller
 
         $endsAt = $startsAt->addMinutes($service->duration_minutes);
 
-        // Resolve collaborator
-        $collaborator = null;
-        if (! empty($validated['collaborator_id'])) {
-            $collaborator = $service->collaborators()
-                ->where('users.id', $validated['collaborator_id'])
+        $provider = null;
+        if (! empty($validated['provider_id'])) {
+            $provider = $service->providers()
+                ->where('providers.id', $validated['provider_id'])
+                ->where('providers.business_id', $business->id)
                 ->first();
 
-            if (! $collaborator) {
-                return response()->json(['message' => __('Selected collaborator is not available for this service.')], 409);
+            if (! $provider) {
+                return response()->json(['message' => __('Selected provider is not available for this service.')], 409);
             }
         }
 
-        // Re-verify slot availability (race condition protection)
         $dateInTz = CarbonImmutable::createFromFormat('Y-m-d', $validated['date'], $timezone)->startOfDay();
-        $availableSlots = $this->slotGenerator->getAvailableSlots($business, $service, $dateInTz, $collaborator);
+        $availableSlots = $this->slotGenerator->getAvailableSlots($business, $service, $dateInTz, $provider);
 
         $requestedTime = CarbonImmutable::createFromFormat(
             'Y-m-d H:i',
@@ -240,24 +243,21 @@ class PublicBookingController extends Controller
             ], 409);
         }
 
-        // Auto-assign collaborator if not specified
-        if (! $collaborator) {
-            $collaborator = $this->slotGenerator->assignCollaborator($business, $service, $requestedTime);
+        if (! $provider) {
+            $provider = $this->slotGenerator->assignProvider($business, $service, $requestedTime);
 
-            if (! $collaborator) {
+            if (! $provider) {
                 return response()->json([
-                    'message' => __('No collaborator is available for this time slot.'),
+                    'message' => __('No provider is available for this time slot.'),
                 ], 409);
             }
         }
 
-        // Find or create customer
         $customer = Customer::firstOrCreate(
             ['email' => $validated['email']],
             ['name' => $validated['name'], 'phone' => $validated['phone']],
         );
 
-        // Update name/phone if changed
         if ($customer->name !== $validated['name'] || $customer->phone !== $validated['phone']) {
             $customer->update([
                 'name' => $validated['name'],
@@ -265,12 +265,10 @@ class PublicBookingController extends Controller
             ]);
         }
 
-        // Link to authenticated user if applicable
         if (auth()->check() && ! $customer->user_id) {
             $customer->update(['user_id' => auth()->id()]);
         }
 
-        // Determine booking status based on confirmation mode
         $status = $business->confirmation_mode === ConfirmationMode::Auto
             ? BookingStatus::Confirmed
             : BookingStatus::Pending;
@@ -279,7 +277,7 @@ class PublicBookingController extends Controller
 
         $booking = Booking::create([
             'business_id' => $business->id,
-            'collaborator_id' => $collaborator->id,
+            'provider_id' => $provider->id,
             'service_id' => $service->id,
             'customer_id' => $customer->id,
             'starts_at' => $startsAt,
@@ -291,13 +289,11 @@ class PublicBookingController extends Controller
             'cancellation_token' => $cancellationToken,
         ]);
 
-        // Send confirmation to customer only if auto-confirmed
         if ($status === BookingStatus::Confirmed) {
             Notification::route('mail', $customer->email)
                 ->notify(new BookingConfirmedNotification($booking));
         }
 
-        // Notify business staff (admins + collaborator)
         $this->notifyStaff($booking);
 
         return response()->json([
@@ -309,12 +305,12 @@ class PublicBookingController extends Controller
 
     private function notifyStaff(Booking $booking): void
     {
-        $booking->loadMissing(['business.admins', 'collaborator']);
+        $booking->loadMissing(['business.admins', 'provider.user']);
 
         $notification = new BookingReceivedNotification($booking, 'new');
 
         $staffUsers = $booking->business->admins
-            ->merge([$booking->collaborator])
+            ->when($booking->provider?->user, fn ($c) => $c->merge([$booking->provider->user]))
             ->unique('id');
 
         Notification::send($staffUsers, $notification);

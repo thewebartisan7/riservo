@@ -10,8 +10,8 @@ use Carbon\CarbonImmutable;
 
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create(['timezone' => 'Europe/Zurich']);
-    $this->collaborator = User::factory()->create();
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    $this->staff = User::factory()->create();
+    $this->provider = attachProvider($this->business, $this->staff);
 
     // Monday 09:00-18:00
     BusinessHour::factory()->create([
@@ -22,7 +22,7 @@ beforeEach(function () {
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
@@ -37,7 +37,7 @@ beforeEach(function () {
         'buffer_after' => 0,
         'slot_interval_minutes' => 60,
     ]);
-    $this->service->collaborators()->attach($this->collaborator);
+    $this->provider->services()->attach($this->service);
 });
 
 test('returns available slots for a date', function () {
@@ -74,15 +74,15 @@ test('returns empty slots for a past date', function () {
     expect($response->json('slots'))->toBeEmpty();
 });
 
-test('respects collaborator filter', function () {
+test('respects provider filter', function () {
     $this->travelTo(CarbonImmutable::parse('2026-04-13 08:00', 'Europe/Zurich'));
 
-    // collab2 has no rules for Monday
-    $collab2 = User::factory()->create();
-    $this->business->users()->attach($collab2, ['role' => 'collaborator']);
-    $this->service->collaborators()->attach($collab2);
+    // provider2 has no rules for Monday
+    $staff2 = User::factory()->create();
+    $provider2 = attachProvider($this->business, $staff2);
+    $provider2->services()->attach($this->service);
 
-    $response = $this->getJson('/booking/'.$this->business->slug.'/slots?service_id='.$this->service->id.'&date=2026-04-13&collaborator_id='.$collab2->id);
+    $response = $this->getJson('/booking/'.$this->business->slug.'/slots?service_id='.$this->service->id.'&date=2026-04-13&provider_id='.$provider2->id);
 
     $response->assertOk();
     expect($response->json('slots'))->toBeEmpty();

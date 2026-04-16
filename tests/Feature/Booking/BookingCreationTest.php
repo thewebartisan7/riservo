@@ -17,8 +17,8 @@ use Illuminate\Support\Facades\Notification;
 
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create(['timezone' => 'Europe/Zurich']);
-    $this->collaborator = User::factory()->create(['name' => 'Alice']);
-    $this->business->users()->attach($this->collaborator, ['role' => 'collaborator']);
+    $this->staff = User::factory()->create(['name' => 'Alice']);
+    $this->provider = attachProvider($this->business, $this->staff);
 
     BusinessHour::factory()->create([
         'business_id' => $this->business->id,
@@ -28,7 +28,7 @@ beforeEach(function () {
     ]);
 
     AvailabilityRule::factory()->create([
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'business_id' => $this->business->id,
         'day_of_week' => DayOfWeek::Monday->value,
         'start_time' => '09:00',
@@ -43,7 +43,7 @@ beforeEach(function () {
         'buffer_after' => 0,
         'slot_interval_minutes' => 60,
     ]);
-    $this->service->collaborators()->attach($this->collaborator);
+    $this->provider->services()->attach($this->service);
 
     // Fix time to Monday morning
     $this->travelTo(CarbonImmutable::parse('2026-04-13 08:00', 'Europe/Zurich'));
@@ -53,7 +53,7 @@ function validBookingData(array $overrides = []): array
 {
     return array_merge([
         'service_id' => test()->service->id,
-        'collaborator_id' => test()->collaborator->id,
+        'provider_id' => test()->provider->id,
         'date' => '2026-04-13',
         'time' => '10:00',
         'name' => 'Jane Doe',
@@ -78,7 +78,7 @@ test('creates booking with auto-confirmation', function () {
     $booking = Booking::first();
     expect($booking->status)->toBe(BookingStatus::Confirmed)
         ->and($booking->source)->toBe(BookingSource::Riservo)
-        ->and($booking->collaborator_id)->toBe($this->collaborator->id)
+        ->and($booking->provider_id)->toBe($this->provider->id)
         ->and($booking->service_id)->toBe($this->service->id)
         ->and($booking->cancellation_token)->not->toBeNull()
         ->and($booking->notes)->toBe('First visit');
@@ -113,17 +113,17 @@ test('reuses existing customer by email', function () {
         ->and($customer->phone)->toBe('+41 79 123 45 67');
 });
 
-test('auto-assigns collaborator when not specified', function () {
+test('auto-assigns provider when not specified', function () {
     Notification::fake();
 
     $response = $this->postJson('/booking/'.$this->business->slug.'/book', validBookingData([
-        'collaborator_id' => null,
+        'provider_id' => null,
     ]));
 
     $response->assertStatus(201);
 
     $booking = Booking::first();
-    expect($booking->collaborator_id)->toBe($this->collaborator->id);
+    expect($booking->provider_id)->toBe($this->provider->id);
 });
 
 test('returns 409 when slot is no longer available', function () {
@@ -132,7 +132,7 @@ test('returns 409 when slot is no longer available', function () {
     // Create an existing booking blocking 10:00-11:00 CEST (= 08:00-09:00 UTC)
     $blocking = Booking::factory()->confirmed()->create([
         'business_id' => $this->business->id,
-        'collaborator_id' => $this->collaborator->id,
+        'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'customer_id' => Customer::factory()->create()->id,
         'starts_at' => '2026-04-13 08:00:00',

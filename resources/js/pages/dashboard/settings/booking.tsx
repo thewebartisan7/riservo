@@ -28,7 +28,7 @@ import { useState } from 'react';
 interface Props {
     settings: {
         confirmation_mode: string;
-        allow_collaborator_choice: boolean;
+        allow_provider_choice: boolean;
         cancellation_window_hours: number;
         payment_mode: string;
         assignment_strategy: string;
@@ -38,7 +38,7 @@ interface Props {
 
 export default function BookingSettings({ settings }: Props) {
     const { t } = useTrans();
-    const [collaboratorChoice, setCollaboratorChoice] = useState(settings.allow_collaborator_choice);
+    const [providerChoice, setProviderChoice] = useState(settings.allow_provider_choice);
 
     const confirmationModeItems = [
         { value: 'auto', label: t('Auto-confirm') },
@@ -107,21 +107,21 @@ export default function BookingSettings({ settings }: Props) {
                                 <div className="flex items-start justify-between gap-4 rounded-xl border border-border/70 bg-muted/40 px-4 py-3.5">
                                     <div className="flex min-w-0 flex-1 flex-col gap-1">
                                         <Label
-                                            htmlFor="allow_collaborator_choice"
+                                            htmlFor="allow_provider_choice"
                                             className="text-sm font-medium text-foreground"
                                         >
-                                            {t('Customers can pick a collaborator')}
+                                            {t('Customers can pick a provider')}
                                         </Label>
                                         <p className="text-xs leading-relaxed text-muted-foreground">
-                                            {t('Show a collaborator picker during booking so customers can request a favourite.')}
+                                            {t('Show a provider picker during booking so customers can request a favourite.')}
                                         </p>
                                     </div>
                                     <Switch
-                                        id="allow_collaborator_choice"
-                                        checked={collaboratorChoice}
-                                        onCheckedChange={setCollaboratorChoice}
+                                        id="allow_provider_choice"
+                                        checked={providerChoice}
+                                        onCheckedChange={setProviderChoice}
                                     />
-                                    <input type="hidden" name="allow_collaborator_choice" value={collaboratorChoice ? '1' : '0'} />
+                                    <input type="hidden" name="allow_provider_choice" value={providerChoice ? '1' : '0'} />
                                 </div>
 
                                 <Field>
@@ -143,7 +143,7 @@ export default function BookingSettings({ settings }: Props) {
                                         </SelectPopup>
                                     </Select>
                                     <FieldDescription>
-                                        {t('Used when the customer does not choose a collaborator.')}
+                                        {t('Used when the customer does not choose a provider.')}
                                     </FieldDescription>
                                     {errors.assignment_strategy && <FieldError match>{errors.assignment_strategy}</FieldError>}
                                 </Field>

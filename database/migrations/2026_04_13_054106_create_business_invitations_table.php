@@ -1,6 +1,6 @@
 <?php
 
-use App\Enums\BusinessUserRole;
+use App\Enums\BusinessMemberRole;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -16,7 +16,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('business_id')->constrained()->cascadeOnDelete();
             $table->string('email');
-            $table->string('role')->default(BusinessUserRole::Collaborator->value);
+            $table->string('role')->default(BusinessMemberRole::Staff->value);
             $table->string('token')->unique();
             $table->dateTime('expires_at');
             $table->dateTime('accepted_at')->nullable();

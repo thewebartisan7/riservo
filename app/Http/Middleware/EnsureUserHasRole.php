@@ -12,7 +12,7 @@ class EnsureUserHasRole
     /**
      * Handle an incoming request.
      *
-     * @param  string  ...$roles  Allowed roles: 'admin', 'collaborator', 'customer'
+     * @param  string  ...$roles  Allowed roles: 'admin', 'staff', 'customer'
      */
     public function handle(Request $request, Closure $next, string ...$roles): Response
     {
