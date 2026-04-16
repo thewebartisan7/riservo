@@ -224,7 +224,8 @@ The popup embed JS snippet (`public/embed.js`) does not support service pre-filt
 ## R-10 — Reminder Scheduling: DST Safety and Delayed-Run Resilience (Medium)
 
 **Source**: REVIEW-1.md issue #11  
-**Priority**: Medium
+**Priority**: Medium  
+**Status**: **complete**, 2026-04-16
 
 ### Context
 
@@ -242,7 +243,8 @@ The popup embed JS snippet (`public/embed.js`) does not support service pre-filt
 ## R-11 — Rate Limiting on Auth Recovery Endpoints (Medium)
 
 **Source**: REVIEW-1.md issue #12  
-**Priority**: Medium — security
+**Priority**: Medium — security  
+**Status**: **complete**, 2026-04-16
 
 ### Context
 

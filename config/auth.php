@@ -114,4 +114,29 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Auth-recovery Throttle (D-072)
+    |--------------------------------------------------------------------------
+    |
+    | Per-email AND per-IP buckets on POST /magic-link and POST /forgot-password.
+    | Either bucket exceeding its limit throws a validation error on the email
+    | field via SendMagicLinkRequest / SendPasswordResetRequest. Values are
+    | env-tunable so ops can adjust post-launch without a redeploy.
+    |
+    */
+
+    'throttle' => [
+        'magic_link' => [
+            'max_per_email' => (int) env('THROTTLE_MAGIC_LINK_EMAIL', 5),
+            'max_per_ip' => (int) env('THROTTLE_MAGIC_LINK_IP', 20),
+            'decay_minutes' => (int) env('THROTTLE_MAGIC_LINK_DECAY', 15),
+        ],
+        'password_reset' => [
+            'max_per_email' => (int) env('THROTTLE_PASSWORD_RESET_EMAIL', 5),
+            'max_per_ip' => (int) env('THROTTLE_PASSWORD_RESET_IP', 20),
+            'decay_minutes' => (int) env('THROTTLE_PASSWORD_RESET_DECAY', 15),
+        ],
+    ],
+
 ];

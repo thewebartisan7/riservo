@@ -1,127 +1,173 @@
 # Handoff
 
-**Session**: R-9 — Popup embed service prefilter + modal robustness
+**Session**: R-10 + R-11 — Reminder DST/delayed-run resilience; auth-recovery rate limiting
 **Date**: 2026-04-16
-**Status**: Code complete; developer-driven browser + screen-reader QA pending
+**Status**: Code complete; no manual QA required (Pest suite covers the full behaviour end-to-end)
 
 ---
 
 ## What Was Built
 
-R-9 closed REVIEW-1 §#10 ("The popup embed does not meet the documented
-feature set and behaves like a brittle modal") and resolved the
-service-prefilter contract drift PLAN-R-8 §1.3 flagged. The popup
-embed now matches the iframe's prefilter capability, the overlay
-behaves like a real modal (focus trap, scroll lock, duplicate guard,
-focus restore, `role="dialog"`, mousedown/mouseup backdrop fix), and
-SPEC §8 is aligned with the code. One new decision (D-070), four new
-tests, zero backend changes.
+R-10 + R-11 closed REVIEW-1 §#11 (reminder scheduling fragility) and §#12
+(unthrottled auth-recovery POSTs). Two independent decisions (D-071, D-072),
+two orthogonal rewrites, 12 new tests, zero frontend changes, zero
+migrations, zero new dependencies.
 
-### D-070 — canonical service prefilter (new)
+### D-071 — Reminder eligibility = business-timezone wall-clock; past-due fires with row-level idempotency (new)
 
-Appended to `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md`. Pins
-the path form `/{slug}/{service-slug}?embed=1` as the canonical
-shape across direct link, iframe embed, and popup embed. Rejects
-query form, dual-read, hash fragment, and a dedicated `/embed/*`
-route. `?embed=1` remains the embed-mode switch (D-054); D-070 is
-the orthogonal service axis. The controller still silently ignores
-unknown path-form slugs — the existing "invalid service slug is
-ignored" behaviour is preserved.
+Appended to `docs/decisions/DECISIONS-BOOKING-AVAILABILITY.md`. Pins two
+properties. First, "N hours before" is computed against the booking's
+business timezone in wall-clock (not absolute UTC), matching the customer's
+mental model for in-person appointments (consistent with D-005, D-030).
+Across DST, the absolute UTC interval between the reminder and the
+appointment drifts by ±1 hour — explicitly accepted. Second, a reminder is
+eligible when `reminderTimeUtc <= now && starts_at > now && no booking_reminders
+row exists for (booking, hoursBefore)` — an *open* look-back window with no
+tuning knob. A scheduler outage of any duration shorter than `hoursBefore`
+cannot drop an eligible reminder; the `booking_reminders` unique
+`(booking_id, hours_before)` constraint from D-056 continues to provide
+idempotency, now doing double duty as the race-safe slot claim.
 
-### SPEC §8 updated
+### D-072 — Auth-recovery POSTs throttled per-email AND per-IP via FormRequest (new)
 
-`docs/SPEC.md` lines 269-279 rewritten to document the path form
-(instead of the stale `?embed=1&service=…` query form) plus the new
-`data-riservo-service` attribute on the popup trigger button.
+Appended to `docs/decisions/DECISIONS-AUTH.md`. `POST /magic-link` and
+`POST /forgot-password` each check two independent buckets — one keyed on
+the email (5/15min default), one on the IP (20/15min default). Either
+bucket exceeding its limit throws
+`ValidationException::withMessages(['email' => ...])`, matching the
+LoginRequest UX (Inertia-native 302 back with validation error). Values
+live under `auth.throttle.{magic_link|password_reset}.{max_per_email,max_per_ip,decay_minutes}`
+in `config/auth.php`, env-tunable via `THROTTLE_MAGIC_LINK_*` /
+`THROTTLE_PASSWORD_RESET_*`. Hits fire on every invocation (no "success
+clears" semantics — the endpoints always return generic success to resist
+enumeration per D-037). The `Lockout` event is deliberately NOT emitted —
+that's an auth-lockout signal, not an abuse-prevention signal.
 
-### Frontend — two edits
+### Backend — `SendBookingReminders::handle()` rewritten
 
-`resources/js/pages/dashboard/settings/embed.tsx` (three lines
-added). `popupSnippet` now emits `data-riservo-service="<slug>"`
-on the `<button data-riservo-open>` when a service is selected in
-the existing `Select`. Multiple buttons can share one `<script>`
-tag on the host page, each with its own service (or none).
+`app/Console/Commands/SendBookingReminders.php`. Structural changes:
 
-`public/embed.js` rewritten (80 → 139 lines, vanilla JS, single
-IIFE, no bundler — D-054 preserved). Changes:
+- `$now = CarbonImmutable::now('UTC')` (was `now()`).
+- Single candidate query:
+  `Booking::where('status', BookingStatus::Confirmed)->whereBetween('starts_at', [$now, $now->addHours(max + 1)])`
+  with `reminders` eager-loaded. The 1-hour buffer past `max(reminder_hours)`
+  covers DST fall-back, where wall-clock 24h can span up to 25 absolute UTC
+  hours. Replaces the pre-R-10 per-hours-before inner-query loop with the
+  ±5-minute window (lines 38-46 of the old file).
+- Per-booking × per-business-configured-`hours_before` inner loop:
+  - Wall-clock reminder time:
+    `$booking->starts_at->toImmutable()->setTimezone($tz)->modify("-{$hoursBefore} hours")->utc()`.
+    **Honest drift from plan sketch**: the plan's §3.1.2 sketch used
+    `->subHours($hoursBefore)`, but Carbon's `subHours()` subtracts
+    absolute UTC seconds (not wall-clock hours) and therefore does NOT
+    implement D-071 decision 1. `modify("-N hours")` is the correct
+    primitive — it preserves wall-clock across DST and rolls forward into
+    the spring-forward gap (matching D-071 decision 4). Verified in
+    tinker; the plan's `subHours(24)` lands at `2026-10-25 09:00 UTC`
+    post-DST (absolute), while `modify("-24 hours")` matches the
+    semantics D-071 decision 4 prescribes.
+  - Past-due filter: `if ($reminderTimeUtc->greaterThan($now)) continue;`.
+  - In-memory check: `$booking->reminders->contains('hours_before', $hoursBefore)`.
+  - Slot claim first:
+    `try { BookingReminder::create(...) } catch (UniqueConstraintViolationException) { continue; }`.
+    Only after successful claim does `Notification::route('mail', ...)->notify(...)` fire.
 
-- **Service prefilter**: script-tag `data-service` optional default;
-  per-button `data-riservo-service` override. `buildUrl(service)`
-  returns `{base}/{slug}/{service}?embed=1` when present, else
-  `{base}/{slug}?embed=1`.
-- **Duplicate-overlay guard**: module-level `overlay` ref plus a
-  DOM query for `[data-riservo-overlay]` — covers both repeated
-  clicks and accidental duplicate `<script>` tags on the host page.
-- **Scroll lock**: `document.body.style.overflow = 'hidden'` on
-  open; original value captured and restored on close.
-- **Focus restore**: the trigger element is captured on open and
-  re-focused after the fade-out if it's still in the DOM.
-- **Focus trap**: `focusin` listener on `document` redirects any
-  focus that escapes the overlay back to the close button. Iframe
-  contents manage their own same-origin tab order naturally.
-- **ARIA**: container gets `role="dialog"`, `aria-modal="true"`,
-  `aria-label` (from script-tag `data-label` or falling back to
-  `'Book appointment'`).
-- **Backdrop click fix**: `mousedown` and `mouseup` must BOTH land
-  on the overlay itself. Prevents accidental close when a user
-  drags a selection from inside the iframe to the backdrop and
-  vice versa. Replaces the `click`-only listener.
+### Backend — Two new FormRequests for auth-recovery throttle
 
-### New test coverage (+4 tests)
+`app/Http/Requests/Auth/SendMagicLinkRequest.php` and
+`app/Http/Requests/Auth/SendPasswordResetRequest.php`. Shape mirrors
+`LoginRequest::ensureIsNotRateLimited()` but (a) checks two buckets
+(per-email + per-IP), (b) hits unconditionally on every call, (c) does
+NOT emit `Illuminate\Auth\Events\Lockout`. Rules reduce to
+`['email' => ['required', 'string', 'email']]` — validation migrates
+out of the controller. Keys are `magic-link:email:…`, `magic-link:ip:…`,
+`password-reset:email:…`, `password-reset:ip:…` — deliberately namespaced
+so the two endpoints don't share counters.
 
-`tests/Feature/Settings/EmbedTest.php`:
+### Controllers — signature swaps only
 
-- `embed.js ships as a non-empty vanilla JS IIFE` — pins the
-  D-054 "single IIFE, no bundler" invariant (file exists, non-zero
-  size, starts with `(function`).
-- `embed.js supports per-button service prefilter` — substring
-  check for `data-riservo-service` and `data-slug` in the shipped
-  file; regression pin that prefilter support shipped.
-- `embed.js references no external domains` — regex guard against
-  any `https?://…` reference in the widget source. Supply-chain /
-  supply-simplicity guard. Whitelist starts empty by design.
-- `embed settings page exposes appUrl prop as absolute URL` —
-  locks the `appUrl` contract the `popupSnippet` template literal
-  in `embed.tsx:42` depends on.
+`MagicLinkController::store` now takes `SendMagicLinkRequest`, calls
+`$request->ensureIsNotRateLimited()` as the first line, and drops its
+inline `$request->validate([...])`. `PasswordResetController::store`
+mirrors the same three-line change. Rest of both methods is untouched.
 
-> **Test layer correction from plan.** Plan §5 Step 4 initially
-> wrote Tests 1 and 2 as `$this->get('/embed.js')->assertOk()`.
-> Probing at implementation time confirmed that hits the catch-all
-> `/{slug}/{serviceSlug?}` route and returns 404 — nginx/Herd serves
-> `public/*.js` in production and the file is invisible to the
-> feature-test layer by construction. Switched to
-> `file_get_contents(public_path('embed.js'))` to match Test 3.
-> Noted in the archived plan's §5 Step 4. Content-Type verification
-> remains a web-server concern; `curl -I http://riservo-app.test/embed.js`
-> returns `application/javascript; charset=utf-8`.
+### Config + i18n
+
+`config/auth.php` grows an `auth.throttle.*` subtree with defaults
+5/email, 20/ip, 15min decay per endpoint. `lang/en.json` gains one new
+key: `"Too many requests. Please try again in :minutes minute(s)."`.
+
+### New test coverage (+12 tests)
+
+`tests/Feature/Commands/SendBookingRemindersTest.php` (+5 tests,
+appended for cohesion):
+
+- DST fall-back (2026-10-25, Europe/Zurich) — booking 2026-10-26 09:00
+  UTC with `reminder_hours=[24]`; travel to `now = 2026-10-25 09:00 UTC`;
+  assert reminder fires.
+- DST spring-forward + gap hour (2026-03-29) — two bookings in one test:
+  a regular 10:00 CEST appointment and a 02:30 CEST appointment whose
+  24h wall-clock predecessor falls in the non-existent 02:00-03:00
+  local hour; Carbon's `modify()` rolls forward into post-transition.
+  Asserts both reminders fire without exception.
+- Delayed run — `now = 2026-04-13 10:30 UTC`, booking at 2026-04-14
+  10:00 UTC with `[24]`; the wall-clock 24h-before eligibility passed
+  30 min ago. New code fires; the pre-R-10 ±5-min window would have
+  missed.
+- Delayed-run idempotency — same fixture, command invoked twice;
+  assert `BookingReminder::count() === 1` and notification sent exactly
+  once.
+- Past-appointment cutoff — booking 1 hour in the past; the
+  `whereBetween(starts_at, [now, ...])` lower bound excludes it; no
+  reminder fires.
+
+`tests/Feature/Auth/AuthRecoveryThrottleTest.php` (+7 test cases across
+5 test blocks, using `dataset(['magic-link', 'forgot-password'])` where
+the behaviour is symmetric):
+
+- Per-email bucket blocks after 5 hits (dataset over both endpoints → 2 cases).
+- Per-IP bucket blocks after 20 hits with rotating emails (dataset → 2 cases).
+- Per-email and per-IP buckets are orthogonal (4 alice + 1 bob + 1 alice
+  all succeed; 6th alice trips the per-email bucket).
+- Throttle keys are endpoint-scoped (exhaust magic-link for alice@;
+  forgot-password for alice@ still succeeds — different namespace).
+- Decay window frees the bucket (`$this->travel(16)->minutes()` after
+  exhaustion; the next hit succeeds).
 
 ---
 
 ## Current Project State
 
-- **Frontend**: the dashboard embed settings page emits a
-  service-aware popup snippet that mirrors the iframe prefilter
-  behaviour. The vanilla JS widget in `public/embed.js` is a proper
-  modal on any host page that embeds the snippet. The iframe
-  snippet and Live Preview are unchanged.
-- **Backend**: no changes. `PublicBookingController::show()`,
-  `Dashboard\Settings\EmbedController`, and the catch-all route in
-  `routes/web.php:201` are untouched — path form already worked
-  end-to-end since Session 9. R-9 is a widget + docs + decision
-  session, not a backend change.
-- **Routes**: no changes.
-- **Tests**: full Pest suite green on Postgres — **472 passed,
-  1871 assertions**. +4 from the R-8 baseline of 468.
-- **Decisions**: D-070 appended to
-  `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md`. Covers the
-  canonical service-prefilter contract.
-- **Migrations**: none.
-- **i18n**: zero new keys. `t('Book Now')` reused from existing
-  strings for the popup snippet template. The vanilla JS widget
-  still hardcodes English `'Book appointment'` and `'Close'` —
-  captured as a BACKLOG item ("Popup widget i18n") because
-  loading translations into a third-party-embedded JS widget is
-  a non-trivial decision of its own.
+- **Backend**: `SendBookingReminders` now computes eligibility in
+  wall-clock local time with past-due eligibility and row-level
+  idempotency. Two new FormRequests wrap the two auth-recovery
+  POST endpoints with a per-email + per-IP throttle pair. Two
+  controllers got three-line signature swaps; no other backend code
+  changed.
+- **Frontend**: no changes. The throttle error surfaces on the existing
+  `errors.email` prop that magic-link and forgot-password pages already
+  render (same prop login uses) — no React changes needed.
+- **Routes**: no changes. `php artisan route:list --path=magic-link`
+  and `--path=forgot-password` confirm the endpoints still resolve to
+  the same controllers.
+- **Scheduler**: cadence unchanged — `everyFiveMinutes()->withoutOverlapping()`
+  per `routes/console.php:11`. Correctness now lives in the eligibility
+  math, not the cadence (D-071 decision 6).
+- **Tests**: full Pest suite green on Postgres — **484 passed, 2013
+  assertions**. +12 from the R-9 baseline of 472 (5 reminder + 7
+  throttle cases).
+- **Decisions**: D-071 in `DECISIONS-BOOKING-AVAILABILITY.md`
+  (reminder semantics). D-072 in `DECISIONS-AUTH.md` (throttle
+  pattern). D-001 – D-068 untouched.
+- **Migrations**: none. The existing `booking_reminders` table
+  (D-056, migration `2026_04_16_100012_create_booking_reminders_table.php`)
+  carries both the deduplication and the race-safe slot-claim duty.
+- **i18n**: one new key in `lang/en.json`
+  (`"Too many requests. Please try again in :minutes minute(s)."`).
+- **Config**: `config/auth.php` grew `auth.throttle.*` subtree;
+  defaults encoded as
+  `(int) env('THROTTLE_MAGIC_LINK_EMAIL', 5)` etc., so ops can tune
+  post-launch without a redeploy.
 
 ---
 
@@ -133,229 +179,118 @@ vendor/bin/pint --dirty --format agent
 npm run build
 ```
 
-All three are green: **472 passed**, `{"result":"pass"}`, clean
-Vite build in under 1 s (no new TypeScript errors, no new warnings
-beyond the pre-existing 500 kB chunk-size notice).
+All three green: **484 passed** (in ~21 s), `{"result":"pass"}`, clean
+Vite build in under 1 s (only the pre-existing 500 kB chunk-size notice,
+unchanged).
 
-Server-side sanity check of the URL shapes the popup will build:
+Targeted checks:
 
 ```bash
-curl -I http://riservo-app.test/embed.js
-# 200, Content-Type: application/javascript; charset=utf-8
-
-curl -sI 'http://riservo-app.test/{slug}?embed=1'             # default popup URL
-curl -sI 'http://riservo-app.test/{slug}/{service}?embed=1'   # prefiltered popup URL
-curl -sI 'http://riservo-app.test/{slug}/bogus?embed=1'       # unknown service falls through; 200
+php artisan test --compact --filter=SendBookingReminders   # 9 passed
+php artisan test --compact --filter=AuthRecoveryThrottle   # 7 passed
+php artisan schedule:list                                  # cadence unchanged
+php artisan route:list --path=magic-link                   # POST → MagicLinkController@store
+php artisan route:list --path=forgot-password              # POST → PasswordResetController@store
 ```
 
-All return `HTTP/1.1 200 OK`. The unknown-service fallthrough is
-tested server-side by `PublicBookingPageTest` → "invalid service
-slug is ignored".
-
----
-
-## Manual QA (developer-driven; not yet performed)
-
-The agent cannot drive a browser interactively, so the 15-item
-checklist below needs a human run before R-9 is considered
-fully verified. Code-level verification (tests, Pint, build,
-curl-level URL sanity) is complete.
-
-### Setup — scratch host page
-
-Save this as `/tmp/test-embed.html` (or anywhere outside the
-repo) and open with `file://…` in a browser. Use a real business
-slug (e.g., `salone-bella`) and one of its active service slugs
-(e.g., `colore`).
-
-```html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Riservo popup embed — host test</title>
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 40px; max-width: 720px; line-height: 1.6; }
-    button { padding: 10px 16px; margin-right: 10px; font-size: 16px; cursor: pointer; }
-    section { margin-top: 40px; }
-  </style>
-</head>
-<body>
-  <h1>Host page — popup embed QA</h1>
-  <p><button data-riservo-open>Book now (no prefilter)</button>
-     <button data-riservo-open data-riservo-service="colore">Book colore (prefiltered)</button>
-     <button data-riservo-open data-riservo-service="bogus">Book bogus (unknown service)</button></p>
-
-  <section>
-    <h2>Lorem ipsum (scroll lock test)</h2>
-    <p>Paste ~10 paragraphs of Lorem ipsum here so the page scrolls.
-       QA #7 verifies the host page cannot scroll while the modal is open.</p>
-  </section>
-
-  <script src="http://riservo-app.test/embed.js" data-slug="salone-bella"></script>
-</body>
-</html>
-```
-
-Delete the file when done. If using the scratch-in-`public/`
-variant instead, verify with `git status` before closing that
-`public/test-embed.html` is not staged or committed.
-
-### Checklist
-
-Run in Chrome + at least one other browser (Firefox or Safari),
-plus the DevTools mobile emulator at 375 px.
-
-1. **Default popup opens.** Click "Book now (no prefilter)".
-   Modal fades in; focus moves to the close (×) button; iframe
-   loads `/salone-bella?embed=1`; booking flow lands on the
-   service picker.
-2. **Service prefilter opens the right step.** Click "Book
-   colore (prefiltered)". Iframe loads
-   `/salone-bella/colore?embed=1`; booking flow skips the service
-   picker. Click "Book bogus (unknown service)" — iframe loads
-   `/salone-bella/bogus?embed=1`; server silently falls through
-   to the service picker (existing "invalid service slug is
-   ignored" test behaviour).
-3. **Esc closes.** Press Escape. Modal fades out; focus returns
-   to the trigger button (press Enter/Space on it — same button
-   reopens the modal).
-4. **Backdrop click closes.** Click the dark area around the
-   modal. Modal closes; focus returns to the trigger. Now drag:
-   mousedown on the backdrop → drag over the iframe → mouseup on
-   the iframe. Modal does NOT close. Reverse: mousedown on the
-   iframe → drag out to the backdrop → mouseup on the backdrop.
-   Modal does NOT close (the pre-R-9 bug is fixed).
-5. **Close button works.** Click the × in the top-right. Modal
-   closes; focus returns to the trigger.
-6. **Focus trap.** Open the modal. Press Tab repeatedly. Focus
-   cycles close button → iframe contents → (when iframe content
-   is exhausted) back to close button. Shift+Tab from close
-   button redirects back to close button (the trap doesn't let
-   focus escape to the host page; symmetry with Shift+Tab is a
-   documented tradeoff — see plan §3.4 "Focus trap").
-7. **Scroll lock.** Host page has Lorem ipsum below the viewport.
-   Open the modal. Try mouse-wheel / touch / arrow-keys /
-   spacebar — host page does NOT scroll. Close the modal —
-   host page scrolls normally; previous scroll position preserved.
-8. **Duplicate-open guard.** Double-click the trigger rapidly.
-   Only one modal opens (DevTools: only one
-   `[data-riservo-overlay]` element in the DOM).
-9. **Multiple triggers.** The three triggers in the scratch
-   host page each produce the correct URL. Closing one and
-   opening another works normally.
-10. **Duplicate `<script>` tags.** Add a second
-    `<script src="http://riservo-app.test/embed.js" data-slug="salone-bella"></script>`
-    before `</body>` and reload. The DOM-level duplicate guard
-    keeps only one modal open despite both IIFEs having registered
-    click listeners.
-11. **ARIA roles present.** Inspect the open modal with DevTools.
-    Container has `role="dialog"`, `aria-modal="true"`, `aria-label`.
-12. **Screen reader sanity.** VoiceOver on macOS or NVDA on
-    Windows announces "dialog, Book appointment" when the modal
-    opens. This one requires SR — the agent cannot verify.
-13. **Mobile viewport.** Chrome DevTools device emulator at
-    375 px. The modal container (`width: 90%; max-width: 500px;
-    height: 85vh`) renders well; tap outside / tap close / Esc
-    from software keyboard behave as desktop. Real iOS Safari
-    and real Android Chrome should be spot-checked too — the
-    emulator does not replicate ITP or real touch scroll-lock
-    behaviour.
-14. **Booking flow end-to-end inside popup.** Make a real test
-    booking: pick datetime, fill customer details, submit.
-    Modal stays open through the flow; confirmation renders
-    inside the iframe; closing the modal does not cancel the
-    confirmed booking.
-15. **Dashboard snippet matches SPEC example.** In the dashboard
-    at `/dashboard/settings/embed`, pick a service in the
-    "Pre-filter by service" Select. Copy the popup snippet.
-    Verify it matches the SPEC §8 example shape exactly: script
-    with `data-slug`; button with
-    `data-riservo-open data-riservo-service="…"`.
-
-### Known-risk follow-ups (apply if QA reveals them)
-
-- **iOS Safari scroll lock**: if #7 still scrolls on real iOS
-  Safari, apply the `position: fixed; top: -{scrollY}px`
-  workaround inside `embed.js`'s scroll-lock code. Plan §6.6
-  flags this as a known risk — mitigation is pre-authorised.
-- **Safari ITP cookie/session inside iframe**: if #14 loses
-  session state between steps on Safari specifically, that's the
-  separate ITP issue flagged in plan Risk 8.4. Document and
-  carry to the Embed & Share BACKLOG; do NOT scope-creep R-9.
-- **Host-page CSP blocking the script**: if the script is
-  blocked by a host-site CSP, that's environmental — the snippet
-  copy UX implies the host has authorised `riservo.ch`. Add a
-  release note for partners; no code change.
+**No browser QA required this session.** Unlike R-8 and R-9 (which
+depended on visual + keyboard + screen-reader behaviour the agent
+cannot automate), the R-10 + R-11 scope is purely backend logic.
+The 12 new Pest tests cover DST math, delayed-run recovery,
+idempotency, past-due cutoff, and both throttle dimensions including
+decay — end-to-end via the route layer, not unit-level mocks. A
+smoke-check in a real browser would re-discover the same behaviour
+the tests already pin.
 
 ---
 
 ## What the Next Session Needs to Know
 
-R-9 code is complete. Developer-driven browser + SR manual QA is
-the one remaining verification step; it gates closure. The
-remediation roadmap moves on to **R-10 (reminder DST + delayed-run
-resilience)** — independent of R-9 (different files, different
-concepts, different decision). See plan §1.3 (archived) for the
-bundling analysis that split R-9 from R-10.
+R-10 and R-11 are complete. The remediation roadmap moves on to the
+**R-12 + R-13 + R-14 + R-15** polish bundle (copy drift + customer
+registration scope + notification delivery/branding + dependency and
+URL-generation cleanup — per ROADMAP-REVIEW's "can be one session"
+grouping), then **R-16** (frontend code splitting / lazy page
+resolver, standalone).
 
-When adding new popup-embed code:
+When touching reminder code or auth throttling:
 
-- **D-070 is the contract.** Path form is canonical across direct
-  link, iframe, popup, tests. `?service=` query form is rejected
-  and must stay rejected. `?embed=1` (D-054) stays as the
-  orthogonal layout switch.
-- **`public/embed.js` stays vanilla JS, single IIFE, no bundler.**
-  D-054 chose this explicitly. If future work needs shared helpers
-  across multiple widget files, that is a new decision (introducing
-  Vite bundling for `public/*.js`), not an inline refactor.
-- **Zero external references in `public/embed.js`.** The
-  `toBeEmpty()` whitelist guard fails loudly on any new
-  `https?://…` literal. If a legitimate external reference is ever
-  needed, the whitelist is a single-line list update.
-- **Iframe `title` and close-button `aria-label` are English-only.**
-  See the Embed & Share BACKLOG ("Popup widget i18n"). Do not
-  retrofit half-i18n — the loader strategy needs to be decided
-  holistically.
+- **D-071 is the spec.** Wall-clock local semantics, past-due
+  eligibility, row-level idempotency via `booking_reminders`. Do not
+  reintroduce a `±N` minute window — it silently drops reminders past
+  the `N` minute outage boundary. Do not add a watermark table — the
+  unique constraint already provides the correctness guarantee at the
+  right granularity.
+- **Carbon `subHours()` is absolute-UTC; `modify("-N hours")` is
+  wall-clock.** The two differ by 1 hour whenever the wall-clock
+  interval crosses a DST transition. `modify()` is the primitive D-071
+  requires; a future refactor must not silently swap back to
+  `subHours()`.
+- **D-072 decision 2 — two independent buckets, NOT combined.**
+  Rejecting the LoginRequest `email|ip` single-key shape was a
+  deliberate call — auth-recovery has no "success clears" signal
+  (D-037 generic response) so a combined key leaves either attack
+  axis open to rotation. Any future auth-adjacent throttle endpoint
+  (e.g., email-verification resend, if it migrates off route-level
+  `throttle:`) should follow the same two-bucket shape.
+- **Do not emit `Illuminate\Auth\Events\Lockout` for abuse-prevention
+  throttles.** That event is reserved for auth-lockout semantics
+  (LoginRequest). The two new FormRequests deliberately skip it
+  (D-072 decision 7).
+- **Throttle values are in `config/auth.php`, not a new
+  `config/throttle.php`.** If a third auth-adjacent throttle endpoint
+  lands, consider a unified `config/throttle.php` consolidation pass
+  (captured in PLAN §10 as a carry-over), but do not split values
+  across two config files piecemeal.
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **R-9 manual QA — developer-driven.** The 15-item checklist
-  above needs a browser + SR pass. Code-level verification is
-  green; visual + keyboard + SR verification is the one remaining
-  gate. Matches R-8's pattern: the agent cannot drive a browser
-  interactively.
-- **Browser-test infrastructure** (Pest Browser, Playwright). R-9
-  could have added browser tests for the modal robustness gaps
-  (focus trap cycling, scroll lock, duplicate guard); the plan
-  deliberately deferred because introducing browser-test infra is
-  itself a non-trivial session. Carry-over from R-7 / R-8.
-- **Popup widget i18n.** The English `iframe.title = 'Book appointment'`
-  and the close-button `aria-label='Close'` are in code. Loading
-  translations into a vanilla-JS third-party-embedded widget is a
-  separate decision (per-script `data-locale`? server-rendered
-  `/embed-{locale}.js`? `window.riservoLocale` global?).
-- **Popup analytics events, custom theming, multi-service picker,
-  CSP hardening, Safari ITP session continuity, slug-alias
-  history, deployed-snippet telemetry, SRI hashes, dashboard
-  embed-settings copy UX polish.** All captured as one-liners in
-  `docs/BACKLOG.md` under "Embed & Share (R-9 carry-overs)".
-- **R-10 — Reminder DST + delayed-run resilience.** Next candidate
-  in the remediation roadmap. Independent from R-9.
-- **R-8 manual QA** — carried over from the R-8 HANDOFF; code-level
-  verification was green, browser pass is still pending.
-- **`docs/ARCHITECTURE-SUMMARY.md` stale terminology** — carried
-  over from R-5/R-6: several places still say "collaborator"
-  where the code has moved to "provider". Not blocking.
-- **Real-concurrency smoke test** — carried over from R-4B;
-  deterministic simulation remains authoritative.
-- **Availability-exception race** — carried over from R-4B; out of
-  scope.
-- **Parallel test execution** (`paratest`) — carried over from
-  R-4A; revisit only if the suite grows painful.
-- **Multi-business join flow + business-switcher UI (R-2B)** —
-  carried over from earlier sessions; still deferred.
-- **Dashboard-level "unstaffed service" warning** — carried over
-  from R-1B; still deferred.
+- **R-9 manual QA — developer-driven.** The 15-item browser + SR
+  checklist from the prior HANDOFF is still the one remaining gate on
+  R-9. Unrelated to this session.
+- **R-8 manual QA** — also carried over from the R-8 HANDOFF.
+- **Scheduler-lag alerting.** Nothing today pages ops if `schedule:run`
+  hasn't executed for an hour. D-071 accepts a reminder being dropped
+  when a scheduler outage exceeds `hoursBefore`; the detection gap is
+  a post-launch ops concern, captured in the R-10-11 plan §10.
+- **Consolidate rate-limiter definitions in `config/throttle.php`.**
+  `booking-api` / `booking-create` are hardcoded in
+  `AppServiceProvider::boot()`; `magic_link` / `password_reset` live
+  in `config/auth.php`. A future pass can unify. Non-blocking.
+- **`X-RateLimit-Remaining` / `Retry-After` headers on throttled
+  auth-recovery responses.** The current validation-error shape
+  doesn't set them (parity with LoginRequest). API-first clients
+  would want them; post-launch concern.
+- **Per-email-bucket lockout telemetry.** If abuse monitoring shows
+  >1% of legitimate users tripping the per-email cap, tune
+  `THROTTLE_MAGIC_LINK_EMAIL` / `THROTTLE_PASSWORD_RESET_EMAIL` up via
+  env flip (no redeploy).
+- **Emit a `RateLimitExceeded` event for auth-recovery throttle.**
+  Not today. Add a listener if abuse telemetry wants it.
+- **SMS / WhatsApp reminder channel.** SPEC §9 post-MVP. The
+  eligibility shape (wall-clock local, past-due, `booking_reminders`
+  idempotency) composes over a per-channel extension — likely via
+  `(booking_id, hours_before, channel)` unique.
+- **Reminder `hours_before` per-booking override.** `reminder_hours`
+  is per-Business per D-019; per-booking override is a post-MVP
+  product decision.
+- **Dashboard UI for reminder status / replay / manual trigger.**
+  Post-MVP. The `booking_reminders` table is already queryable, so
+  this is a UI-only follow-up.
+- **Fall-back-overlap wall-clock ambiguity.** Carbon picks the first
+  occurrence (earlier UTC instant); D-071 decision 4 accepts this.
+  If a support case surfaces customer-perceived-wrong behaviour on
+  the autumn DST weekend, we revisit.
+- **Browser-test infrastructure** (Pest Browser, Playwright) —
+  carry-over from R-7 / R-8 / R-9.
+- **Popup widget i18n** — carried over from R-9.
+- **`docs/ARCHITECTURE-SUMMARY.md` stale terminology** — carry-over
+  from R-5/R-6.
+- **Real-concurrency smoke test** — carried over from R-4B.
+- **Availability-exception race** — carried over from R-4B.
+- **Parallel test execution** (`paratest`) — carried over from R-4A.
+- **Multi-business join flow + business-switcher UI (R-2B)** — still
+  deferred.
+- **Dashboard-level "unstaffed service" warning** — still deferred.

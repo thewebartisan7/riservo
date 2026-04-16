@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\SendMagicLinkRequest;
 use App\Models\BusinessMember;
 use App\Models\Customer;
 use App\Models\User;
@@ -24,11 +25,9 @@ class MagicLinkController extends Controller
         ]);
     }
 
-    public function store(Request $request): RedirectResponse
+    public function store(SendMagicLinkRequest $request): RedirectResponse
     {
-        $request->validate([
-            'email' => ['required', 'string', 'email'],
-        ]);
+        $request->ensureIsNotRateLimited();
 
         $email = $request->input('email');
         $user = $this->resolveUser($email);

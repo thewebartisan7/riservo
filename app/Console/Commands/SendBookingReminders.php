@@ -7,9 +7,11 @@ use App\Models\Booking;
 use App\Models\BookingReminder;
 use App\Models\Business;
 use App\Notifications\BookingReminderNotification;
+use Carbon\CarbonImmutable;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Notification;
 
 #[Signature('bookings:send-reminders')]
@@ -18,7 +20,7 @@ class SendBookingReminders extends Command
 {
     public function handle(): int
     {
-        $now = now();
+        $now = CarbonImmutable::now('UTC');
 
         $allReminderHours = Business::whereNotNull('reminder_hours')
             ->pluck('reminder_hours')
@@ -33,31 +35,52 @@ class SendBookingReminders extends Command
             return self::SUCCESS;
         }
 
+        $horizonEnd = $now->addHours((int) $allReminderHours->max() + 1);
+
+        $candidates = Booking::where('status', BookingStatus::Confirmed)
+            ->whereBetween('starts_at', [$now, $horizonEnd])
+            ->with(['business', 'service', 'provider.user', 'customer', 'reminders'])
+            ->get();
+
         $totalSent = 0;
 
-        foreach ($allReminderHours as $hoursBefore) {
-            $targetStart = $now->copy()->addHours((int) $hoursBefore)->subMinutes(5);
-            $targetEnd = $now->copy()->addHours((int) $hoursBefore)->addMinutes(5);
+        foreach ($candidates as $booking) {
+            $tz = $booking->business->timezone;
+            $reminderHours = $booking->business->reminder_hours ?? [];
 
-            $bookings = Booking::where('status', BookingStatus::Confirmed)
-                ->whereBetween('starts_at', [$targetStart, $targetEnd])
-                ->whereDoesntHave('reminders', fn ($q) => $q->where('hours_before', $hoursBefore))
-                ->with(['business', 'service', 'provider.user', 'customer'])
-                ->get();
+            foreach ($reminderHours as $hoursBefore) {
+                $hoursBefore = (int) $hoursBefore;
 
-            foreach ($bookings as $booking) {
-                if (! in_array($hoursBefore, $booking->business->reminder_hours ?? [])) {
+                if ($hoursBefore <= 0) {
                     continue;
                 }
 
-                BookingReminder::create([
-                    'booking_id' => $booking->id,
-                    'hours_before' => $hoursBefore,
-                    'sent_at' => $now,
-                ]);
+                $reminderTimeUtc = $booking->starts_at
+                    ->toImmutable()
+                    ->setTimezone($tz)
+                    ->modify("-{$hoursBefore} hours")
+                    ->utc();
+
+                if ($reminderTimeUtc->greaterThan($now)) {
+                    continue;
+                }
+
+                if ($booking->reminders->contains('hours_before', $hoursBefore)) {
+                    continue;
+                }
+
+                try {
+                    BookingReminder::create([
+                        'booking_id' => $booking->id,
+                        'hours_before' => $hoursBefore,
+                        'sent_at' => $now,
+                    ]);
+                } catch (UniqueConstraintViolationException) {
+                    continue;
+                }
 
                 Notification::route('mail', $booking->customer->email)
-                    ->notify(new BookingReminderNotification($booking, (int) $hoursBefore));
+                    ->notify(new BookingReminderNotification($booking, $hoursBefore));
 
                 $totalSent++;
             }

@@ -1,4 +1,4 @@
-# riservo.ch — Feature Roadmap (Post-MVP Additions)
+# riservo.ch — Feature Roadmap 
 
 > Version: 0.1 — Draft  
 > Status: Planning  

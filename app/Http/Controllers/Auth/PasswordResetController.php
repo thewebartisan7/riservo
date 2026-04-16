@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\SendPasswordResetRequest;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -22,11 +23,9 @@ class PasswordResetController extends Controller
         ]);
     }
 
-    public function store(Request $request): RedirectResponse
+    public function store(SendPasswordResetRequest $request): RedirectResponse
     {
-        $request->validate([
-            'email' => ['required', 'email'],
-        ]);
+        $request->ensureIsNotRateLimited();
 
         Password::sendResetLink($request->only('email'));
 
