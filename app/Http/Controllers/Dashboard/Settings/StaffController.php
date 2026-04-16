@@ -25,17 +25,22 @@ class StaffController extends Controller
     public function index(Request $request): Response
     {
         $business = $request->user()->currentBusiness();
+        $currentUserId = $request->user()->id;
 
-        $staff = $business->staff()
+        $members = $business->members()
+            ->orderByRaw("CASE business_members.role WHEN 'admin' THEN 0 ELSE 1 END")
+            ->orderBy('users.name')
             ->get(['users.id', 'users.name', 'users.email', 'users.avatar'])
-            ->map(function (User $u) use ($business) {
+            ->map(function (User $u) use ($business, $currentUserId) {
                 $provider = Provider::withTrashed()
                     ->where('business_id', $business->id)
                     ->where('user_id', $u->id)
                     ->first();
 
+                $isProvider = $provider !== null && $provider->deleted_at === null;
+
                 $servicesCount = 0;
-                if ($provider && $provider->deleted_at === null) {
+                if ($isProvider) {
                     $servicesCount = $provider->services()
                         ->where('services.business_id', $business->id)
                         ->count();
@@ -46,7 +51,10 @@ class StaffController extends Controller
                     'name' => $u->name,
                     'email' => $u->email,
                     'avatar_url' => $u->avatar ? Storage::disk('public')->url($u->avatar) : null,
-                    'is_active' => $provider !== null && $provider->deleted_at === null,
+                    'role' => $u->pivot->role->value,
+                    'is_provider' => $isProvider,
+                    'is_self' => $u->id === $currentUserId,
+                    'is_active' => $isProvider,
                     'provider_id' => $provider?->id,
                     'services_count' => $servicesCount,
                 ];
@@ -70,7 +78,7 @@ class StaffController extends Controller
             ->map(fn ($s) => ['id' => $s->id, 'name' => $s->name]);
 
         return Inertia::render('dashboard/settings/staff/index', [
-            'staff' => $staff,
+            'staff' => $members,
             'invitations' => $invitations,
             'services' => $services,
         ]);

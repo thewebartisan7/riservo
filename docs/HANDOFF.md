@@ -1,6 +1,6 @@
 # Handoff
 
-**Session**: R-1A — Provider Model Refactor
+**Session**: R-1B — Admin as Provider
 **Date**: 2026-04-16
 **Status**: Complete
 
@@ -8,99 +8,67 @@
 
 ## What Was Built
 
-A structural refactor that separates "dashboard access and permissions" (role) from "bookability" (provider) as orthogonal first-class concepts. No new user-visible features; every identifier carrying the legacy "collaborator" term was renamed across backend and frontend. New architectural decision **D-061** recorded in `docs/decisions/DECISIONS-AUTH.md`.
+The product half of REVIEW-1 issue #1: an admin can now become a bookable provider, onboarding cannot complete with unstaffed services, and the public page hides services that have no one to perform them. R-1A set the data model for this; R-1B delivers the UX and the launch gate on top. New architectural decision **D-062** recorded in `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md`.
 
-### Data Model
+### Onboarding step 3 — provider opt-in
 
-- **New table `providers`**: one row per bookable person per business. Columns: `id`, `business_id`, `user_id`, `created_at`, `updated_at`, `deleted_at` (soft-delete). Unique index on `(business_id, user_id, deleted_at)`.
-- **Renamed `business_user` → `business_members`**: pivot now carries `role` only (`admin` | `staff`). `is_active` is dropped; lifecycle is expressed via soft-delete (`SoftDeletes`).
-- **Renamed `collaborator_service` → `provider_service`** (FK → `providers`).
-- **Repointed FKs** `bookings.collaborator_id`, `availability_rules.collaborator_id`, `availability_exceptions.collaborator_id` → `provider_id` (FK → `providers`). `availability_exceptions.provider_id` stays nullable (D-021: business-level exceptions have `NULL`).
-- **Renamed column** `businesses.allow_collaborator_choice` → `allow_provider_choice`.
-- **Retired enum case** `BusinessUserRole::Collaborator` / `'collaborator'` → `BusinessMemberRole::Staff` / `'staff'`.
+- `OnboardingController::showService()` returns `adminProvider = { exists, schedule, serviceIds }`, `businessHoursSchedule`, and `hasOtherProviders` so the step-3 UI can pre-fill the schedule editor and tailor its copy.
+- `OnboardingController::storeService()` accepts optional `provider_opt_in: bool` and `provider_schedule: DaySchedule[]`. Inside a transaction: upserts the service, and when opt-in is on: restores / creates the admin's `providers` row, writes availability rules, and idempotently attaches the admin to the service. Opt-in off detaches the admin from *this* service only — other service attachments stay intact.
+- `StoreServiceRequest` adds conditional rules: `provider_schedule` is required when `provider_opt_in = true`, nullable otherwise.
+- Front end (`resources/js/pages/onboarding/step-3.tsx`): switch + collapsible `WeekScheduleEditor` that defaults from step-2 business hours, "Match business hours" reset button, and the launch-blocked banner with "Be your own first provider" / "Invite a provider instead" CTAs.
 
-### Migrations
+### Settings → Account page
 
-Nine ordered migrations under `database/migrations/2026_04_16_*`: rename pivot, create providers, backfill providers from staff members, drop `is_active`, create `provider_service` and migrate from old table, repoint bookings/rules/exceptions FKs, and rename the boolean column. Each migration is atomic with up + down. `php artisan migrate:fresh --seed` leaves the DB in the new shape.
+New `App\Http\Controllers\Dashboard\Settings\AccountController` at `/dashboard/settings/account` (admin-only). The page is the admin's self-service command-center for their bookability:
 
-### Models
+- `edit()` — resolves the admin's provider row (including soft-deleted), computes `isProvider`, builds schedule from provider rules or from business hours as fallback, lists the admin's exceptions, and returns active services with an `assigned` flag. Also returns `upcomingBookingsCount` so the turn-off confirmation can warn about in-flight bookings.
+- `toggleProvider()` — create + default-attach active services + write schedule from business hours, OR restore, OR soft-delete. Flash `warning` when toggling off leaves any active service unstaffed; otherwise flash `success` with variant copy ("now bookable", "bookable again", "no longer bookable").
+- `updateSchedule`, `storeException`, `updateException`, `destroyException`, `updateServices` — full CRUD for the admin's provider, each gated by `activeProviderOrFail()` (aborts 409 with copy pointing at the toggle).
+- Routes under the existing `role:admin` settings prefix; Wayfinder regenerated (`resources/js/actions/.../AccountController.ts`).
+- Front end (`resources/js/pages/dashboard/settings/account.tsx`): read-only profile card, Bookable-provider Switch wrapped in an `AlertDialog` that shows the upcoming-bookings count on turn-off, inline `WeekScheduleEditor`, exceptions list reusing `ExceptionDialog`, and a checkbox list for services. Submits via `useHttp` with the pending-ref pattern borrowed from `staff/show.tsx`.
+- New "You" group (with Account entry) prepended to `resources/js/components/settings/settings-nav.tsx`.
 
-- New `App\Models\Provider` with `SoftDeletes`, relations to `Business`, `User`, `Service` (many-to-many via `provider_service`), `AvailabilityRule` (has-many), `AvailabilityException` (has-many), and `Booking` (has-many). `displayName` accessor returns `user?->name`.
-- New `App\Models\BusinessMember` pivot (replaces `BusinessUser`) with `SoftDeletes`.
-- `Business` gains `providers()` (HasMany), drops `users()` in favor of `members()`; `collaborators()` renamed to `staff()`.
-- `User` gets `providers()` HasMany; loses `services()`, `availabilityRules()`, `availabilityExceptions()`, `bookingsAsCollaborator()` — all moved to Provider.
-- `Service`, `Booking`, `AvailabilityRule`, `AvailabilityException` — relation `collaborator()` renamed to `provider()`.
+### Settings → Staff page
 
-### Services
+- `StaffController::index` now returns **all** members (admins + staff) with `role`, `is_provider`, `is_self`, `provider_id`, `services_count`. Admins are ordered first, then staff, each alphabetized.
+- Front end (`resources/js/pages/dashboard/settings/staff/index.tsx`): each row shows a "You" badge for the current user, a role pill (Admin / Staff), and a provider-status chip (Provider / Not bookable). The services count is only rendered when the member is an active provider. Non-self admin rows link to the staff detail page; the self admin row links to `/dashboard/settings/account` instead. Toggle is only rendered on staff rows — admins manage themselves via the Account page.
 
-- `SlotGeneratorService` methods now accept `Provider $provider` instead of `User $collaborator`. Public methods `getEligibleProviders`, `assignProvider`, `leastBusyProvider`. Booking-conflict queries use `provider_id`.
-- `AvailabilityService` — parameter-type change across the board; queries read from `$provider->availabilityRules()` / `$provider->availabilityExceptions()`.
+### Launch gate (step 5)
 
-### Controllers
+- `OnboardingController::storeLaunch()` blocks when any active service has zero non-soft-deleted providers via `whereDoesntHave('providers')`. On failure it redirects to step 3 with `launchBlocked = { services: [{ id, name }, ...] }` session data, and bumps `onboarding_step` down to 3 if needed so the wizard actually renders step 3.
+- New `POST /onboarding/enable-owner-as-provider` → `OnboardingController::enableOwnerAsProvider()`: creates / restores the admin's provider row, writes a default schedule from business hours only if no rules exist yet, and `syncWithoutDetaching`s the admin to every active service. Redirects to step 5 with a success flash.
 
-- `Dashboard\Settings\CollaboratorController` split into **`StaffController`** (team membership, invitations, avatar, show/index) and **`ProviderController`** (schedule, exceptions, toggle soft-delete, sync services).
-- `Booking\PublicBookingController` — `collaborators()` renamed to `providers()`; slot/date endpoints accept `provider_id` query param.
-- `Dashboard\BookingController` and `Dashboard\CalendarController` — provider dropdown / filter; eager-load `provider.user`.
-- `Auth\InvitationController::accept()` is transaction-wrapped and creates: User → `business_members` (role=staff) → `providers` row → `provider_service` attachments → mark invitation accepted → login.
+### Public page defense-in-depth
 
-### Form Requests
+- `PublicBookingController::show()` now filters services with `whereHas('providers')` instead of `withCount('providers')`. A service that loses its last provider — post-launch or via an admin toggle — disappears from `/{slug}` until a provider is re-attached, with no admin action required.
 
-Renamed: `StoreStaffInvitationRequest`, `UpdateProviderScheduleRequest`, `StoreProviderExceptionRequest`, `UpdateProviderExceptionRequest`, new `UpdateProviderServicesRequest`. All `collaborator_id(s)` fields renamed to `provider_id(s)` with `exists:providers,id` plus business-scoped closure rules.
+### End-to-end test
 
-### Routes
-
-- `/dashboard/settings/collaborators/*` removed. New: `/dashboard/settings/staff/*` (index, show, invite, resend, cancel, avatar) and `/dashboard/settings/providers/{provider}/*` (toggle, schedule, exceptions, services).
-- `/booking/{slug}/collaborators` → `/booking/{slug}/providers` (route name `booking.providers`).
-- Slot and available-dates endpoints keep paths, but the query param `collaborator_id` is now `provider_id`.
-- Wayfinder regenerated; `CollaboratorController.ts` replaced by `StaffController.ts` + `ProviderController.ts`; `routes/settings/staff/` and `routes/settings/providers/` generated.
-
-### Frontend
-
-- Pages: `dashboard/settings/collaborators/{index,show}.tsx` moved to `dashboard/settings/staff/{index,show}.tsx`. The show page gates schedule/exceptions blocks on `staff.provider_id !== null` (R-1A shows admin as staff-only with no schedule; R-1B adds the opt-in).
-- Components renamed: `collaborator-filter` → `provider-filter`, `collaborator-picker` → `provider-picker`, `collaborator-invite-dialog` → `staff-invite-dialog`.
-- Types renamed: `CalendarCollaborator` → `CalendarProvider`, `Collaborator` (booking) → `Provider`. Role union in `PageProps['auth']['role']` is `'admin' | 'staff' | 'customer' | null`.
-- Utilities: `getCollaboratorColor(Map)` → `getProviderColor(Map)`.
-- Props/keys: `collaborators`/`collaborator`/`collaborator_id(s)` → `providers`/`provider`/`provider_id(s)` everywhere.
-- `lang/en.json` — keys and values rewritten to "staff"/"provider"/"team member" per context.
-
-### Factories, Seeders, Tests
-
-- New `ProviderFactory`. `BookingFactory`, `AvailabilityRuleFactory`, `AvailabilityExceptionFactory` default to `provider_id => Provider::factory()`.
-- `BusinessSeeder` creates `business_members` rows, then a `providers` row per staff member (admin stays member-only per D-061; admin-as-provider is R-1B), then attaches services via `provider_service`.
-- New Pest global helpers in `tests/Pest.php`: `attachAdmin`, `attachStaff`, `attachProvider`.
-- `tests/Feature/Settings/CollaboratorTest.php` split into `StaffTest.php` (membership) + `ProviderTest.php` (bookability).
-- Renamed: `CollaboratorsApiTest` → `ProvidersApiTest`, `CollaboratorAssignmentTest` → `ProviderAssignmentTest`.
-- Every test file with `collaborator_id` / `collaborator` / `$this->collaborator` updated to the provider vocabulary and the new fixture helpers.
+New `tests/Feature/Onboarding/SoloBusinessBookingE2ETest.php`: register → mark verified → walk steps 1–3 with provider opt-in → skip step 4 → launch step 5 → public `POST /booking/{slug}/book` → assert `Booking::count() === 1`, `provider_id` is the admin provider, status `confirmed`, and `BookingReceivedNotification` sent to the admin (the solo provider).
 
 ---
 
 ## Current Project State
 
-- **Backend**: models now include `Provider` and `BusinessMember`; `BusinessUser` and `BusinessUserRole` deleted.
-- **Migrations**: 9 new rename/repoint/create migrations under `database/migrations/2026_04_16_*`. Original `2026_04_12_*` migrations still exist and are part of the migration chain.
-- **Tests**: **377 passing** (1391 assertions). (Net −2 from the previous handoff's 379 because `CollaboratorTest.php` was split into `StaffTest.php` + `ProviderTest.php` and several legacy fixtures were consolidated; the split added more targeted tests but removed a few duplicate assertions.)
-- **Build**: `npm run build` clean; `vendor/bin/pint --dirty` clean.
-- **Grep for `collaborator|Collaborator`** across `app/`, `resources/`, `tests/`, `routes/`, `lang/`: **zero matches**. Migration files under `database/migrations/` legitimately retain the old names because their purpose is to document the rename from the old columns (per §5 of PLAN-R-1A).
+- **Backend**: new `AccountController`, extended `OnboardingController`, extended `StaffController`, updated `PublicBookingController::show()` and `StoreServiceRequest`.
+- **Frontend**: new `dashboard/settings/account.tsx`, extended `dashboard/settings/staff/index.tsx`, extended `onboarding/step-3.tsx`, "You" group added to `settings-nav.tsx`.
+- **Routes**: 7 new `/dashboard/settings/account/*` routes + 1 new `/onboarding/enable-owner-as-provider`. Wayfinder regenerated.
+- **Tests**: full Pest suite green. Key new files: `tests/Feature/Settings/AccountTest.php` (15 tests), `tests/Feature/Onboarding/SoloBusinessBookingE2ETest.php` (1 E2E). Extended: `Step3ServiceTest`, `Step5LaunchTest`, `StaffTest`, `PublicBookingPageTest`, `SettingsAuthorizationTest`.
+- **Decisions**: D-062 appended to `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md`.
 
 ---
 
-## What the Next Session (R-1B) Needs to Know
+## What the Next Session Needs to Know
 
-R-1B is the admin-as-provider opt-in: the feature that actually closes REVIEW-1 issue #1.
-
-- The data model already supports an admin being a provider — it just requires inserting a `providers` row for an admin `business_members` record. The R-1A refactor preserved the legacy behavior that admins have NO provider row by default.
-- R-1B tasks:
-  - Onboarding step-3 (business details) adds an "I provide services to customers" opt-in. Creating the business inserts both an admin `business_members` row AND a `providers` row when checked.
-  - New Settings → Account page with the same toggle — flipping it on creates/restores the provider row; flipping it off soft-deletes it.
-  - Step-5 launch gate: the business cannot be activated if no provider exists.
-  - Public-page service filtering: services show only if at least one non-soft-deleted provider is assigned to them.
-  - End-to-end test: solo admin completes onboarding with the toggle on → is bookable.
-- The `dashboard/settings/staff/show.tsx` page gates the schedule/services/exceptions sections on `staff.provider_id !== null`. R-1B can reuse this shape by surfacing the toggle on the admin's own row.
+- REVIEW-1 issue #1 is closed. R-2 through R-16 from `docs/reviews/ROADMAP-REVIEW.md` remain independent.
+- The "Be your own first provider" CTA attaches the admin to **every** active service. The Account page is the single place to adjust those attachments afterwards; the banner copy already states this on click. No follow-up is required unless real usage surfaces pain.
+- Dashboard home does not currently warn when an active service has zero providers — noted as a product-polish follow-up in the R-1B plan (§8 Risks). Worth surfacing before launch so admins notice a disappeared service, but not blocking.
+- `upcomingBookingsCount` on the Account page is computed at render time via the bookings relation filtered by `starts_at >= now()` and status `Pending|Confirmed`. It is not persisted. No observer needed; the page always reflects the current truth.
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **Migration history tidying**: The nine R-1A rename migrations retain the `collaborator` word in their filenames and contents by design (they describe the rename FROM old columns). For a pre-launch product with no production data, these could be collapsed into the `2026_04_12_*` creates to eliminate every trace of "collaborator" — but that deviates from the PLAN-R-1A §5 migration plan. Propose to the developer whether to consolidate before launch.
-- **R-1B still owed**: the actual fix for the "unbookable solo business" in REVIEW-1. R-1A only clears the path.
-- **Other review items**: R-2 through R-16 from `docs/reviews/ROADMAP-REVIEW.md` remain independent.
+- **Identity editing on the Account page**: the plan explicitly kept name / email / avatar read-only in R-1B. Folding editing in is a clean follow-up (reuse `uploadAvatar` from `StaffController` — pattern already exists).
+- **Provider toggle on another admin's staff row**: currently the row renders no toggle for admin members (admins manage themselves). If a product need emerges where one admin needs to forcibly remove another admin's bookability, revisit. For now the explicit boundary (admins are self-service) is a feature.
+- **Dashboard-level "unstaffed service" warning**: tracked informally in this handoff. Not in scope for R-1B.

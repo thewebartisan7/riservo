@@ -21,6 +21,7 @@ test('staff cannot access any settings page', function () {
         '/dashboard/settings/services',
         '/dashboard/settings/staff',
         '/dashboard/settings/embed',
+        '/dashboard/settings/account',
     ];
 
     foreach ($routes as $route) {
@@ -44,6 +45,7 @@ test('admin can access all settings pages', function () {
         '/dashboard/settings/services',
         '/dashboard/settings/staff',
         '/dashboard/settings/embed',
+        '/dashboard/settings/account',
     ];
 
     foreach ($routes as $route) {

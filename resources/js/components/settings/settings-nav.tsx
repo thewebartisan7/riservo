@@ -4,6 +4,12 @@ import { cn } from '@/lib/utils';
 
 const navGroups = [
     {
+        label: 'You',
+        items: [
+            { label: 'Account', href: '/dashboard/settings/account' },
+        ],
+    },
+    {
         label: 'Business',
         items: [
             { label: 'Profile', href: '/dashboard/settings/profile' },

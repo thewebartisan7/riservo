@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { Field, FieldLabel, FieldError, FieldDescription } from '@/components/ui/field';
 import { Display } from '@/components/ui/display';
 import {
@@ -15,8 +16,10 @@ import {
 } from '@/components/ui/number-field';
 import { useTrans } from '@/hooks/use-trans';
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Form } from '@inertiajs/react';
-import { store } from '@/actions/App/Http/Controllers/OnboardingController';
+import { Form, Link, router, usePage } from '@inertiajs/react';
+import { store, enableOwnerAsProvider } from '@/actions/App/Http/Controllers/OnboardingController';
+import { WeekScheduleEditor } from '@/components/onboarding/week-schedule-editor';
+import type { DaySchedule } from '@/components/onboarding/day-row';
 import { useState } from 'react';
 
 interface Props {
@@ -29,6 +32,17 @@ interface Props {
         buffer_after: number;
         slot_interval_minutes: number;
     } | null;
+    adminProvider: {
+        exists: boolean;
+        schedule: DaySchedule[];
+        serviceIds: number[];
+    };
+    businessHoursSchedule: DaySchedule[];
+    hasOtherProviders: boolean;
+}
+
+interface LaunchBlockedFlash {
+    services: Array<{ id: number; name: string }>;
 }
 
 const slotIntervalItems = [
@@ -40,8 +54,13 @@ const slotIntervalItems = [
     { label: '60 min', value: '60' },
 ];
 
-export default function Step3({ service }: Props) {
+export default function Step3({ service, adminProvider, businessHoursSchedule, hasOtherProviders }: Props) {
     const { t } = useTrans();
+    const page = usePage<{ launchBlocked?: LaunchBlockedFlash }>();
+    const launchBlocked = page.props.launchBlocked ?? null;
+
+    const initialAttached = service ? adminProvider.serviceIds.includes(service.id) : adminProvider.exists;
+
     const [duration, setDuration] = useState<number>(service?.duration_minutes ?? 60);
     const [bufferBefore, setBufferBefore] = useState<number>(service?.buffer_before ?? 0);
     const [bufferAfter, setBufferAfter] = useState<number>(service?.buffer_after ?? 0);
@@ -50,6 +69,28 @@ export default function Step3({ service }: Props) {
     const [advancedOpen, setAdvancedOpen] = useState<boolean>(
         (service?.buffer_before ?? 0) > 0 || (service?.buffer_after ?? 0) > 0,
     );
+    const [providerOptIn, setProviderOptIn] = useState<boolean>(initialAttached);
+    const [providerSchedule, setProviderSchedule] = useState<DaySchedule[]>(adminProvider.schedule);
+    const [enablingOwner, setEnablingOwner] = useState(false);
+
+    const optInLabel = hasOtherProviders
+        ? t('I also take bookings for this service')
+        : t('I take bookings for this service myself');
+
+    function resetToBusinessHours() {
+        setProviderSchedule(businessHoursSchedule);
+    }
+
+    function handleEnableOwner() {
+        setEnablingOwner(true);
+        router.post(
+            enableOwnerAsProvider().url,
+            {},
+            {
+                onFinish: () => setEnablingOwner(false),
+            },
+        );
+    }
 
     return (
         <OnboardingLayout
@@ -59,6 +100,42 @@ export default function Step3({ service }: Props) {
             heading={t('Create a bookable service')}
             description={t('Start with one — a haircut, a 30-minute consultation, a deep-tissue session. You can add variants and more services after launch.')}
         >
+            {launchBlocked && launchBlocked.services.length > 0 && (
+                <div
+                    role="alert"
+                    className="mb-6 flex flex-col gap-3 rounded-xl border border-destructive/40 bg-destructive/5 px-5 py-4"
+                >
+                    <div className="flex flex-col gap-1">
+                        <p className="text-[10px] uppercase tracking-[0.22em] text-destructive">
+                            {t('Almost there')}
+                        </p>
+                        <Display className="text-sm font-medium text-foreground">
+                            {t('You need at least one person behind every active service before you can launch.')}
+                        </Display>
+                        <p className="text-xs text-muted-foreground">
+                            {t('Unstaffed services:')}{' '}
+                            {launchBlocked.services.map((s) => s.name).join(', ')}
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <Button
+                            type="button"
+                            size="sm"
+                            onClick={handleEnableOwner}
+                            loading={enablingOwner}
+                            disabled={enablingOwner}
+                        >
+                            {t('Be your own first provider')}
+                        </Button>
+                        <Link href="/onboarding/step/4">
+                            <Button type="button" size="sm" variant="outline">
+                                {t('Invite a provider instead')}
+                            </Button>
+                        </Link>
+                    </div>
+                </div>
+            )}
+
             <Card>
                 <Form
                     action={store(3)}
@@ -69,6 +146,8 @@ export default function Step3({ service }: Props) {
                         buffer_before: bufferBefore,
                         buffer_after: bufferAfter,
                         slot_interval_minutes: data.slot_interval_minutes,
+                        provider_opt_in: providerOptIn,
+                        provider_schedule: providerOptIn ? providerSchedule : null,
                     })}
                 >
                     {({ errors, processing }) => (
@@ -246,6 +325,50 @@ export default function Step3({ service }: Props) {
                                                     )}
                                                 </Field>
                                             </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="rounded-lg border border-border/80 bg-muted/40">
+                                    <label className="flex cursor-pointer items-start justify-between gap-3 px-4 py-3">
+                                        <span className="flex flex-col gap-0.5">
+                                            <span className="text-sm font-medium text-foreground">
+                                                {optInLabel}
+                                            </span>
+                                            <span className="text-xs text-muted-foreground">
+                                                {t('Adds you as a bookable provider. You can change this later in Settings → Account.')}
+                                            </span>
+                                        </span>
+                                        <Switch
+                                            checked={providerOptIn}
+                                            onCheckedChange={(checked) => setProviderOptIn(checked === true)}
+                                        />
+                                    </label>
+                                    {providerOptIn && (
+                                        <div className="border-t border-border/80 px-4 py-4">
+                                            <div className="mb-4 flex items-center justify-between gap-3">
+                                                <p className="text-xs leading-relaxed text-muted-foreground">
+                                                    {t('Your bookable hours for this service. Defaults to your business hours.')}
+                                                </p>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="xs"
+                                                    onClick={resetToBusinessHours}
+                                                    className="text-muted-foreground hover:text-foreground"
+                                                >
+                                                    {t('Match business hours')}
+                                                </Button>
+                                            </div>
+                                            <WeekScheduleEditor
+                                                hours={providerSchedule}
+                                                onChange={setProviderSchedule}
+                                            />
+                                            {errors.provider_schedule && (
+                                                <p className="mt-3 text-xs text-destructive">
+                                                    {errors.provider_schedule}
+                                                </p>
+                                            )}
                                         </div>
                                     )}
                                 </div>

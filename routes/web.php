@@ -14,6 +14,7 @@ use App\Http\Controllers\Dashboard\BookingController as DashboardBookingControll
 use App\Http\Controllers\Dashboard\CalendarController;
 use App\Http\Controllers\Dashboard\CustomerController as DashboardCustomerController;
 use App\Http\Controllers\Dashboard\DashboardController;
+use App\Http\Controllers\Dashboard\Settings\AccountController;
 use App\Http\Controllers\Dashboard\Settings\BookingSettingsController;
 use App\Http\Controllers\Dashboard\Settings\BusinessExceptionController;
 use App\Http\Controllers\Dashboard\Settings\EmbedController;
@@ -84,6 +85,8 @@ Route::middleware('auth')->group(function () {
             ->name('onboarding.slug-check');
         Route::post('/onboarding/logo-upload', [OnboardingController::class, 'uploadLogo'])
             ->name('onboarding.logo-upload');
+        Route::post('/onboarding/enable-owner-as-provider', [OnboardingController::class, 'enableOwnerAsProvider'])
+            ->name('onboarding.enable-owner-as-provider');
     });
 
     // Business dashboard (auth + verified + business role + onboarded)
@@ -160,6 +163,15 @@ Route::middleware('auth')->group(function () {
 
             // Embed & Share
             Route::get('/embed', [EmbedController::class, 'edit'])->name('settings.embed');
+
+            // Account (admin as provider)
+            Route::get('/account', [AccountController::class, 'edit'])->name('settings.account');
+            Route::post('/account/toggle-provider', [AccountController::class, 'toggleProvider'])->name('settings.account.toggle-provider');
+            Route::put('/account/schedule', [AccountController::class, 'updateSchedule'])->name('settings.account.update-schedule');
+            Route::post('/account/exceptions', [AccountController::class, 'storeException'])->name('settings.account.store-exception');
+            Route::put('/account/exceptions/{exception}', [AccountController::class, 'updateException'])->name('settings.account.update-exception');
+            Route::delete('/account/exceptions/{exception}', [AccountController::class, 'destroyException'])->name('settings.account.destroy-exception');
+            Route::put('/account/services', [AccountController::class, 'updateServices'])->name('settings.account.update-services');
         });
     });
 

@@ -22,8 +22,47 @@ test('admin can view staff list', function () {
         ->assertOk()
         ->assertInertia(fn ($page) => $page
             ->component('dashboard/settings/staff/index')
-            ->has('staff', 1)
+            ->has('staff', 2)
         );
+});
+
+test('staff list includes the admin with role and provider flags', function () {
+    $this->actingAs($this->admin)
+        ->get('/dashboard/settings/staff')
+        ->assertOk()
+        ->assertInertia(function ($page) {
+            $staff = $page->toArray()['props']['staff'];
+            $admin = collect($staff)->firstWhere('id', $this->admin->id);
+            $staffMember = collect($staff)->firstWhere('id', $this->staff->id);
+
+            expect($admin)->not->toBeNull();
+            expect($admin['role'])->toBe('admin');
+            expect($admin['is_provider'])->toBeFalse();
+            expect($admin['is_self'])->toBeTrue();
+
+            expect($staffMember['role'])->toBe('staff');
+            expect($staffMember['is_provider'])->toBeTrue();
+            expect($staffMember['is_self'])->toBeFalse();
+
+            return $page;
+        });
+});
+
+test('staff list marks admin as provider when they have an active provider row', function () {
+    attachProvider($this->business, $this->admin);
+
+    $this->actingAs($this->admin)
+        ->get('/dashboard/settings/staff')
+        ->assertOk()
+        ->assertInertia(function ($page) {
+            $staff = $page->toArray()['props']['staff'];
+            $admin = collect($staff)->firstWhere('id', $this->admin->id);
+
+            expect($admin['is_provider'])->toBeTrue();
+            expect($admin['role'])->toBe('admin');
+
+            return $page;
+        });
 });
 
 test('admin can view staff detail', function () {

@@ -36,7 +36,7 @@ class PublicBookingController extends Controller
 
         $services = $business->services()
             ->where('is_active', true)
-            ->withCount('providers')
+            ->whereHas('providers')
             ->get();
 
         $preSelectedServiceSlug = null;

@@ -55,3 +55,12 @@ This file contains live decisions about onboarding, settings architecture, embed
 - **Context**: Settings pages need consistent left-side navigation across 7 sections without repeating the nav markup in each page.
 - **Decision**: `settings-layout.tsx` wraps `authenticated-layout.tsx` and renders a sub-navigation sidebar specific to settings. Each settings page uses `settings-layout` as its layout.
 - **Consequences**: Two levels of layout nesting: `authenticated-layout` (sidebar + header) > `settings-layout` (sub-nav + content area). This follows the existing layout composition pattern.
+
+---
+
+### D-062 — Launch requires at least one eligible provider per active service
+- **Date**: 2026-04-16
+- **Status**: accepted
+- **Context**: Before R-1B, onboarding could complete with active services and zero providers, producing a public page that advertised services that generated no slots. A solo admin was never prompted to become a provider, so the common single-person path created a broken business on launch.
+- **Decision**: `OnboardingController::storeLaunch()` refuses to mark the business onboarded when any active service has zero non-soft-deleted providers attached. On failure, it redirects to step 3 with `launchBlocked = { services: [...] }` so the wizard can surface the offending service names. A new `POST /onboarding/enable-owner-as-provider` endpoint creates (or restores) the admin's providers row, writes a default schedule from `business_hours`, and attaches the admin to every active service — the "Be your own first provider" one-click recovery. Defense-in-depth on the public page: `PublicBookingController::show()` filters services with `whereHas('providers')` so a post-launch deactivation self-heals the public page without a re-launch step.
+- **Consequences**: Onboarding cannot produce a broken public page. When a service loses its last provider post-launch it disappears from `/{slug}` until a provider is re-attached — no silent admin action, no hidden failures. Admin-driven toggles remain the only way to add or remove providers; the system never auto-assigns.

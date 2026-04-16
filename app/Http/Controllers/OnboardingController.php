@@ -9,11 +9,14 @@ use App\Http\Requests\Onboarding\StoreProfileRequest;
 use App\Http\Requests\Onboarding\StoreServiceRequest;
 use App\Models\Business;
 use App\Models\BusinessInvitation;
+use App\Models\Provider;
+use App\Models\Service;
 use App\Notifications\InvitationNotification;
 use App\Services\SlugService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -38,7 +41,7 @@ class OnboardingController extends Controller
         return match ($step) {
             1 => $this->showProfile($business),
             2 => $this->showHours($business),
-            3 => $this->showService($business),
+            3 => $this->showService($business, $request),
             4 => $this->showInvitations($business),
             5 => $this->showSummary($business),
             default => abort(404),
@@ -61,6 +64,46 @@ class OnboardingController extends Controller
             5 => $this->storeLaunch($business),
             default => abort(404),
         };
+    }
+
+    public function enableOwnerAsProvider(Request $request): RedirectResponse
+    {
+        $business = $request->user()->currentBusiness();
+        $user = $request->user();
+
+        DB::transaction(function () use ($business, $user) {
+            $provider = Provider::withTrashed()
+                ->where('business_id', $business->id)
+                ->where('user_id', $user->id)
+                ->first();
+
+            if ($provider) {
+                if ($provider->trashed()) {
+                    $provider->restore();
+                }
+            } else {
+                $provider = Provider::create([
+                    'business_id' => $business->id,
+                    'user_id' => $user->id,
+                ]);
+            }
+
+            if ($provider->availabilityRules()->doesntExist()) {
+                $this->writeScheduleFromBusinessHours($provider, $business);
+            }
+
+            $activeServiceIds = $business->services()
+                ->where('is_active', true)
+                ->pluck('id')
+                ->all();
+
+            if (! empty($activeServiceIds)) {
+                $provider->services()->syncWithoutDetaching($activeServiceIds);
+            }
+        });
+
+        return redirect()->route('onboarding.show', ['step' => 5])
+            ->with('success', __('You are now bookable — launch when you are ready.'));
     }
 
     public function checkSlug(Request $request): JsonResponse
@@ -151,12 +194,44 @@ class OnboardingController extends Controller
         ]);
     }
 
-    private function showService(Business $business): Response
+    private function showService(Business $business, Request $request): Response
     {
         $service = $business->services()->first();
+        $user = $request->user();
+
+        $adminProviderRow = Provider::withTrashed()
+            ->where('business_id', $business->id)
+            ->where('user_id', $user->id)
+            ->first();
+
+        $isActiveProvider = $adminProviderRow !== null && ! $adminProviderRow->trashed();
+
+        $hoursFromBusiness = $this->buildScheduleFromBusinessHours($business);
+        $schedule = $isActiveProvider
+            ? $this->buildScheduleFromProvider($adminProviderRow)
+            : $hoursFromBusiness;
+
+        $serviceIds = [];
+        if ($isActiveProvider && $service) {
+            $serviceIds = $adminProviderRow->services()
+                ->where('services.business_id', $business->id)
+                ->pluck('services.id')
+                ->all();
+        }
+
+        $hasOtherProviders = Provider::where('business_id', $business->id)
+            ->where('user_id', '!=', $user->id)
+            ->exists();
 
         return Inertia::render('onboarding/step-3', [
             'service' => $service?->only('id', 'name', 'duration_minutes', 'price', 'buffer_before', 'buffer_after', 'slot_interval_minutes'),
+            'adminProvider' => [
+                'exists' => $isActiveProvider,
+                'schedule' => $schedule,
+                'serviceIds' => $serviceIds,
+            ],
+            'businessHoursSchedule' => $hoursFromBusiness,
+            'hasOtherProviders' => $hasOtherProviders,
         ]);
     }
 
@@ -243,6 +318,11 @@ class OnboardingController extends Controller
     private function storeService(StoreServiceRequest $request, Business $business): RedirectResponse
     {
         $validated = $request->validated();
+        $optIn = (bool) ($validated['provider_opt_in'] ?? false);
+        $providerSchedule = $validated['provider_schedule'] ?? null;
+
+        unset($validated['provider_opt_in'], $validated['provider_schedule']);
+
         $validated['slug'] = Str::slug($validated['name']);
 
         // Ensure unique slug within business
@@ -253,13 +333,50 @@ class OnboardingController extends Controller
             $counter++;
         }
 
-        $existingService = $business->services()->first();
+        $user = $request->user();
 
-        if ($existingService) {
-            $existingService->update($validated);
-        } else {
-            $business->services()->create($validated);
-        }
+        DB::transaction(function () use ($business, $user, $validated, $optIn, $providerSchedule) {
+            $existingService = $business->services()->first();
+
+            if ($existingService) {
+                $existingService->update($validated);
+                $service = $existingService;
+            } else {
+                $service = $business->services()->create($validated);
+            }
+
+            if ($optIn) {
+                $provider = Provider::withTrashed()
+                    ->where('business_id', $business->id)
+                    ->where('user_id', $user->id)
+                    ->first();
+
+                if ($provider) {
+                    if ($provider->trashed()) {
+                        $provider->restore();
+                    }
+                } else {
+                    $provider = Provider::create([
+                        'business_id' => $business->id,
+                        'user_id' => $user->id,
+                    ]);
+                }
+
+                if ($providerSchedule !== null) {
+                    $this->writeProviderSchedule($provider, $business, $providerSchedule);
+                }
+
+                $provider->services()->syncWithoutDetaching([$service->id]);
+            } else {
+                $provider = Provider::where('business_id', $business->id)
+                    ->where('user_id', $user->id)
+                    ->first();
+
+                if ($provider) {
+                    $provider->services()->detach($service->id);
+                }
+            }
+        });
 
         $this->advanceStep($business, 4);
 
@@ -302,6 +419,23 @@ class OnboardingController extends Controller
 
     private function storeLaunch(Business $business): RedirectResponse
     {
+        $unstaffedServices = $business->services()
+            ->where('is_active', true)
+            ->whereDoesntHave('providers')
+            ->get(['id', 'name'])
+            ->map(fn (Service $s) => ['id' => $s->id, 'name' => $s->name])
+            ->values()
+            ->all();
+
+        if (! empty($unstaffedServices)) {
+            if ($business->onboarding_step < 3) {
+                $business->update(['onboarding_step' => 3]);
+            }
+
+            return redirect()->route('onboarding.show', ['step' => 3])
+                ->with('launchBlocked', ['services' => $unstaffedServices]);
+        }
+
         $business->update([
             'onboarding_completed_at' => now(),
         ]);
@@ -314,5 +448,102 @@ class OnboardingController extends Controller
         if ($business->onboarding_step < $nextStep) {
             $business->update(['onboarding_step' => $nextStep]);
         }
+    }
+
+    /**
+     * @return array<int, array{day_of_week: int, enabled: bool, windows: array<int, array{open_time: string, close_time: string}>}>
+     */
+    private function buildScheduleFromBusinessHours(Business $business): array
+    {
+        $hours = $business->businessHours()
+            ->orderBy('day_of_week')
+            ->orderBy('open_time')
+            ->get()
+            ->groupBy('day_of_week');
+
+        return collect(range(1, 7))->map(function (int $day) use ($hours) {
+            $dayHours = $hours->get($day);
+
+            if ($dayHours) {
+                return [
+                    'day_of_week' => $day,
+                    'enabled' => true,
+                    'windows' => $dayHours->map(fn ($h) => [
+                        'open_time' => Str::substr($h->open_time, 0, 5),
+                        'close_time' => Str::substr($h->close_time, 0, 5),
+                    ])->values()->all(),
+                ];
+            }
+
+            return [
+                'day_of_week' => $day,
+                'enabled' => false,
+                'windows' => [],
+            ];
+        })->values()->all();
+    }
+
+    /**
+     * @return array<int, array{day_of_week: int, enabled: bool, windows: array<int, array{open_time: string, close_time: string}>}>
+     */
+    private function buildScheduleFromProvider(Provider $provider): array
+    {
+        $rules = $provider->availabilityRules()
+            ->orderBy('day_of_week')
+            ->orderBy('start_time')
+            ->get()
+            ->groupBy('day_of_week');
+
+        return collect(range(1, 7))->map(function (int $day) use ($rules) {
+            $dayRules = $rules->get($day);
+
+            if ($dayRules) {
+                return [
+                    'day_of_week' => $day,
+                    'enabled' => true,
+                    'windows' => $dayRules->map(fn ($r) => [
+                        'open_time' => Str::substr($r->start_time, 0, 5),
+                        'close_time' => Str::substr($r->end_time, 0, 5),
+                    ])->values()->all(),
+                ];
+            }
+
+            return [
+                'day_of_week' => $day,
+                'enabled' => false,
+                'windows' => [],
+            ];
+        })->values()->all();
+    }
+
+    /**
+     * @param  array<int, array{day_of_week: int, enabled: bool, windows: array<int, array{open_time: string, close_time: string}>}>  $schedule
+     */
+    private function writeProviderSchedule(Provider $provider, Business $business, array $schedule): void
+    {
+        $provider->availabilityRules()->delete();
+
+        $rules = collect($schedule)
+            ->filter(fn (array $day) => ! empty($day['enabled']) && ! empty($day['windows']))
+            ->flatMap(fn (array $day) => collect($day['windows'])->map(fn (array $window) => [
+                'provider_id' => $provider->id,
+                'business_id' => $business->id,
+                'day_of_week' => $day['day_of_week'],
+                'start_time' => $window['open_time'],
+                'end_time' => $window['close_time'],
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]));
+
+        if ($rules->isNotEmpty()) {
+            $provider->availabilityRules()->insert($rules->all());
+        }
+    }
+
+    private function writeScheduleFromBusinessHours(Provider $provider, Business $business): void
+    {
+        $schedule = $this->buildScheduleFromBusinessHours($business);
+
+        $this->writeProviderSchedule($provider, $business, $schedule);
     }
 }

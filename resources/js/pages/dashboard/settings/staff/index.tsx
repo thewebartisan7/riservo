@@ -26,6 +26,9 @@ interface StaffItem {
     name: string;
     email: string;
     avatar_url: string | null;
+    role: 'admin' | 'staff';
+    is_provider: boolean;
+    is_self: boolean;
     is_active: boolean;
     services_count: number;
     provider_id: number | null;
@@ -76,64 +79,85 @@ export default function Staff({ staff, invitations, services }: Props) {
                     </Frame>
                 ) : (
                     <ul className="flex flex-col divide-y divide-border/70 border-y border-border/70">
-                        {staff.map((member) => (
-                            <li key={member.id}>
-                                <div className="group flex items-start gap-4 py-4 sm:items-center">
-                                    <Link
-                                        href={show.url(member.id)}
-                                        className="flex min-w-0 flex-1 items-center gap-3 transition-opacity hover:opacity-90"
-                                    >
-                                        <Avatar className="size-9 shrink-0 rounded-xl border border-border bg-muted">
-                                            <AvatarImage
-                                                src={member.avatar_url ?? undefined}
-                                                alt=""
-                                                className="rounded-xl object-cover"
-                                            />
-                                            <AvatarFallback className="rounded-xl bg-muted font-display text-xs font-semibold text-muted-foreground">
-                                                {getInitials(member.name)}
-                                            </AvatarFallback>
-                                        </Avatar>
-                                        <div className="flex min-w-0 flex-col gap-0.5">
-                                            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-                                                <Display className="text-sm font-medium text-foreground">
-                                                    {member.name}
-                                                </Display>
-                                                {!member.is_active && (
-                                                    <span className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                                                        {t('Inactive')}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <span className="truncate text-xs text-muted-foreground">
-                                                {member.email}
-                                            </span>
-                                        </div>
-                                    </Link>
-                                    <div className="flex shrink-0 items-center gap-4">
-                                        <span className="hidden font-display text-xs tabular-nums text-muted-foreground sm:block">
-                                            {t(':n services', { n: member.services_count })}
-                                        </span>
-                                        {member.provider_id !== null && (
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => router.post(toggle.url(member.provider_id as number))}
-                                                className="text-muted-foreground hover:text-foreground"
-                                            >
-                                                {member.is_active ? t('Deactivate') : t('Activate')}
-                                            </Button>
-                                        )}
+                        {staff.map((member) => {
+                            const isAdmin = member.role === 'admin';
+                            const detailHref = member.is_self
+                                ? '/dashboard/settings/account'
+                                : show.url(member.id);
+                            return (
+                                <li key={member.id}>
+                                    <div className="group flex items-start gap-4 py-4 sm:items-center">
                                         <Link
-                                            href={show.url(member.id)}
-                                            aria-label={t('Open :name', { name: member.name })}
-                                            className="inline-flex items-center text-muted-foreground/60 transition-all group-hover:translate-x-0.5 group-hover:text-foreground"
+                                            href={detailHref}
+                                            className="flex min-w-0 flex-1 items-center gap-3 transition-opacity hover:opacity-90"
                                         >
-                                            <ArrowRightIcon className="size-4" aria-hidden="true" />
+                                            <Avatar className="size-9 shrink-0 rounded-xl border border-border bg-muted">
+                                                <AvatarImage
+                                                    src={member.avatar_url ?? undefined}
+                                                    alt=""
+                                                    className="rounded-xl object-cover"
+                                                />
+                                                <AvatarFallback className="rounded-xl bg-muted font-display text-xs font-semibold text-muted-foreground">
+                                                    {getInitials(member.name)}
+                                                </AvatarFallback>
+                                            </Avatar>
+                                            <div className="flex min-w-0 flex-col gap-0.5">
+                                                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                                                    <Display className="text-sm font-medium text-foreground">
+                                                        {member.name}
+                                                    </Display>
+                                                    {member.is_self && (
+                                                        <span className="text-[10px] font-medium uppercase tracking-[0.2em] text-primary">
+                                                            {t('You')}
+                                                        </span>
+                                                    )}
+                                                    <span className="rounded-full border border-border/70 px-1.5 py-[1px] text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                                                        {isAdmin ? t('Admin') : t('Staff')}
+                                                    </span>
+                                                    <span
+                                                        className={
+                                                            'text-[10px] font-medium uppercase tracking-[0.2em] ' +
+                                                            (member.is_provider
+                                                                ? 'text-primary'
+                                                                : 'text-muted-foreground')
+                                                        }
+                                                    >
+                                                        {member.is_provider ? t('Provider') : t('Not bookable')}
+                                                    </span>
+                                                </div>
+                                                <span className="truncate text-xs text-muted-foreground">
+                                                    {member.email}
+                                                </span>
+                                            </div>
                                         </Link>
+                                        <div className="flex shrink-0 items-center gap-4">
+                                            {member.is_provider && (
+                                                <span className="hidden font-display text-xs tabular-nums text-muted-foreground sm:block">
+                                                    {t(':n services', { n: member.services_count })}
+                                                </span>
+                                            )}
+                                            {!isAdmin && member.provider_id !== null && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => router.post(toggle.url(member.provider_id as number))}
+                                                    className="text-muted-foreground hover:text-foreground"
+                                                >
+                                                    {member.is_active ? t('Deactivate') : t('Activate')}
+                                                </Button>
+                                            )}
+                                            <Link
+                                                href={detailHref}
+                                                aria-label={t('Open :name', { name: member.name })}
+                                                className="inline-flex items-center text-muted-foreground/60 transition-all group-hover:translate-x-0.5 group-hover:text-foreground"
+                                            >
+                                                <ArrowRightIcon className="size-4" aria-hidden="true" />
+                                            </Link>
+                                        </div>
                                     </div>
-                                </div>
-                            </li>
-                        ))}
+                                </li>
+                            );
+                        })}
                     </ul>
                 )}
 
