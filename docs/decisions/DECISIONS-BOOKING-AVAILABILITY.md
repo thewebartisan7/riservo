@@ -259,3 +259,26 @@ This file contains live decisions about timezone handling, availability rules, b
   - Historical bookings continue to render the provider's original name with a clear visual cue that the provider is no longer bookable.
   - `Booking::provider` is the single asymmetry — everywhere else in the code a trashed provider is still hidden.
 - **Supersedes**: none.
+
+---
+
+### D-068 — Server-side enforcement of `allow_provider_choice` via ignore-and-fall-through
+
+- **Date**: 2026-04-16
+- **Status**: accepted
+- **Context**: `allow_provider_choice` was respected by the multi-step React flow but not enforced by the four server surfaces that read or honour `provider_id` (`PublicBookingController::providers`, `availableDates`, `slots`, `store`). A crafted POST could target a specific provider; a preselected-service URL initialised the flow on the provider step regardless of the setting. The setting was effectively a client-side suggestion, not a business policy.
+- **Decision**: The setting is gated **in the controller**, not in the Form Request. When `$business->allow_provider_choice === false`, every server surface treats the effective `provider_id` as if it were not submitted:
+  - `providers()` returns an empty list (`200 OK`, `{ providers: [] }`).
+  - `availableDates()`, `slots()`, and `store()` ignore any submitted `provider_id` and compute / assign as the "any provider" branch.
+
+  A private helper `resolveProviderIfChoiceAllowed()` centralises the single expression `($business->allow_provider_choice && $providerId) ? $business->providers()->...->firstOrFail() : null` used across the three availability / store methods. `StorePublicBookingRequest` continues to validate that a submitted `provider_id` names a provider in the business (existence + tenant scope via its inline closure), because that check is a first-line 422 against invalid IDs regardless of the setting.
+- **Consequences**:
+  - Honest clients that respect the setting see no behaviour change — they never submit `provider_id` when choice is off.
+  - Crafted requests that submit `provider_id` are silently downgraded to the "any provider" branch. No 422, no 403 — the policy is enforced without leaking a diagnostic that lets a probe distinguish "my provider_id was rejected" from "my ID was never considered".
+  - A honest-client race (admin toggles off mid-session) does not produce a hard error for the customer: their flow degrades to auto-assignment.
+  - The pattern is reusable — future "business setting enforced server-side" gaps (none currently exist; audited in PLAN-R-7 §1.4) can follow the same template: gate in the controller, treat the setting as a silent modifier of the request, record as a decision.
+- **Rejected alternatives**:
+  - *Gate in `StorePublicBookingRequest`.* The Form Request knows about the schema, not the business policy. Moving the gate there would couple validation to a business-model read that varies at runtime. Also: the same policy needs to apply to three read endpoints that have no Form Request — the gate would have to live in two places.
+  - *Reject with 422 when `provider_id` is submitted but choice is off.* Cleaner signal but turns a crafted probe into a diagnostic (`provider_id is rejected` vs `provider_id is ignored`). Also surprises an honest client in a race condition. The product intent ("customers can't pick") is equally well served by silent fall-through.
+  - *Return 403 on `providers()` when setting is off.* Same diagnostic concern. Empty list is semantically correct — the set of *customer-choosable* providers is empty.
+  - *New middleware `EnforceProviderChoice`.* Overkill for one setting and one controller. Hides the policy away from the reading flow.

@@ -106,3 +106,30 @@ test('returns 404 for non-existent business', function () {
     $this->getJson('/booking/non-existent/available-dates?service_id=1&month=2026-04')
         ->assertStatus(404);
 });
+
+test('ignores provider_id when allow_provider_choice is false', function () {
+    $this->travelTo(CarbonImmutable::parse('2026-04-01 08:00', 'Europe/Zurich'));
+
+    // Provider A (from beforeEach) has Monday availability.
+    // Provider B has none — a strict provider filter would return no Monday slots.
+    $staff2 = User::factory()->create();
+    $provider2 = attachProvider($this->business, $staff2);
+    $provider2->services()->attach($this->service);
+
+    $this->business->update(['allow_provider_choice' => false]);
+
+    $response = $this->getJson('/booking/'.$this->business->slug.'/available-dates?service_id='.$this->service->id.'&provider_id='.$provider2->id.'&month=2026-04');
+
+    $response->assertOk();
+    $dates = $response->json('dates');
+
+    // Monday 2026-04-06 should still be available because provider A covers it.
+    // The submitted provider_id (B) must be ignored.
+    expect($dates['2026-04-06'])->toBeTrue();
+
+    // Control: identical request without provider_id should match.
+    $control = $this->getJson('/booking/'.$this->business->slug.'/available-dates?service_id='.$this->service->id.'&month=2026-04')
+        ->json('dates');
+
+    expect($dates)->toBe($control);
+});

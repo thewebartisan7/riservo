@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\AssignmentStrategy;
 use App\Enums\BookingSource;
 use App\Enums\BookingStatus;
 use App\Enums\ConfirmationMode;
@@ -233,4 +234,58 @@ test('soft-deleted provider_id is rejected on public store', function () {
     $response->assertStatus(422)
         ->assertJsonValidationErrors(['provider_id']);
     expect(Booking::count())->toBe(0);
+});
+
+test('ignores provider_id when allow_provider_choice is false and auto-assigns', function () {
+    Notification::fake();
+
+    // Second provider B attached to the same service. A (beforeEach) has Monday
+    // availability; B has none. With first_available, A is picked deterministically.
+    $staff2 = User::factory()->create(['name' => 'Bob']);
+    $providerB = attachProvider($this->business, $staff2);
+    $providerB->services()->attach($this->service);
+
+    $this->business->update([
+        'allow_provider_choice' => false,
+        'assignment_strategy' => AssignmentStrategy::FirstAvailable,
+    ]);
+
+    // Submit provider_id pointing at B — the server must ignore it and auto-assign A.
+    $response = $this->postJson('/booking/'.$this->business->slug.'/book', validBookingData([
+        'provider_id' => $providerB->id,
+    ]));
+
+    $response->assertStatus(201);
+
+    $booking = Booking::first();
+    expect($booking->provider_id)->toBe($this->provider->id)
+        ->and($booking->provider_id)->not->toBe($providerB->id);
+});
+
+test('honours provider_id when allow_provider_choice is true', function () {
+    Notification::fake();
+
+    // Second provider B with full Monday availability attached to the same service.
+    $staff2 = User::factory()->create(['name' => 'Bob']);
+    $providerB = attachProvider($this->business, $staff2);
+    AvailabilityRule::factory()->create([
+        'provider_id' => $providerB->id,
+        'business_id' => $this->business->id,
+        'day_of_week' => DayOfWeek::Monday->value,
+        'start_time' => '09:00',
+        'end_time' => '18:00',
+    ]);
+    $providerB->services()->attach($this->service);
+
+    // Default factory has allow_provider_choice = true; explicit for clarity.
+    $this->business->update(['allow_provider_choice' => true]);
+
+    $response = $this->postJson('/booking/'.$this->business->slug.'/book', validBookingData([
+        'provider_id' => $providerB->id,
+    ]));
+
+    $response->assertStatus(201);
+
+    $booking = Booking::first();
+    expect($booking->provider_id)->toBe($providerB->id);
 });

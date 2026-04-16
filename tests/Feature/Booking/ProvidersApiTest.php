@@ -97,3 +97,18 @@ test('soft-deleted provider is not returned', function () {
         ->assertJsonCount(1, 'providers')
         ->assertJsonPath('providers.0.name', 'Active');
 });
+
+test('returns empty list when allow_provider_choice is false', function () {
+    $business = Business::factory()->onboarded()->noProviderChoice()->create();
+    $service = Service::factory()->create(['business_id' => $business->id, 'is_active' => true]);
+
+    $user = User::factory()->create(['name' => 'Alice']);
+    $provider = attachProvider($business, $user);
+    $service->providers()->attach($provider->id);
+
+    $response = $this->getJson('/booking/'.$business->slug.'/providers?service_id='.$service->id);
+
+    $response->assertOk()
+        ->assertJsonCount(0, 'providers')
+        ->assertJsonPath('providers', []);
+});

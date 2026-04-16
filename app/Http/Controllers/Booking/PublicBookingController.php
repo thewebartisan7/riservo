@@ -98,6 +98,10 @@ class PublicBookingController extends Controller
             'service_id' => ['required', 'integer'],
         ]);
 
+        if (! $business->allow_provider_choice) {
+            return response()->json(['providers' => []]);
+        }
+
         $service = $business->services()
             ->where('id', $request->integer('service_id'))
             ->where('is_active', true)
@@ -133,9 +137,10 @@ class PublicBookingController extends Controller
             ->where('is_active', true)
             ->firstOrFail();
 
-        $provider = $request->filled('provider_id')
-            ? $business->providers()->where('id', $request->integer('provider_id'))->firstOrFail()
-            : null;
+        $provider = $this->resolveProviderIfChoiceAllowed(
+            $business,
+            $request->filled('provider_id') ? $request->integer('provider_id') : null,
+        );
 
         $timezone = $business->timezone;
         $monthStart = CarbonImmutable::createFromFormat('Y-m', $request->string('month'), $timezone)->startOfMonth();
@@ -176,9 +181,10 @@ class PublicBookingController extends Controller
             ->where('is_active', true)
             ->firstOrFail();
 
-        $provider = $request->filled('provider_id')
-            ? $business->providers()->where('id', $request->integer('provider_id'))->firstOrFail()
-            : null;
+        $provider = $this->resolveProviderIfChoiceAllowed(
+            $business,
+            $request->filled('provider_id') ? $request->integer('provider_id') : null,
+        );
 
         $timezone = $business->timezone;
         $date = CarbonImmutable::createFromFormat('Y-m-d', $request->string('date'), $timezone)->startOfDay();
@@ -218,14 +224,18 @@ class PublicBookingController extends Controller
 
         $endsAt = $startsAt->addMinutes($service->duration_minutes);
 
-        $selectedProvider = null;
-        if (! empty($validated['provider_id'])) {
-            $selectedProvider = $service->providers()
-                ->where('providers.id', $validated['provider_id'])
-                ->where('providers.business_id', $business->id)
-                ->first();
+        $selectedProvider = $this->resolveProviderIfChoiceAllowed(
+            $business,
+            isset($validated['provider_id']) ? (int) $validated['provider_id'] : null,
+        );
 
-            if (! $selectedProvider) {
+        if ($selectedProvider) {
+            $serviceMember = $service->providers()
+                ->where('providers.id', $selectedProvider->id)
+                ->where('providers.business_id', $business->id)
+                ->exists();
+
+            if (! $serviceMember) {
                 return response()->json(['message' => __('Selected provider is not available for this service.')], 409);
             }
         }
@@ -350,5 +360,14 @@ class PublicBookingController extends Controller
         abort_unless($business->isOnboarded(), 404);
 
         return $business;
+    }
+
+    private function resolveProviderIfChoiceAllowed(Business $business, ?int $providerId): ?Provider
+    {
+        if (! $business->allow_provider_choice || ! $providerId) {
+            return null;
+        }
+
+        return $business->providers()->where('id', $providerId)->firstOrFail();
     }
 }

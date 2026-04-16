@@ -33,7 +33,11 @@ export default function BookingShow() {
         return null;
     }, [preSelectedServiceSlug, services]);
 
-    const [step, setStep] = useState<BookingStep>(preSelectedService ? 'provider' : 'service');
+    const [step, setStep] = useState<BookingStep>(
+        preSelectedService
+            ? (business.allow_provider_choice ? 'provider' : 'datetime')
+            : 'service',
+    );
     const [selectedService, setSelectedService] = useState<PublicService | null>(preSelectedService);
     const [selectedProvider, setSelectedProvider] = useState<PublicProvider | null>(null);
     const [selectedDate, setSelectedDate] = useState<string | null>(null);

@@ -157,3 +157,16 @@ test('guest user gets null prefill', function () {
         ->where('customerPrefill', null)
     );
 });
+
+test('preselected service page exposes allow_provider_choice = false when setting is off', function () {
+    $this->withoutVite();
+    $business = Business::factory()->onboarded()->noProviderChoice()->create();
+    createStaffedService($business, ['slug' => 'haircut']);
+
+    $response = $this->get('/'.$business->slug.'/haircut');
+
+    $response->assertInertia(fn ($page) => $page
+        ->where('business.allow_provider_choice', false)
+        ->where('preSelectedServiceSlug', 'haircut')
+    );
+});

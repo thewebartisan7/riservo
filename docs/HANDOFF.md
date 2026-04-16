@@ -1,6 +1,6 @@
 # Handoff
 
-**Session**: R-5 — Provider lifecycle coherence (historical bookings) + R-6 — Customer-facing timezone rendering
+**Session**: R-7 — Server-side enforcement of `allow_provider_choice`
 **Date**: 2026-04-16
 **Status**: Complete
 
@@ -8,159 +8,119 @@
 
 ## What Was Built
 
-R-5 and R-6 were bundled because they touch the same customer-facing
-controllers and pages and are both pure display-correctness fixes. The
-original R-5 concern ("deactivated providers still appear in NEW booking
-flows") was already fully fixed by D-061's shift to `SoftDeletes` on
-`Provider`; the R-5 investigation surfaced an adjacent latent 500 where
-display code would crash the moment an admin deactivated a provider with
-history. R-6 was a stale-TZ rendering bug on the customer-facing views.
+R-7 closed the server-side enforcement gap for the `allow_provider_choice`
+business setting. Before this session, the setting was respected by the
+multi-step React flow but not by any of the four server surfaces that
+know about `provider_id` (`PublicBookingController::providers`,
+`availableDates`, `slots`, `store`). A crafted POST could target a
+specific provider even when the business had disabled provider choice; a
+preselected-service URL dropped the customer onto the provider picker
+regardless of the setting. The setting was effectively a client-side
+suggestion.
 
-D-067 is the new architectural decision recorded in
-`docs/decisions/DECISIONS-BOOKING-AVAILABILITY.md`.
+D-068 is the new architectural decision recorded in
+`docs/decisions/DECISIONS-BOOKING-AVAILABILITY.md`. It establishes the
+"gate in controller, silent ignore, empty-list for GET" pattern for
+future business-setting enforcements.
 
-### Core fix (R-5): historical provider is safe to dereference
+### Backend — one helper, four surgical method changes
 
-`app/Models/Booking.php` — the `provider()` relation is overridden to
-resolve the related row regardless of `deleted_at`:
+`app/Http/Controllers/Booking/PublicBookingController.php`:
 
-```php
-/** @return BelongsTo<Provider, $this> */
-public function provider(): BelongsTo
-{
-    return $this->belongsTo(Provider::class)->withTrashed();
-}
+- New private helper `resolveProviderIfChoiceAllowed(Business, ?int): ?Provider`
+  centralises the single expression used across the three availability /
+  store methods. Returns `null` when the setting is off or no
+  `provider_id` was supplied; otherwise looks the provider up via
+  `$business->providers()->where('id', ...)->firstOrFail()`.
+- `providers()` — short-circuits with `200 { providers: [] }` before the
+  service lookup when the setting is off.
+- `availableDates()` — replaced the inline `$request->filled(...)
+  ? firstOrFail() : null` with a helper call; submitted `provider_id` is
+  silently ignored when the setting is off (falls through to "any
+  provider").
+- `slots()` — same treatment as `availableDates()`.
+- `store()` — replaced the inline block with a helper call and retained
+  the service-membership re-check as a second guard. The existing 409
+  for "provider exists in the business but is not attached to the
+  service" is preserved; when the setting is off the 409 branch is
+  unreachable because the helper returns null.
+
+`StorePublicBookingRequest` is unchanged: it still validates that
+`provider_id` (when non-null) names a real provider in the business, so
+a crafted ID still returns a 422 from the Form Request regardless of the
+setting. The policy gate lives in the controller by design — see D-068
+for the rationale (three GET endpoints have no Form Request; the Form
+Request should not couple to a business-model read).
+
+### Frontend — one-line step-init fix
+
+`resources/js/pages/booking/show.tsx:36` — the `useState` initial value
+now honours `business.allow_provider_choice`:
+
+```tsx
+const [step, setStep] = useState<BookingStep>(
+    preSelectedService
+        ? (business.allow_provider_choice ? 'provider' : 'datetime')
+        : 'service',
+);
 ```
 
-This is the single asymmetry in the codebase. Everywhere else, the default
-`SoftDeletingScope` on `Provider` continues to exclude trashed providers:
-`SlotGeneratorService::getEligibleProviders`, `$service->providers()`,
-`$business->providers()`, `PublicBookingController::providers`,
-`PublicBookingController::store`, and `BelongsToCurrentBusiness`
-validation all inherit the scope unchanged. A booking whose provider has
-been soft-deleted now renders its original provider name on every display
-page instead of throwing a null-dereference 500.
+All other step transitions (`handleServiceSelect`, `goBack`,
+`totalSteps`, `stepOrder`) already respected the setting; this was the
+one escaped branch.
 
-### Read-side payload plumbing (`is_active` + `timezone`)
+### New test coverage (+6 tests)
 
-Four display controllers were updated to expose
-`provider.is_active = ! $booking->provider->trashed()` so the UI can render
-a "(deactivated)" marker:
+Policy enforcement on the four server surfaces:
 
-- `app/Http/Controllers/Dashboard/CalendarController.php`
-- `app/Http/Controllers/Dashboard/BookingController.php::index`
-- `app/Http/Controllers/Dashboard/DashboardController.php::index`
-  (today's bookings)
-- `app/Http/Controllers/Dashboard/CustomerController.php::show`
-  (customer booking history)
-- `app/Http/Controllers/Booking/BookingManagementController.php::show`
-- `app/Http/Controllers/Customer/BookingController.php::index`
-
-The last controller additionally gained a `business: { name, timezone }`
-entry on every booking in the `formatBooking` helper (R-6). Previously the
-customer's "My Bookings" view had no access to the business's timezone and
-therefore rendered UTC strings in the browser's locale.
-
-### Frontend — shared datetime helpers + deactivated marker
-
-Customer-facing pages now consume the business timezone via the shared
-`resources/js/lib/datetime-format.ts` helpers instead of raw
-`new Date(...).toLocale*()`:
-
-- `resources/js/pages/bookings/show.tsx` — uses `formatDateMedium` /
-  `formatTimeShort` with `booking.business.timezone`.
-- `resources/js/pages/customer/bookings.tsx::BookingItem` — same.
-
-`formatDateMedium` in `datetime-format.ts` grew an optional `timezone`
-parameter to match the other helpers.
-
-Both pages render the deactivated marker at every provider-name site via
-`t(':name (deactivated)', { name: provider.name })`. The dashboard got the
-same treatment in five places:
-
-- `resources/js/pages/dashboard.tsx` (today's bookings table)
-- `resources/js/pages/dashboard/bookings.tsx` (full bookings list)
-- `resources/js/pages/dashboard/customer-show.tsx` (customer history)
-- `resources/js/components/dashboard/booking-detail-sheet.tsx`
-- `resources/js/components/calendar/calendar-event.tsx` (tight-popover)
-
-The new translation key `:name (deactivated)` is wired through
-`lang/en.json`.
-
-### TypeScript types updated
-
-`resources/js/types/index.d.ts`:
-
-- `BookingDetail.provider`, `BookingSummary.provider`,
-  `DashboardBooking.provider`, `TodayBooking.provider`, and
-  `CustomerBookingHistory.provider` all gained `is_active: boolean`.
-- `BookingSummary.business` gained `timezone: string` to support the R-6
-  fix on `customer/bookings.tsx`.
-
-### New test coverage (+9 tests)
-
-R-5 regression (trashed providers stay out of NEW booking flows — locks
-D-061's invariant against future regressions):
-
-- `tests/Feature/Services/SlotGeneratorServiceTest.php` —
-  `soft-deleted provider is excluded from eligible providers`.
 - `tests/Feature/Booking/ProvidersApiTest.php` —
-  `soft-deleted provider is not returned`.
+  `returns empty list when allow_provider_choice is false`.
+- `tests/Feature/Booking/AvailableDatesApiTest.php` —
+  `ignores provider_id when allow_provider_choice is false`. Two
+  providers; A has Monday availability, B has none. Request with
+  `provider_id = B` returns A's dates (proving the ID was ignored).
+  Cross-checked against a control request without `provider_id`.
+- `tests/Feature/Booking/SlotsApiTest.php` —
+  `ignores provider_id when allow_provider_choice is false`. Same shape
+  as above, for `slots()`.
 - `tests/Feature/Booking/BookingCreationTest.php` —
-  `soft-deleted provider_id is rejected on public store`. Asserts 422
-  with `provider_id` validation error (not 409 as the plan speculated —
-  the Form Request's inline closure rejects the ID before the 409 path
-  is reached).
+  `ignores provider_id when allow_provider_choice is false and
+  auto-assigns`. Submits `provider_id = B` when only A has Monday
+  availability; asserts `booking.provider_id === A.id`.
+- `tests/Feature/Booking/BookingCreationTest.php` —
+  `honours provider_id when allow_provider_choice is true`. Regression
+  pin for the helper refactor: submits `provider_id = B` when both A
+  and B have Monday availability and the setting is on; asserts the
+  booking lands on B.
 
-R-5 gap (display of HISTORICAL bookings with a trashed provider):
+Backend Inertia prop contract the React step-init depends on:
 
-- `tests/Feature/Dashboard/CalendarControllerTest.php` —
-  `calendar renders bookings for a deactivated provider with is_active=false`.
-- `tests/Feature/Dashboard/DashboardBookingsTest.php` —
-  `bookings list renders bookings for a deactivated provider with is_active=false`.
-- `tests/Feature/Booking/BookingManagementTest.php` —
-  `booking management page renders with deactivated provider`.
-- `tests/Feature/Customer/BookingsListTest.php` —
-  `customer bookings list renders with deactivated provider` (new file).
-
-R-6 contract (customer-facing pages receive `business.timezone`):
-
-- `tests/Feature/Booking/BookingManagementTest.php` —
-  `booking management page passes business.timezone through to the page`.
-- `tests/Feature/Customer/BookingsListTest.php` —
-  `customer bookings list passes business.timezone per booking`.
-
-### Incidental test-stability fix
-
-`tests/Feature/Dashboard/CustomerDirectoryTest.php` — "customer detail
-shows booking history" was using `Booking::factory()->dateTimeBetween(...)`
-with random intervals on the same provider. The GIST constraint from
-D-066 correctly flagged the occasional overlap as a bug in the test.
-Rewrote to deterministic `CarbonImmutable::parse('2026-05-01 09:00',
-'UTC')->addDays($i)`, matching the pattern used in the R-4B pagination
-fix (commit 67d7e16).
+- `tests/Feature/Booking/PublicBookingPageTest.php` —
+  `preselected service page exposes allow_provider_choice = false when
+  setting is off`. Locks the page props contract; the React ternary on
+  line 36 is a trivial derivation from these props.
 
 ---
 
 ## Current Project State
 
-- **Backend**: `Booking::provider()` is the only relation that resolves a
-  trashed row. Every other provider query path keeps the default
-  `SoftDeletingScope`. Eight read-side payloads now expose
-  `provider.is_active`; two customer-facing payloads now carry
-  `business.timezone`.
-- **Frontend**: customer-facing and dashboard pages render provider names
-  with a "(deactivated)" marker for trashed providers, and customer-facing
-  date/time rendering now honours the business timezone via shared
-  helpers.
+- **Backend**: the four public-booking surfaces that know about
+  `provider_id` now gate on `$business->allow_provider_choice`. The
+  single helper is the authoritative expression; future additions (a
+  new availability endpoint, a new write path) should route through it.
+- **Frontend**: the step-init fix means the honest customer flow skips
+  the provider step when the setting is off — the 4-step flow
+  (service → datetime → details → summary → confirmation) is used when
+  both the setting is off and a service was preselected via URL.
 - **Routes**: no changes.
-- **Tests**: full Pest suite green on Postgres — **461 passed, 1810
-  assertions**. +9 from the R-4B baseline of 452.
-- **Decisions**: D-067 appended to
+- **Tests**: full Pest suite green on Postgres — **467 passed, 1835
+  assertions**. +6 from the R-5/R-6 baseline of 461.
+- **Decisions**: D-068 appended to
   `docs/decisions/DECISIONS-BOOKING-AVAILABILITY.md`.
 - **Migrations**: none.
-- **i18n**: one new key added to `lang/en.json` —
-  `":name (deactivated)"`.
+- **i18n**: no new keys. The existing `"Selected provider is not
+  available for this service."` copy is reused for the retained 409
+  branch.
 
 ---
 
@@ -174,59 +134,74 @@ npm run build
 
 Manual smoke:
 
-- Soft-delete a provider (`Provider::find($id)->delete()` via tinker)
-  that has historical bookings.
-- Visit `/my-bookings` (as the customer), `/bookings/{token}` (public
-  cancellation page), `/dashboard` (today's bookings), `/dashboard/bookings`
-  (full list), `/dashboard/customers/{id}` (customer detail), and the
-  dashboard calendar. In each place the provider name renders with
-  "(deactivated)" appended; no 500s.
-- On `/my-bookings` and `/bookings/{token}`, temporarily set the business
-  timezone to something far from your browser's (e.g. `Asia/Tokyo`) and
-  verify the rendered date/time matches the business-local time, not the
-  browser-local time.
+1. As admin, visit `/dashboard/settings/booking`, set **Allow customer
+   to choose collaborator = OFF**, save.
+2. In a fresh incognito window, visit `/{slug}/{service-slug}`
+   (preselected-service URL). The flow should open on the date-time
+   picker, not the provider picker; the step indicator should show the
+   4-step sequence.
+3. Complete a booking through the flow. The booking is created, the
+   customer receives confirmation, and the provider is auto-assigned
+   via `first_available`.
+4. Open DevTools Network tab: `GET /booking/{slug}/providers?service_id=...`
+   is not fired (the step was skipped). Hit the URL directly in a new
+   tab: `{ providers: [] }`.
+5. Manually POST to `/booking/{slug}/book` with `provider_id` set to a
+   valid provider via DevTools console or curl. The booking is created,
+   but the `provider_id` is the auto-assigned one (visible in
+   `/dashboard/bookings` or the DB).
+6. Toggle the setting back ON. Repeat step 2. The flow now opens on the
+   provider picker. Happy path still works end-to-end.
 
 ---
 
 ## What the Next Session Needs to Know
 
-R-5 is complete. R-6 is complete. R-4 (both halves) remains complete.
+R-7 is complete. The remediation roadmap moves on to R-8, R-9, or R-10
+— the developer picks based on priority. None depends on R-7.
 
-The roadmap-review checklist (`docs/reviews/ROADMAP-REVIEW.md`) moves on
-to **R-7 — provider-choice enforcement**. R-7 is intentionally scoped
-differently: it touches `PublicBookingController::store` and the
-multi-step booking flow (`resources/js/pages/booking/show.tsx`), and its
-concern is policy enforcement on POST plus React step-init — not display
-correctness. Bundling it into this session would have hurt reviewability.
+- **R-8 — Calendar hydration + mobile view switcher.** Medium priority.
+  Files: `resources/js/components/calendar/week-view.tsx`,
+  `current-time-indicator.tsx`, `calendar-header.tsx`, `day-view.tsx`,
+  `month-view.tsx`, `calendar-event.tsx`. Priority: fix the confirmed
+  hydration warning first; mobile view switcher second.
+- **R-9 — Popup embed service prefilter + modal robustness.** Medium
+  priority. Files: `public/embed.js`,
+  `resources/js/pages/dashboard/settings/embed.tsx`. Priority: canonical
+  service-prefilter contract (needs a decision) → per-service popup
+  snippet → focus trap / scroll lock / duplicate-overlay guard.
+- **R-10** — next in the remediation roadmap; consult
+  `docs/reviews/ROADMAP-REVIEW.md` for the latest scope.
 
-When adding new booking-related display code, note:
+When adding new public-booking code that touches `provider_id`:
 
-- `$booking->provider` is always a row. Trashed providers are still
-  returned. Use `$booking->provider->trashed()` (or equivalent) to gate
-  any action-ish UI.
-- For NEW work (eligibility, availability, auto-assignment, validation),
-  continue to go through `Provider::query()`, `$service->providers()`,
-  `$business->providers()`, or `BelongsToCurrentBusiness(Provider::class)`.
-  These all keep the default scope and will continue to exclude trashed
-  providers.
-- Customer-facing display payloads should include `business.timezone` so
-  the frontend can format times correctly. Use the helpers in
-  `resources/js/lib/datetime-format.ts`; do not call
-  `new Date(...).toLocale*()` directly.
+- Go through `PublicBookingController::resolveProviderIfChoiceAllowed`
+  (or D-068's pattern if you're outside this controller).
+- Do not re-add the setting check in `StorePublicBookingRequest` — the
+  gate is the controller's responsibility; the Form Request stays as a
+  pure existence-and-tenant-scope validator.
+- Manual booking (`Dashboard\BookingController::store`) is explicitly
+  out of scope for this setting per SPEC §7.6 / D-051. Staff always
+  pick the provider (or auto-assign) for manual bookings; the customer
+  setting does not apply.
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **R-7 — provider-choice enforcement** — next in the remediation
-  roadmap.
-- **`docs/ARCHITECTURE-SUMMARY.md` stale terminology** — noted during
-  this session: several places still say "collaborator" where the code
+- **R-8 — Calendar hydration + mobile view switcher** — next candidate
+  in the remediation roadmap.
+- **R-9 — Popup embed service prefilter + modal robustness** — next
+  candidate in the remediation roadmap.
+- **R-10 and beyond** — consult `docs/reviews/ROADMAP-REVIEW.md`.
+- **`docs/ARCHITECTURE-SUMMARY.md` stale terminology** — carried over
+  from R-5/R-6: several places still say "collaborator" where the code
   has moved to "provider". Not blocking; clean up in a dedicated docs
   pass.
-- **Real-concurrency smoke test** — carried over from R-4B; deterministic
-  simulation remains authoritative.
-- **Availability-exception race** — carried over from R-4B; out of scope.
+- **Real-concurrency smoke test** — carried over from R-4B;
+  deterministic simulation remains authoritative.
+- **Availability-exception race** — carried over from R-4B; out of
+  scope.
 - **Parallel test execution** (`paratest`) — carried over from R-4A;
   revisit only if the suite grows painful.
 - **Multi-business join flow + business-switcher UI (R-2B)** — carried
