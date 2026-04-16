@@ -16,7 +16,7 @@ Use this file as the stable entrypoint for architectural decisions. Decision IDs
 | `docs/decisions/DECISIONS-FOUNDATIONS.md` | platform choices, tenancy, routing, deployment-facing architectural defaults, cross-cutting app conventions |
 | `docs/decisions/DECISIONS-AUTH.md` | auth model, roles, invitations, verification, slug ownership rules, customer/user boundaries |
 | `docs/decisions/DECISIONS-BOOKING-AVAILABILITY.md` | booking flow, scheduling engine, availability, reminder logic, booking state handling |
-| `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md` | onboarding, settings architecture, embed/share management, collaborator lifecycle rules |
+| `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md` | onboarding, settings architecture, embed/share management, staff and provider lifecycle rules |
 | `docs/decisions/DECISIONS-FRONTEND-UI.md` | React/Inertia frontend conventions, COSS UI, public booking UI, dashboard calendar UI decisions |
 | `docs/decisions/DECISIONS-CALENDAR-INTEGRATIONS.md` | external calendar sync scope and future integration-specific decisions |
 | `docs/decisions/DECISIONS-HISTORY.md` | superseded decisions and resolved planning questions kept for historical reference |
