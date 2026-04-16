@@ -36,7 +36,6 @@
         ]
     },
     "model": "opus[1m]",
-    "effortLevel": "high",
     "enableAllProjectMcpServers": true,
     "enabledMcpjsonServers": [
         "laravel-boost"
