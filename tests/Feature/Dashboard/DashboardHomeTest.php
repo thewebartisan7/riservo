@@ -24,16 +24,18 @@ beforeEach(function () {
 });
 
 test('admin sees business-wide stats', function () {
-    // Create bookings for today
-    Booking::factory()->count(3)->create([
-        'business_id' => $this->business->id,
-        'provider_id' => $this->provider->id,
-        'service_id' => $this->service->id,
-        'customer_id' => $this->customer->id,
-        'starts_at' => CarbonImmutable::parse('2026-04-15 14:00', 'UTC'),
-        'ends_at' => CarbonImmutable::parse('2026-04-15 15:00', 'UTC'),
-        'status' => BookingStatus::Confirmed,
-    ]);
+    // Create three non-overlapping confirmed bookings for today
+    foreach (['08:00', '10:00', '12:00'] as $hour) {
+        Booking::factory()->create([
+            'business_id' => $this->business->id,
+            'provider_id' => $this->provider->id,
+            'service_id' => $this->service->id,
+            'customer_id' => $this->customer->id,
+            'starts_at' => CarbonImmutable::parse("2026-04-15 {$hour}", 'UTC'),
+            'ends_at' => CarbonImmutable::parse("2026-04-15 {$hour}", 'UTC')->addHour(),
+            'status' => BookingStatus::Confirmed,
+        ]);
+    }
 
     // Create a pending booking
     Booking::factory()->pending()->create([
