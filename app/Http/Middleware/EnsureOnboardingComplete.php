@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Enums\BusinessMemberRole;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -16,15 +17,17 @@ class EnsureOnboardingComplete
             return $next($request);
         }
 
-        $business = $user->currentBusiness();
+        $tenant = tenant();
 
-        if (! $business) {
+        if (! $tenant->has()) {
             return $next($request);
         }
 
-        if (! $user->hasBusinessRole('admin')) {
+        if ($tenant->role() !== BusinessMemberRole::Admin) {
             return $next($request);
         }
+
+        $business = $tenant->business();
 
         if (! $business->isOnboarded()) {
             return redirect()->route('onboarding.show', ['step' => $business->onboarding_step]);

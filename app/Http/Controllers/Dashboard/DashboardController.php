@@ -17,7 +17,7 @@ class DashboardController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
         $timezone = $business->timezone;
 
         $todayStart = CarbonImmutable::now($timezone)->startOfDay()->utc();
@@ -26,7 +26,7 @@ class DashboardController extends Controller
 
         $baseQuery = Booking::where('business_id', $business->id);
 
-        if ($user->currentBusinessRole()->value === 'staff') {
+        if (tenant()->role()->value === 'staff') {
             $baseQuery->whereHas('provider', fn ($q) => $q->where('user_id', $user->id));
         }
 

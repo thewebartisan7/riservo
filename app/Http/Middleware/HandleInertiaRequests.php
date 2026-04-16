@@ -62,10 +62,10 @@ class HandleInertiaRequests extends Middleware
             return null;
         }
 
-        $businessRole = $user->currentBusinessRole();
+        $tenant = tenant();
 
-        if ($businessRole) {
-            return $businessRole->value;
+        if ($tenant->has()) {
+            return $tenant->role()->value;
         }
 
         if ($user->isCustomer()) {
@@ -80,13 +80,11 @@ class HandleInertiaRequests extends Middleware
      */
     private function resolveBusiness(Request $request): ?array
     {
-        $user = $request->user();
-
-        if (! $user) {
+        if (! $request->user()) {
             return null;
         }
 
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         if (! $business) {
             return null;

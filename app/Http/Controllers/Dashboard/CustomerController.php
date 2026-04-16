@@ -17,7 +17,7 @@ class CustomerController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         $query = Customer::whereHas('bookings', fn ($q) => $q->where('business_id', $business->id));
 
@@ -58,7 +58,7 @@ class CustomerController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         // Ensure customer belongs to this business
         $hasBookings = Booking::where('business_id', $business->id)
@@ -110,7 +110,7 @@ class CustomerController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         $request->validate([
             'q' => ['required', 'string', 'min:2'],

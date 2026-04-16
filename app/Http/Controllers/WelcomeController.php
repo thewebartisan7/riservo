@@ -11,7 +11,7 @@ class WelcomeController extends Controller
 {
     public function show(Request $request): Response
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         return Inertia::render('dashboard/welcome', [
             'publicUrl' => url($business->slug),

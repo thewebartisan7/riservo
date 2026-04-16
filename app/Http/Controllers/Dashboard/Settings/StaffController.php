@@ -24,7 +24,7 @@ class StaffController extends Controller
 {
     public function index(Request $request): Response
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $currentUserId = $request->user()->id;
 
         $members = $business->members()
@@ -86,7 +86,7 @@ class StaffController extends Controller
 
     public function show(Request $request, User $user): Response
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $this->ensureUserBelongsToBusiness($user, $business);
 
         $provider = Provider::withTrashed()
@@ -145,7 +145,7 @@ class StaffController extends Controller
 
     public function invite(StoreStaffInvitationRequest $request): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $validated = $request->validated();
 
         $exists = $business->invitations()
@@ -165,12 +165,31 @@ class StaffController extends Controller
                 ->with('error', __('This email is already a member of your business.'));
         }
 
+        // Defense-in-depth: re-filter service_ids through this business's relation
+        // before persisting them to the JSON column. Validation already rejects
+        // cross-tenant ids via BelongsToCurrentBusiness, but we do not trust the
+        // payload with the blob that the acceptance flow later reads.
+        $rawServiceIds = $validated['service_ids'] ?? null;
+        $scopedServiceIds = null;
+
+        if (! empty($rawServiceIds)) {
+            $scopedServiceIds = $business->services()
+                ->whereIn('id', $rawServiceIds)
+                ->pluck('id')
+                ->values()
+                ->all();
+
+            if (empty($scopedServiceIds)) {
+                $scopedServiceIds = null;
+            }
+        }
+
         $invitation = BusinessInvitation::create([
             'business_id' => $business->id,
             'email' => $validated['email'],
             'role' => BusinessMemberRole::Staff,
             'token' => Str::random(64),
-            'service_ids' => $validated['service_ids'] ?? null,
+            'service_ids' => $scopedServiceIds,
             'expires_at' => now()->addHours(48),
         ]);
 
@@ -182,7 +201,7 @@ class StaffController extends Controller
 
     public function resendInvitation(Request $request, BusinessInvitation $invitation): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         if ($invitation->business_id !== $business->id) {
             abort(403);
@@ -201,7 +220,7 @@ class StaffController extends Controller
 
     public function cancelInvitation(Request $request, BusinessInvitation $invitation): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         if ($invitation->business_id !== $business->id) {
             abort(403);
@@ -214,7 +233,7 @@ class StaffController extends Controller
 
     public function uploadAvatar(Request $request, User $user): JsonResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $this->ensureUserBelongsToBusiness($user, $business);
 
         $request->validate([

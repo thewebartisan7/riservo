@@ -13,7 +13,7 @@ class BookingSettingsController extends Controller
 {
     public function edit(Request $request): Response
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         return Inertia::render('dashboard/settings/booking', [
             'settings' => [
@@ -29,7 +29,7 @@ class BookingSettingsController extends Controller
 
     public function update(UpdateBookingSettingsRequest $request): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $validated = $request->validated();
         $validated['reminder_hours'] = array_map('intval', $validated['reminder_hours'] ?? []);
         $business->update($validated);

@@ -2,13 +2,14 @@
 
 namespace App\Http\Requests\Onboarding;
 
+use App\Enums\BusinessMemberRole;
 use Illuminate\Foundation\Http\FormRequest;
 
 class StoreHoursRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        return tenant()->role() === BusinessMemberRole::Admin;
     }
 
     /**

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Models\BusinessMember;
 use App\Models\Customer;
 use App\Models\User;
 use App\Notifications\MagicLinkNotification;
@@ -66,6 +67,16 @@ class MagicLinkController extends Controller
         Auth::login($user, remember: true);
 
         $request->session()->regenerate();
+
+        $membership = BusinessMember::query()
+            ->where('user_id', $user->id)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->first();
+
+        if ($membership !== null) {
+            $request->session()->put('current_business_id', $membership->business_id);
+        }
 
         if ($user->hasBusinessRole('admin', 'staff')) {
             return redirect()->route('dashboard');

@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Dashboard\Settings;
 
 use App\Enums\AssignmentStrategy;
+use App\Enums\BusinessMemberRole;
 use App\Enums\ConfirmationMode;
 use App\Enums\PaymentMode;
 use Illuminate\Foundation\Http\FormRequest;
@@ -12,7 +13,7 @@ class UpdateBookingSettingsRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        return tenant()->role() === BusinessMemberRole::Admin;
     }
 
     /**

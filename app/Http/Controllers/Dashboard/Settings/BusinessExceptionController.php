@@ -15,7 +15,7 @@ class BusinessExceptionController extends Controller
 {
     public function index(Request $request): Response
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         $exceptions = $business->availabilityExceptions()
             ->whereNull('provider_id')
@@ -38,7 +38,7 @@ class BusinessExceptionController extends Controller
 
     public function store(StoreBusinessExceptionRequest $request): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         $business->availabilityExceptions()->create(
             array_merge($request->validated(), ['provider_id' => null])
@@ -49,7 +49,7 @@ class BusinessExceptionController extends Controller
 
     public function update(UpdateBusinessExceptionRequest $request, AvailabilityException $exception): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         if ($exception->business_id !== $business->id || $exception->provider_id !== null) {
             abort(403);
@@ -62,7 +62,7 @@ class BusinessExceptionController extends Controller
 
     public function destroy(Request $request, AvailabilityException $exception): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         if ($exception->business_id !== $business->id || $exception->provider_id !== null) {
             abort(403);

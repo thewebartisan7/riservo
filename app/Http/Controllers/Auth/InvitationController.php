@@ -67,6 +67,8 @@ class InvitationController extends Controller
 
         Auth::login($user);
 
+        $request->session()->put('current_business_id', $invitation->business_id);
+
         return redirect()->route('dashboard')->with('success', __('Welcome! You have joined :business.', [
             'business' => $invitation->business->name,
         ]));

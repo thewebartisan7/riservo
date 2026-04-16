@@ -2,13 +2,14 @@
 
 namespace App\Http\Requests\Dashboard\Settings;
 
+use App\Enums\BusinessMemberRole;
 use Illuminate\Foundation\Http\FormRequest;
 
 class UpdateWorkingHoursRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        return tenant()->role() === BusinessMemberRole::Admin;
     }
 
     /**

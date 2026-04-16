@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Onboarding;
 
+use App\Enums\BusinessMemberRole;
 use App\Services\SlugService;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -10,7 +11,7 @@ class StoreProfileRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        return tenant()->role() === BusinessMemberRole::Admin;
     }
 
     /**
@@ -18,7 +19,7 @@ class StoreProfileRequest extends FormRequest
      */
     public function rules(): array
     {
-        $businessId = $this->user()->currentBusiness()->id;
+        $businessId = tenant()->businessId();
 
         return [
             'name' => ['required', 'string', 'max:255'],

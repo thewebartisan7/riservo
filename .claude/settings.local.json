@@ -30,7 +30,8 @@
       "mcp__laravel-boost__*",
       "Bash(php:*)",
       "Bash(git:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(sort -t- -k2 -n)"
     ]
   },
   "enableAllProjectMcpServers": true,

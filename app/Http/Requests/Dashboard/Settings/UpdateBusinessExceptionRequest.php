@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Dashboard\Settings;
 
+use App\Enums\BusinessMemberRole;
 use App\Enums\ExceptionType;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -10,7 +11,7 @@ class UpdateBusinessExceptionRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        return tenant()->role() === BusinessMemberRole::Admin;
     }
 
     /**

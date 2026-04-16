@@ -14,7 +14,7 @@ class WorkingHoursController extends Controller
 {
     public function edit(Request $request): Response
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         $existingHours = $business->businessHours()
             ->orderBy('day_of_week')
@@ -50,7 +50,7 @@ class WorkingHoursController extends Controller
 
     public function update(UpdateWorkingHoursRequest $request): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         $business->businessHours()->delete();
 

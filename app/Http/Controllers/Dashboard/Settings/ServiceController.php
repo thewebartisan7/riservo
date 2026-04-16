@@ -17,7 +17,7 @@ class ServiceController extends Controller
 {
     public function index(Request $request): Response
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         $services = $business->services()
             ->withCount('bookings')
@@ -45,7 +45,7 @@ class ServiceController extends Controller
 
     public function create(Request $request): Response
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         $providers = $business->providers()
             ->with('user:id,name')
@@ -60,7 +60,7 @@ class ServiceController extends Controller
 
     public function store(StoreSettingsServiceRequest $request): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $validated = $request->validated();
 
         $providerIds = $validated['provider_ids'] ?? [];
@@ -79,7 +79,7 @@ class ServiceController extends Controller
 
     public function edit(Request $request, Service $service): Response
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         if ($service->business_id !== $business->id) {
             abort(403);
@@ -113,7 +113,7 @@ class ServiceController extends Controller
 
     public function update(UpdateSettingsServiceRequest $request, Service $service): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         if ($service->business_id !== $business->id) {
             abort(403);

@@ -17,7 +17,7 @@ class ProfileController extends Controller
 {
     public function edit(Request $request): Response
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         return Inertia::render('dashboard/settings/profile', [
             'business' => $business->only('name', 'slug', 'description', 'logo', 'phone', 'email', 'address'),
@@ -27,7 +27,7 @@ class ProfileController extends Controller
 
     public function update(UpdateProfileRequest $request): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $business->update($request->validated());
 
         return redirect()->route('settings.profile')->with('success', __('Business profile updated.'));
@@ -39,7 +39,7 @@ class ProfileController extends Controller
             'logo' => ['required', File::image()->max(2048)->types(['jpg', 'jpeg', 'png', 'webp'])],
         ]);
 
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         if ($business->logo && Storage::disk('public')->exists($business->logo)) {
             Storage::disk('public')->delete($business->logo);
@@ -61,7 +61,7 @@ class ProfileController extends Controller
         ]);
 
         $slug = $request->input('slug');
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $slugService = app(SlugService::class);
 
         $isOwn = $business->slug === $slug;

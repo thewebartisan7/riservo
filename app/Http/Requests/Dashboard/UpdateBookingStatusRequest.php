@@ -11,7 +11,7 @@ class UpdateBookingStatusRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        return tenant()->has();
     }
 
     /** @return array<string, ValidationRule|array<mixed>|string> */

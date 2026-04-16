@@ -11,7 +11,7 @@ class EmbedController extends Controller
 {
     public function edit(Request $request): Response
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         $baseUrl = url($business->slug);
         $embedUrl = $baseUrl.'?embed=1';

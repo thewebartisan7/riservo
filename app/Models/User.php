@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use App\Enums\BusinessMemberRole;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -33,7 +32,12 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
-     * Check if the user has any of the given business roles.
+     * Check if the user is a member of any business with any of the given roles.
+     *
+     * Use this for "is this user a business user at all" discriminators (e.g., login
+     * redirect: business users go to /dashboard, customers go to /my-bookings). For
+     * role-based authorisation tied to the current request, use tenant()->role()
+     * instead — hasBusinessRole() does not consider which business is active.
      */
     public function hasBusinessRole(string ...$roles): bool
     {
@@ -48,29 +52,6 @@ class User extends Authenticatable implements MustVerifyEmail
     public function isCustomer(): bool
     {
         return Customer::where('user_id', $this->id)->exists();
-    }
-
-    /**
-     * Get the user's current business (MVP: users belong to one business).
-     */
-    public function currentBusiness(): ?Business
-    {
-        return $this->businesses()->first();
-    }
-
-    /**
-     * Get the user's role in their current business.
-     */
-    public function currentBusinessRole(): ?BusinessMemberRole
-    {
-        /** @var (Business&object{pivot: BusinessMember})|null $business */
-        $business = $this->businesses()->first();
-
-        if (! $business) {
-            return null;
-        }
-
-        return $business->pivot->role;
     }
 
     /** @return BelongsToMany<Business, $this, BusinessMember, 'pivot'> */

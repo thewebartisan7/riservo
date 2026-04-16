@@ -17,6 +17,9 @@ class StorePublicBookingRequest extends FormRequest
     /** @return array<string, ValidationRule|array<mixed>|string> */
     public function rules(): array
     {
+        // Public route — no auth, no session pin, no TenantContext. Business is resolved
+        // from the URL slug, so the shared BelongsToCurrentBusiness rule (which reads
+        // TenantContext) does not apply here. The inline closure stays.
         $slug = $this->route('slug');
         $businessId = $slug ? Business::where('slug', $slug)->value('id') : null;
 

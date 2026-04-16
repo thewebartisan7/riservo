@@ -2,13 +2,16 @@
 
 namespace App\Http\Requests\Onboarding;
 
+use App\Enums\BusinessMemberRole;
+use App\Models\Service;
+use App\Rules\BelongsToCurrentBusiness;
 use Illuminate\Foundation\Http\FormRequest;
 
 class StoreInvitationsRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        return tenant()->role() === BusinessMemberRole::Admin;
     }
 
     /**
@@ -16,15 +19,13 @@ class StoreInvitationsRequest extends FormRequest
      */
     public function rules(): array
     {
-        $businessId = $this->user()->currentBusiness()->id;
-
         return [
             'invitations' => ['present', 'array'],
             'invitations.*.email' => ['required', 'email', 'max:255', 'distinct'],
             'invitations.*.service_ids' => ['nullable', 'array'],
             'invitations.*.service_ids.*' => [
                 'integer',
-                'exists:services,id',
+                new BelongsToCurrentBusiness(Service::class),
             ],
         ];
     }

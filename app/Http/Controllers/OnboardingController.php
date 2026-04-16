@@ -28,7 +28,7 @@ class OnboardingController extends Controller
 {
     public function show(Request $request, int $step): Response|RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         if ($business->isOnboarded()) {
             return redirect()->route('dashboard');
@@ -50,7 +50,7 @@ class OnboardingController extends Controller
 
     public function store(Request $request, int $step): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         if ($business->isOnboarded()) {
             return redirect()->route('dashboard');
@@ -68,7 +68,7 @@ class OnboardingController extends Controller
 
     public function enableOwnerAsProvider(Request $request): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $user = $request->user();
 
         DB::transaction(function () use ($business, $user) {
@@ -113,7 +113,7 @@ class OnboardingController extends Controller
         ]);
 
         $slug = $request->input('slug');
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $slugService = app(SlugService::class);
 
         $isOwn = $business->slug === $slug;
@@ -132,7 +132,7 @@ class OnboardingController extends Controller
             'logo' => ['required', File::image()->max(2048)->types(['jpg', 'jpeg', 'png', 'webp'])],
         ]);
 
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
 
         // Delete old logo if exists
         if ($business->logo && Storage::disk('public')->exists($business->logo)) {
@@ -399,12 +399,31 @@ class OnboardingController extends Controller
                 continue;
             }
 
+            // Defense-in-depth: re-filter service_ids through this business's relation
+            // before persisting them to the JSON column. Validation already rejects
+            // cross-tenant ids via BelongsToCurrentBusiness, but we refuse to trust the
+            // payload when writing a blob that downstream code will read later.
+            $rawServiceIds = $invitationData['service_ids'] ?? null;
+            $scopedServiceIds = null;
+
+            if (! empty($rawServiceIds)) {
+                $scopedServiceIds = $business->services()
+                    ->whereIn('id', $rawServiceIds)
+                    ->pluck('id')
+                    ->values()
+                    ->all();
+
+                if (empty($scopedServiceIds)) {
+                    $scopedServiceIds = null;
+                }
+            }
+
             $invitation = BusinessInvitation::create([
                 'business_id' => $business->id,
                 'email' => $invitationData['email'],
                 'role' => BusinessMemberRole::Staff,
                 'token' => Str::random(64),
-                'service_ids' => $invitationData['service_ids'] ?? null,
+                'service_ids' => $scopedServiceIds,
                 'expires_at' => now()->addHours(48),
             ]);
 

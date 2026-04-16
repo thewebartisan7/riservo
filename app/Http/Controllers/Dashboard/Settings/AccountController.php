@@ -25,7 +25,7 @@ class AccountController extends Controller
     public function edit(Request $request): Response
     {
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         $provider = Provider::withTrashed()
             ->where('business_id', $business->id)
@@ -100,7 +100,7 @@ class AccountController extends Controller
     public function toggleProvider(Request $request): RedirectResponse
     {
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         $provider = Provider::withTrashed()
             ->where('business_id', $business->id)
@@ -171,7 +171,7 @@ class AccountController extends Controller
     public function updateSchedule(UpdateProviderScheduleRequest $request): RedirectResponse
     {
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         $provider = $this->activeProviderOrFail($user, $business);
 
@@ -183,7 +183,7 @@ class AccountController extends Controller
     public function storeException(StoreProviderExceptionRequest $request): RedirectResponse
     {
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         $provider = $this->activeProviderOrFail($user, $business);
 
@@ -197,7 +197,7 @@ class AccountController extends Controller
     public function updateException(UpdateProviderExceptionRequest $request, AvailabilityException $exception): RedirectResponse
     {
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         $provider = $this->activeProviderOrFail($user, $business);
 
@@ -213,7 +213,7 @@ class AccountController extends Controller
     public function destroyException(Request $request, AvailabilityException $exception): RedirectResponse
     {
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         $provider = $this->activeProviderOrFail($user, $business);
 
@@ -229,7 +229,7 @@ class AccountController extends Controller
     public function updateServices(UpdateProviderServicesRequest $request): RedirectResponse
     {
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         $provider = $this->activeProviderOrFail($user, $business);
 

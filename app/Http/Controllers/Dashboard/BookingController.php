@@ -35,8 +35,8 @@ class BookingController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $business = $user->currentBusiness();
-        $isAdmin = $user->currentBusinessRole()->value === 'admin';
+        $business = tenant()->business();
+        $isAdmin = tenant()->role()->value === 'admin';
 
         $query = Booking::where('business_id', $business->id)
             ->with([
@@ -161,11 +161,11 @@ class BookingController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         abort_unless($booking->business_id === $business->id, 404);
 
-        $isAdmin = $user->currentBusinessRole()->value === 'admin';
+        $isAdmin = tenant()->role()->value === 'admin';
         if (! $isAdmin && $booking->provider?->user_id !== $user->id) {
             abort(403);
         }
@@ -204,11 +204,11 @@ class BookingController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         abort_unless($booking->business_id === $business->id, 404);
 
-        $isAdmin = $user->currentBusinessRole()->value === 'admin';
+        $isAdmin = tenant()->role()->value === 'admin';
         if (! $isAdmin && $booking->provider?->user_id !== $user->id) {
             abort(403);
         }
@@ -226,7 +226,7 @@ class BookingController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
         $validated = $request->validated();
 
         $service = $business->services()
@@ -319,7 +319,7 @@ class BookingController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         $request->validate([
             'service_id' => ['required', 'integer'],
@@ -364,7 +364,7 @@ class BookingController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $business = $user->currentBusiness();
+        $business = tenant()->business();
 
         $request->validate([
             'service_id' => ['required', 'integer'],

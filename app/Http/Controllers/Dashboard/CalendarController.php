@@ -18,8 +18,8 @@ class CalendarController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $business = $user->currentBusiness();
-        $isAdmin = $user->currentBusinessRole()->value === 'admin';
+        $business = tenant()->business();
+        $isAdmin = tenant()->role()->value === 'admin';
         $timezone = $business->timezone;
 
         $view = $request->string('view', 'week')->toString();

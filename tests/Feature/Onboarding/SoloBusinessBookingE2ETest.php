@@ -50,7 +50,7 @@ test('solo owner can register, onboard with provider opt-in, launch, and receive
     $user = User::where('email', 'sam@example.com')->firstOrFail();
     $user->forceFill(['email_verified_at' => now()])->save();
 
-    $business = $user->currentBusiness();
+    $business = $user->businesses()->first();
     expect($business)->not->toBeNull();
 
     // 2. Step 1 — profile (keep the auto-generated slug).

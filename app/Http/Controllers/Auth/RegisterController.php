@@ -39,6 +39,8 @@ class RegisterController extends Controller
 
         Auth::login($user);
 
+        $request->session()->put('current_business_id', $business->id);
+
         $user->sendEmailVerificationNotification();
 
         return redirect()->route('verification.notice');

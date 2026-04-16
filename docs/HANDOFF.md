@@ -1,6 +1,6 @@
 # Handoff
 
-**Session**: R-1B — Admin as Provider
+**Session**: R-2 — Tenant Context and Cross-Tenant Validation (bundles R-3)
 **Date**: 2026-04-16
 **Status**: Complete
 
@@ -8,67 +8,93 @@
 
 ## What Was Built
 
-The product half of REVIEW-1 issue #1: an admin can now become a bookable provider, onboarding cannot complete with unstaffed services, and the public page hides services that have no one to perform them. R-1A set the data model for this; R-1B delivers the UX and the launch gate on top. New architectural decision **D-062** recorded in `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md`.
+Request-level tenant resolution is now **explicit, deterministic, and session-pinned**, and cross-tenant FK validation is now **reusable, central, and required** wherever user input names a business-owned record. This closes REVIEW-1 issues #2 and #6. Two new architectural decisions **D-063** and **D-064** recorded in `docs/decisions/DECISIONS-AUTH.md`.
 
-### Onboarding step 3 — provider opt-in
+### The primitives
 
-- `OnboardingController::showService()` returns `adminProvider = { exists, schedule, serviceIds }`, `businessHoursSchedule`, and `hasOtherProviders` so the step-3 UI can pre-fill the schedule editor and tailor its copy.
-- `OnboardingController::storeService()` accepts optional `provider_opt_in: bool` and `provider_schedule: DaySchedule[]`. Inside a transaction: upserts the service, and when opt-in is on: restores / creates the admin's `providers` row, writes availability rules, and idempotently attaches the admin to the service. Opt-in off detaches the admin from *this* service only — other service attachments stay intact.
-- `StoreServiceRequest` adds conditional rules: `provider_schedule` is required when `provider_opt_in = true`, nullable otherwise.
-- Front end (`resources/js/pages/onboarding/step-3.tsx`): switch + collapsible `WeekScheduleEditor` that defaults from step-2 business hours, "Match business hours" reset button, and the launch-blocked banner with "Be your own first provider" / "Invite a provider instead" CTAs.
+- `app/Support/TenantContext.php` — per-request singleton (scoped binding in `AppServiceProvider`). Exposes `business()`, `role()`, `businessId()`, `has()`, `set()`, `clear()`.
+- `app/Support/helpers.php` — `tenant()` global helper, autoloaded via `composer.json` `autoload.files`.
+- `app/Http/Middleware/ResolveTenantContext.php` — registered in the `web` group in `bootstrap/app.php`. Populates the context from the authenticated user + `session('current_business_id')`. Self-heals stale / missing session values by falling back to the user's oldest active membership (ordered by `business_members.created_at ASC, id ASC` — deterministic under ties) and rewriting the session.
+- `app/Rules/BelongsToCurrentBusiness.php` — reusable `ValidationRule` that scopes an FK lookup to `tenant()->businessId()` and respects the model's `SoftDeletes` scope by default.
 
-### Settings → Account page
+### Middleware + shared-props rewrites
 
-New `App\Http\Controllers\Dashboard\Settings\AccountController` at `/dashboard/settings/account` (admin-only). The page is the admin's self-service command-center for their bookability:
+- `EnsureUserHasRole` now authorises against `tenant()->role()` — a user who is admin in Business A and staff in Business B passes `role:admin` only when pinned to A. The customer branch (`role:customer`) still reads `User::isCustomer()` and is unchanged.
+- `EnsureOnboardingComplete` reads `tenant()->business()` for its redirect decision.
+- `HandleInertiaRequests` shared props `auth.role` and `auth.business` resolve through `tenant()`.
+- `User::currentBusiness()` and `User::currentBusinessRole()` are **deleted** (not shimmed). `hasBusinessRole()` stays but gets a docblock clarifying it is only for "is this user a business user at all" discriminators; tenant-aware authorisation must go through `tenant()`.
 
-- `edit()` — resolves the admin's provider row (including soft-deleted), computes `isProvider`, builds schedule from provider rules or from business hours as fallback, lists the admin's exceptions, and returns active services with an `assigned` flag. Also returns `upcomingBookingsCount` so the turn-off confirmation can warn about in-flight bookings.
-- `toggleProvider()` — create + default-attach active services + write schedule from business hours, OR restore, OR soft-delete. Flash `warning` when toggling off leaves any active service unstaffed; otherwise flash `success` with variant copy ("now bookable", "bookable again", "no longer bookable").
-- `updateSchedule`, `storeException`, `updateException`, `destroyException`, `updateServices` — full CRUD for the admin's provider, each gated by `activeProviderOrFail()` (aborts 409 with copy pointing at the toggle).
-- Routes under the existing `role:admin` settings prefix; Wayfinder regenerated (`resources/js/actions/.../AccountController.ts`).
-- Front end (`resources/js/pages/dashboard/settings/account.tsx`): read-only profile card, Bookable-provider Switch wrapped in an `AlertDialog` that shows the upcoming-bookings count on turn-off, inline `WeekScheduleEditor`, exceptions list reusing `ExceptionDialog`, and a checkbox list for services. Submits via `useHttp` with the pending-ref pattern borrowed from `staff/show.tsx`.
-- New "You" group (with Account entry) prepended to `resources/js/components/settings/settings-nav.tsx`.
+### Auth events pin the session
 
-### Settings → Staff page
+`LoginController::store`, `MagicLinkController::verify`, `RegisterController::store`, and `InvitationController::accept` all write `current_business_id` into the session after `Auth::login` / `session()->regenerate()`. These writes are strictly defensive — the middleware self-heals anyway — but they eliminate a "no tenant yet" window on the first post-auth redirect.
 
-- `StaffController::index` now returns **all** members (admins + staff) with `role`, `is_provider`, `is_self`, `provider_id`, `services_count`. Admins are ordered first, then staff, each alphabetized.
-- Front end (`resources/js/pages/dashboard/settings/staff/index.tsx`): each row shows a "You" badge for the current user, a role pill (Admin / Staff), and a provider-status chip (Provider / Not bookable). The services count is only rendered when the member is an active provider. Non-self admin rows link to the staff detail page; the self admin row links to `/dashboard/settings/account` instead. Toggle is only rendered on staff rows — admins manage themselves via the Account page.
+### Form Request overhaul (covers R-3)
 
-### Launch gate (step 5)
+- 23 Form Requests; `authorize()` bodies rewritten per the archetype table:
+  - Onboarding + dashboard/settings → `tenant()->role() === BusinessMemberRole::Admin`
+  - `/dashboard/bookings/*` (admin+staff) → `tenant()->has()`
+  - Public (`StorePublicBookingRequest`) + auth guest (`LoginRequest`, `RegisterRequest`, `AcceptInvitationRequest`, `CustomerRegisterRequest`) → `return true` (by design — no tenant context yet)
+- Eight inline "scope FK to current business" closures migrated to `new BelongsToCurrentBusiness(Service::class)` / `Provider::class`:
+  - `StoreSettingsServiceRequest`, `UpdateSettingsServiceRequest` (`provider_ids.*`)
+  - `UpdateProviderServicesRequest`, `StoreStaffInvitationRequest` (`service_ids.*`)
+  - `StoreManualBookingRequest` (`provider_id` AND the previously unprotected `service_id`)
+- Two plain `exists:services,id` bypass paths plugged:
+  - `StoreInvitationsRequest` (`invitations.*.service_ids.*`) — was polluting `business_invitations.service_ids` JSON with cross-tenant IDs on accept-side re-scope; now rejected at validation time.
+  - `StoreManualBookingRequest::service_id` — controller defense existed, validation now matches.
+- `StorePublicBookingRequest` explicitly keeps its slug-scoped closure with an in-file comment explaining why: it is unauthenticated, has no session pin, and resolves the business from the URL slug instead of `tenant()`.
 
-- `OnboardingController::storeLaunch()` blocks when any active service has zero non-soft-deleted providers via `whereDoesntHave('providers')`. On failure it redirects to step 3 with `launchBlocked = { services: [{ id, name }, ...] }` session data, and bumps `onboarding_step` down to 3 if needed so the wizard actually renders step 3.
-- New `POST /onboarding/enable-owner-as-provider` → `OnboardingController::enableOwnerAsProvider()`: creates / restores the admin's provider row, writes a default schedule from business hours only if no rules exist yet, and `syncWithoutDetaching`s the admin to every active service. Redirects to step 5 with a success flash.
+### Defense-in-depth on invitation JSON writes
 
-### Public page defense-in-depth
+`StaffController::invite` and `OnboardingController::storeInvitations` re-filter the incoming `service_ids` through `$business->services()->whereIn(...)->pluck('id')` before persisting to the `business_invitations.service_ids` JSON column. Validation rejects foreign IDs already, but we refuse to trust the payload when writing a blob that later readers (`InvitationController::accept`) consume.
 
-- `PublicBookingController::show()` now filters services with `whereHas('providers')` instead of `withCount('providers')`. A service that loses its last provider — post-launch or via an admin toggle — disappears from `/{slug}` until a provider is re-attached, with no admin action required.
+### Controller migrations
 
-### End-to-end test
+Every `$request->user()->currentBusiness()` / `$user->currentBusinessRole()` call is now `tenant()->business()` / `tenant()->role()`:
+`OnboardingController`, `WelcomeController`, `Dashboard\{DashboardController, BookingController, CalendarController, CustomerController}`, and every `Dashboard\Settings\*Controller`.
 
-New `tests/Feature/Onboarding/SoloBusinessBookingE2ETest.php`: register → mark verified → walk steps 1–3 with provider opt-in → skip step 4 → launch step 5 → public `POST /booking/{slug}/book` → assert `Booking::count() === 1`, `provider_id` is the admin provider, status `confirmed`, and `BookingReceivedNotification` sent to the admin (the solo provider).
+### New tests
+
+- `tests/Feature/Rules/BelongsToCurrentBusinessTest.php` — 6 tests: in-tenant passes, cross-tenant fails, soft-deleted fails, missing context, null skipped, column override.
+- `tests/Feature/TenantContext/ResolveTenantContextTest.php` — 6 tests: unauth empty, single-business populated, valid pin wins, stale pin self-heals, oldest wins on multiple memberships, customer-only empty.
+- `tests/Feature/TenantContext/CrossTenantAuthorizationTest.php` — 5 tests: admin-in-A / staff-in-B fixture (built via direct `business_members` inserts, since no product flow creates this today) asserts `role:admin` gate, bookings listing scope, Inertia props swap with pin, and provider-schedule rejects cross-tenant provider.
+- `tests/Feature/TenantContext/CrossTenantValidationTest.php` — 8 tests: every migrated Form Request + the re-scoped onboarding invitations path + a soft-deleted foreign service guard.
+
+`SoloBusinessBookingE2ETest` still passes (one incidental `$user->currentBusiness()` replaced with `$user->businesses()->first()` — same semantic, public API). The customer-only `/my-bookings` path still passes.
 
 ---
 
 ## Current Project State
 
-- **Backend**: new `AccountController`, extended `OnboardingController`, extended `StaffController`, updated `PublicBookingController::show()` and `StoreServiceRequest`.
-- **Frontend**: new `dashboard/settings/account.tsx`, extended `dashboard/settings/staff/index.tsx`, extended `onboarding/step-3.tsx`, "You" group added to `settings-nav.tsx`.
-- **Routes**: 7 new `/dashboard/settings/account/*` routes + 1 new `/onboarding/enable-owner-as-provider`. Wayfinder regenerated.
-- **Tests**: full Pest suite green. Key new files: `tests/Feature/Settings/AccountTest.php` (15 tests), `tests/Feature/Onboarding/SoloBusinessBookingE2ETest.php` (1 E2E). Extended: `Step3ServiceTest`, `Step5LaunchTest`, `StaffTest`, `PublicBookingPageTest`, `SettingsAuthorizationTest`.
-- **Decisions**: D-062 appended to `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md`.
+- **Backend**: new `app/Support/TenantContext.php`, `app/Support/helpers.php`, `app/Http/Middleware/ResolveTenantContext.php`, `app/Rules/BelongsToCurrentBusiness.php`. Updated `bootstrap/app.php`, `AppServiceProvider`, `HandleInertiaRequests`, `EnsureUserHasRole`, `EnsureOnboardingComplete`, all 4 auth controllers, and every dashboard / onboarding / settings controller.
+- **Frontend**: no changes (shared props still expose `auth.role` and `auth.business` with the same shape).
+- **Routes**: no changes. Wayfinder is unaffected.
+- **Tests**: full Pest suite green — **433 passed, 1695 assertions**. Baseline before R-2 was 379; R-2 added approximately 54 tests across the four new test files plus a handful of updates.
+- **Decisions**: D-063 and D-064 appended to `docs/decisions/DECISIONS-AUTH.md`.
+- **Composer**: `autoload.files` now includes `app/Support/helpers.php`. Run `composer dump-autoload` after pulling.
 
 ---
 
 ## What the Next Session Needs to Know
 
-- REVIEW-1 issue #1 is closed. R-2 through R-16 from `docs/reviews/ROADMAP-REVIEW.md` remain independent.
-- The "Be your own first provider" CTA attaches the admin to **every** active service. The Account page is the single place to adjust those attachments afterwards; the banner copy already states this on click. No follow-up is required unless real usage surfaces pain.
-- Dashboard home does not currently warn when an active service has zero providers — noted as a product-polish follow-up in the R-1B plan (§8 Risks). Worth surfacing before launch so admins notice a disappeared service, but not blocking.
-- `upcomingBookingsCount` on the Account page is computed at render time via the bookings relation filtered by `starts_at >= now()` and status `Pending|Confirmed`. It is not persisted. No observer needed; the page always reflects the current truth.
+**R-2B — business-switcher UI is deferred to a separate future plan, but the infrastructure is ready.** Everything that switcher needs is already in place:
+
+- `session('current_business_id')` is the **authoritative session pin**. Writing a new value, then visiting any authenticated page, re-scopes the next request. Nothing additional is required on the server to make a switcher work.
+- `ResolveTenantContext` already self-heals: if the switcher writes an invalid id (shouldn't happen, but defensively), the middleware falls back to the oldest active membership and rewrites the session.
+- All controllers, middleware, Form Requests, and shared Inertia props read through `tenant()` — nothing hardcodes "the user's first business" anymore.
+
+The R-2B plan therefore reduces to: a dashboard-header dropdown listing the user's active memberships, a `PUT /dashboard/switch-business` endpoint that validates the requested id against `$user->businesses()` and writes `current_business_id` into session, the React component, and tests that switching re-scopes the next request. It is purely additive.
+
+**Prerequisite for R-2B to be user-visible**: a product flow that actually creates more than one `business_members` row for a single `User`. Today no flow does — `RegisterController` creates User+Business+Admin-membership atomically, and `InvitationController::accept` creates a fresh User per invite (collides on the unique email index if one already exists). Either of those needs a "join an existing account to a new business" branch before a switcher moves the needle for any real user. Not in R-2B's remit, either.
+
+**Policies remain out of scope.** REVIEW-1 flagged Policy classes as an INFO-level architectural note; explicit `TenantContext` + `BelongsToCurrentBusiness` + single-role middleware closes the holes R-2/R-3 identified. A full Policy rollout is a separate initiative that would sit on top of this foundation.
+
+**R-1A and R-1B are unaffected.** Provider soft-delete, admin-as-provider onboarding, launch gate, and public-page filtering all behave identically — the Settings → Account and Staff pages read from `tenant()->business()` instead of `$user->currentBusiness()`, but the logic is unchanged.
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **Identity editing on the Account page**: the plan explicitly kept name / email / avatar read-only in R-1B. Folding editing in is a clean follow-up (reuse `uploadAvatar` from `StaffController` — pattern already exists).
-- **Provider toggle on another admin's staff row**: currently the row renders no toggle for admin members (admins manage themselves). If a product need emerges where one admin needs to forcibly remove another admin's bookability, revisit. For now the explicit boundary (admins are self-service) is a feature.
-- **Dashboard-level "unstaffed service" warning**: tracked informally in this handoff. Not in scope for R-1B.
+- **Multi-business join flow** (`InvitationController::accept` for existing users). Prerequisite for R-2B user-visibility. Not scoped yet.
+- **Business-switcher UI** (R-2B). Plan-once-the-join-flow-lands.
+- **Policies for business-owned models**. Orthogonal to R-2/R-3; would benefit from landing on top of `TenantContext`.
+- **Dashboard-level "unstaffed service" warning**. Carried over from the R-1B handoff — still not in scope.

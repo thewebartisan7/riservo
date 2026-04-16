@@ -112,3 +112,31 @@ This file contains live decisions about auth boundaries, roles, invitations, ver
   - `collaborator_id` ceases to exist as an application column. Form Requests, URLs, and API payloads use `provider_id`.
   - `$provider->delete()` makes a provider unbookable without losing history; `$provider->restore()` brings them back. Historical bookings reference a soft-deleted provider row.
   - The unique index on providers is `(business_id, user_id, deleted_at)`, permitting one active row plus any number of soft-deleted rows per (business, user).
+
+---
+
+### D-063 — Explicit tenant context per request
+- **Date**: 2026-04-16
+- **Status**: accepted
+- **Supersedes**: implicitly the undocumented "first attached business" convention used by the removed `User::currentBusiness()` helper.
+- **Context**: `User::currentBusiness()` returned `$this->businesses()->first()` — non-deterministic when a user belonged to more than one business, and not session-pinned. Role middleware authorised against "any active membership with this role" rather than "this role in the currently-active business", so a user who was admin in Business A and staff in Business B passed `role:admin` checks regardless of which business the subsequent controller was writing to. Shared Inertia props inherited the same "first" semantics. Multi-business membership is a plausible post-MVP product capability (a freelancer at two salons), so enforcing one-business-per-user would close off a real scenario.
+- **Decision**: Introduce `App\Support\TenantContext` as the authoritative per-request source for the active business and the user's role within it. `App\Http\Middleware\ResolveTenantContext` populates it after `auth` from a session-pinned `current_business_id`, self-healing to the user's oldest active membership (ordered by `business_members.created_at`, then `id`) when the session value is missing or stale. `User::currentBusiness()` and `User::currentBusinessRole()` are removed. A `tenant()` global helper exposes the context to controllers, Form Requests, and views. `EnsureUserHasRole` authorises against `tenant()->role()`, not "any business". `EnsureOnboardingComplete` reads `tenant()->business()` for its redirect decision. Shared Inertia props (`auth.business`, `auth.role`) resolve through `tenant()`. `LoginController::store`, `MagicLinkController::verify`, `RegisterController::store`, and `InvitationController::accept` pin the session's `current_business_id` explicitly.
+- **Consequences**:
+  - Authorization and scoping share the same tenant, eliminating the divergence risk.
+  - Users with multiple memberships are correctly scoped to whichever business their session pins.
+  - Multi-business membership remains a **data-model capability** but is not yet reachable through any product flow; the business-switcher UX is tracked as the R-2B follow-up.
+  - Every controller that read `$user->currentBusiness()` is migrated to `tenant()->business()`. The name change makes cross-tenant leakage a compile-error-visible concern in future work.
+  - Deploy-day existing sessions are safe: they lack `current_business_id`, and the middleware self-heals by writing the user's oldest active membership into session on first post-deploy request.
+
+---
+
+### D-064 — `BelongsToCurrentBusiness` validation rule for tenant-scoped foreign keys
+- **Date**: 2026-04-16
+- **Status**: accepted
+- **Context**: Foreign-key validation to business-owned data was implemented as eight near-identical closures inside Form Requests, plus two plain `exists:` rules that trusted the client (`StoreInvitationsRequest` for `invitations.*.service_ids.*`; `StoreManualBookingRequest` for `service_id`). The pattern was duplicated, easy to regress, and two bypass paths remained.
+- **Decision**: Introduce `App\Rules\BelongsToCurrentBusiness` — a reusable `ValidationRule` implementation that takes a model class (class-string), queries it scoped to `tenant()->businessId()`, and respects the model's own `SoftDeletes` scope by default. All Form Requests that name a business-owned FK now use this rule, with the only exception being `StorePublicBookingRequest` (public, unauthenticated, business resolved from URL slug — keeps its inline closure). Controllers that persist FK arrays (`business_invitations.service_ids` written by both `StaffController::invite` and `OnboardingController::storeInvitations`) re-filter the IDs through the owning business's Eloquent relation before writing, as defense-in-depth.
+- **Consequences**:
+  - The cross-tenant FK surface shrinks to one class plus one slug-scoped closure for the public endpoint.
+  - New Form Requests adopting the pattern is a one-line import.
+  - Soft-deleted providers / services are invisible to the rule by default — matching the "cannot attach a deactivated provider to a new booking" behaviour we already want.
+  - The rule hard-depends on `TenantContext` being populated, which is guaranteed by `ResolveTenantContext` running before route validation on every authenticated request. When called outside that context (raw `Validator::make` in a unit test that has not pinned the tenant), the rule fails safely with a distinct "invalid tenant" message.

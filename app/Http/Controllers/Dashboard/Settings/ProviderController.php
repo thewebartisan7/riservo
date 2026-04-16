@@ -17,7 +17,7 @@ class ProviderController extends Controller
 {
     public function toggle(Request $request, Provider $provider): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $this->ensureProviderBelongsToBusiness($provider, $business);
 
         if ($provider->trashed()) {
@@ -33,7 +33,7 @@ class ProviderController extends Controller
 
     public function updateSchedule(UpdateProviderScheduleRequest $request, Provider $provider): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $this->ensureProviderBelongsToBusiness($provider, $business);
 
         $provider->availabilityRules()->delete();
@@ -59,7 +59,7 @@ class ProviderController extends Controller
 
     public function storeException(StoreProviderExceptionRequest $request, Provider $provider): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $this->ensureProviderBelongsToBusiness($provider, $business);
 
         $provider->availabilityExceptions()->create(
@@ -71,7 +71,7 @@ class ProviderController extends Controller
 
     public function updateException(UpdateProviderExceptionRequest $request, Provider $provider, AvailabilityException $exception): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $this->ensureProviderBelongsToBusiness($provider, $business);
 
         if ($exception->business_id !== $business->id || $exception->provider_id !== $provider->id) {
@@ -85,7 +85,7 @@ class ProviderController extends Controller
 
     public function destroyException(Request $request, Provider $provider, AvailabilityException $exception): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $this->ensureProviderBelongsToBusiness($provider, $business);
 
         if ($exception->business_id !== $business->id || $exception->provider_id !== $provider->id) {
@@ -99,7 +99,7 @@ class ProviderController extends Controller
 
     public function syncServices(UpdateProviderServicesRequest $request, Provider $provider): RedirectResponse
     {
-        $business = $request->user()->currentBusiness();
+        $business = tenant()->business();
         $this->ensureProviderBelongsToBusiness($provider, $business);
 
         $provider->services()->sync($request->validated('service_ids'));
