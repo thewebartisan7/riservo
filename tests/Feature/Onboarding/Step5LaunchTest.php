@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\DayOfWeek;
 use App\Models\AvailabilityRule;
 use App\Models\Business;
 use App\Models\BusinessHour;
@@ -20,6 +21,13 @@ function attachAdminProviderToService(): void
 {
     $provider = attachProvider(test()->business, test()->user);
     $provider->services()->attach(test()->service->id);
+    AvailabilityRule::factory()->create([
+        'provider_id' => $provider->id,
+        'business_id' => test()->business->id,
+        'day_of_week' => DayOfWeek::Monday->value,
+        'start_time' => '09:00',
+        'end_time' => '17:00',
+    ]);
 }
 
 test('step 5 page renders summary', function () {
@@ -97,6 +105,26 @@ test('launch blocked lists every unstaffed active service but ignores inactive o
 
             return true;
         });
+});
+
+test('launch blocked when active service has provider attached but zero availability rules', function () {
+    // Provider row attached to the service but no AvailabilityRule — this is
+    // the exact D-078 gap: D-062 whereHas('providers') would have let launch
+    // through while the availability engine returns zero slots.
+    $provider = attachProvider($this->business, $this->user);
+    $provider->services()->attach($this->service->id);
+
+    $response = $this->actingAs($this->user)->post('/onboarding/step/5');
+
+    $response->assertRedirect(route('onboarding.show', ['step' => 3]))
+        ->assertSessionHas('launchBlocked', function (array $data) {
+            expect(collect($data['services'])->pluck('id')->all())->toContain($this->service->id);
+
+            return true;
+        });
+
+    $this->business->refresh();
+    expect($this->business->onboarding_completed_at)->toBeNull();
 });
 
 test('enable-owner-as-provider creates provider with schedule and service attachments', function () {

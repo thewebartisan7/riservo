@@ -169,27 +169,31 @@ class SlotGeneratorService
         return $slots;
     }
 
+    /**
+     * Per D-066, the authoritative occupied interval of an existing booking is the
+     * Postgres generated `effective_starts_at` / `effective_ends_at` columns — derived
+     * from the snapped `buffer_before_minutes` / `buffer_after_minutes` captured on the
+     * booking row, not the live `service->buffer_*` values. Reading the generated
+     * columns keeps this method a literal mirror of the `bookings_no_provider_overlap`
+     * EXCLUDE GIST constraint. D-030 is why `createFromFormat` with explicit UTC is
+     * used instead of Carbon casts.
+     */
     private function conflictsWithBookings(
         CarbonImmutable $occupiedStart,
         CarbonImmutable $occupiedEnd,
         Collection $bookings,
     ): bool {
         foreach ($bookings as $booking) {
-            $bookingBufferBefore = $booking->service->buffer_before ?? 0;
-            $bookingBufferAfter = $booking->service->buffer_after ?? 0;
-
-            // Use raw DB values with explicit UTC to avoid timezone issues
-            // when Carbon's testNow has a non-UTC timezone (see D-030)
             $bookingOccupiedStart = CarbonImmutable::createFromFormat(
                 'Y-m-d H:i:s',
-                $booking->getRawOriginal('starts_at'),
+                $booking->getRawOriginal('effective_starts_at'),
                 'UTC',
-            )->subMinutes($bookingBufferBefore);
+            );
             $bookingOccupiedEnd = CarbonImmutable::createFromFormat(
                 'Y-m-d H:i:s',
-                $booking->getRawOriginal('ends_at'),
+                $booking->getRawOriginal('effective_ends_at'),
                 'UTC',
-            )->addMinutes($bookingBufferAfter);
+            );
 
             // Two intervals overlap if start1 < end2 AND end1 > start2
             if ($occupiedStart->lt($bookingOccupiedEnd) && $occupiedEnd->gt($bookingOccupiedStart)) {

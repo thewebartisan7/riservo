@@ -2,6 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use App\Enums\BusinessMemberRole;
+use App\Models\Service;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -49,8 +51,51 @@ class HandleInertiaRequests extends Middleware
                 'success' => $request->session()->get('success'),
                 'error' => $request->session()->get('error'),
             ],
+            'bookability' => fn () => $this->resolveBookability($request),
             'locale' => $locale,
             'translations' => fn () => $this->getTranslations($locale),
+        ];
+    }
+
+    /**
+     * Expose structurally unbookable active services to the authenticated layout
+     * so the dashboard banner (D-078) can surface them. Admin-only and onboarded-
+     * only; returns an empty list for every other role/state so the banner never
+     * appears outside its intended context.
+     *
+     * @return array{unbookableServices: array<int, array{id: int, name: string}>}
+     */
+    private function resolveBookability(Request $request): array
+    {
+        $empty = ['unbookableServices' => []];
+
+        if (! $request->user()) {
+            return $empty;
+        }
+
+        $tenant = tenant();
+
+        if (! $tenant->has()) {
+            return $empty;
+        }
+
+        $business = $tenant->business();
+
+        if ($business === null || ! $business->isOnboarded()) {
+            return $empty;
+        }
+
+        if ($tenant->role() !== BusinessMemberRole::Admin) {
+            return $empty;
+        }
+
+        return [
+            'unbookableServices' => $business->services()
+                ->structurallyUnbookable()
+                ->get(['id', 'name'])
+                ->map(fn (Service $s) => ['id' => $s->id, 'name' => $s->name])
+                ->values()
+                ->all(),
         ];
     }
 

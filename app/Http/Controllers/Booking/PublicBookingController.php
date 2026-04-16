@@ -40,8 +40,7 @@ class PublicBookingController extends Controller
         $business = $this->resolveBusiness($slug);
 
         $services = $business->services()
-            ->where('is_active', true)
-            ->whereHas('providers')
+            ->structurallyBookable()
             ->get();
 
         $preSelectedServiceSlug = null;

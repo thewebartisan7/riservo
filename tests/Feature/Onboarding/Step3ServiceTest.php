@@ -185,6 +185,56 @@ test('opt-in true with invalid schedule returns 422 and does not create a provid
     expect(Service::where('business_id', $this->business->id)->exists())->toBeFalse();
 });
 
+test('opt-in with all days disabled is rejected and nothing is persisted', function () {
+    $schedule = collect(range(1, 7))->map(fn ($day) => [
+        'day_of_week' => $day,
+        'enabled' => false,
+        'windows' => [],
+    ])->all();
+
+    $response = $this->actingAs($this->user)->post('/onboarding/step/3', [
+        'name' => 'Haircut',
+        'duration_minutes' => 30,
+        'price' => 45,
+        'buffer_before' => 0,
+        'buffer_after' => 0,
+        'slot_interval_minutes' => 15,
+        'provider_opt_in' => true,
+        'provider_schedule' => $schedule,
+    ]);
+
+    $response->assertSessionHasErrors(['provider_schedule']);
+
+    expect(Service::where('business_id', $this->business->id)->exists())->toBeFalse();
+    expect(Provider::where('business_id', $this->business->id)->exists())->toBeFalse();
+    expect(AvailabilityRule::count())->toBe(0);
+});
+
+test('opt-in with enabled days but empty windows is rejected', function () {
+    $schedule = collect(range(1, 7))->map(fn ($day) => [
+        'day_of_week' => $day,
+        'enabled' => true,
+        'windows' => [],
+    ])->all();
+
+    $response = $this->actingAs($this->user)->post('/onboarding/step/3', [
+        'name' => 'Haircut',
+        'duration_minutes' => 30,
+        'price' => 45,
+        'buffer_before' => 0,
+        'buffer_after' => 0,
+        'slot_interval_minutes' => 15,
+        'provider_opt_in' => true,
+        'provider_schedule' => $schedule,
+    ]);
+
+    $response->assertSessionHasErrors(['provider_schedule']);
+
+    expect(Service::where('business_id', $this->business->id)->exists())->toBeFalse();
+    expect(Provider::where('business_id', $this->business->id)->exists())->toBeFalse();
+    expect(AvailabilityRule::count())->toBe(0);
+});
+
 test('opt-in false and no prior provider leaves admin as non-provider', function () {
     $this->actingAs($this->user)->post('/onboarding/step/3', [
         'name' => 'Haircut',

@@ -91,3 +91,36 @@ This file contains live decisions about onboarding, settings architecture, embed
   - *URL fragment `#service=<slug>`.* Client-only; the server never sees fragments, so SSR hydration can't pre-select the service. Would require a client-side redirect after mount — worse UX and worse analytics.
   - *A new `/embed/{slug}/{service}` route.* Adds a second embed surface for no reason. `?embed=1` (D-054) already scopes the layout axis; mixing a route-level axis with a query-level axis is redundant.
   - *`data-service` only on the `<script>` tag (no per-button override).* Forces a host page with multiple services to include multiple `<script>` tags with different `data-slug` values (which re-execute the module IIFE each time and collide on the module-level `overlay` variable). The per-button override is a trivial snippet change with materially better ergonomics.
+
+---
+
+### D-078 — Structural bookability is a single query scope; public page hides, dashboard banner surfaces
+- **Date**: 2026-04-16
+- **Status**: accepted
+- **Context**: D-062 tightened the launch gate to require `Service::whereHas('providers')` per active service. REVIEW-2 HIGH-1 found that this is necessary but not sufficient — a provider row can be attached to a service while holding **zero `availability_rules`**, in which case `AvailabilityService::getAvailableWindows()` returns empty for every date and the public page advertises a service that can never produce a slot. The review also flagged the risk of conflating **structural** misconfiguration with **temporary** unavailability (vacation, full agenda, blocked day), which are legitimate runtime states that must not trigger "broken business" UI.
+- **Decision**:
+  1. **Single predicate, single home.** `Service::scopeStructurallyBookable()` and `Service::scopeStructurallyUnbookable()` in `app/Models/Service.php` are the canonical definition. All bookability questions flow through one of these two scopes.
+  2. **Three structural conditions** define a structurally bookable service (all must hold):
+     - `services.is_active = true`.
+     - At least one non-soft-deleted `providers` row is attached via `provider_service`.
+     - At least one of those providers holds ≥1 `availability_rules` row.
+  3. **Explicit exclusions.** Temporary unavailability is **not** part of the definition:
+     - Slots exist in the next N days.
+     - `availability_exceptions` (vacation blocks, opens, partial blocks).
+     - Full agenda for the visible horizon.
+     - Closed business hours for the current day.
+     These states correctly produce "no slots" through the availability engine and must not trigger the banner or the public-page hide.
+  4. **Four callers share the scope** (and only these):
+     - `OnboardingController::storeLaunch()` — `structurallyUnbookable()` drives the `launchBlocked` payload.
+     - `PublicBookingController::show()` — `structurallyBookable()` filters the `/{slug}` service listing.
+     - `HandleInertiaRequests::share()` — `structurallyUnbookable()` populates the `bookability.unbookableServices` shared prop.
+     - `Dashboard\Settings\AccountController::toggleProvider()` — `structurallyUnbookable()->count()` chooses the flash-message copy when the admin self-deactivates as provider.
+  5. **Public-page UX: hide.** A structurally unbookable service does not render on `/{slug}`. Rationale: `ServiceList` already handles the zero-state ("Nothing to book just yet."); a visible "currently unavailable" row offers no affordance and adds noise. Extends the D-062 `whereHas('providers')` hide pattern.
+  6. **Dashboard banner.** When `bookability.unbookableServices` is non-empty, `AuthenticatedLayout` renders a persistent `Alert variant="warning"` above page content, admin-only, listing affected service names with a "Fix" link to `/dashboard/settings/services`. The banner auto-clears when the list becomes empty — no manual dismiss for MVP.
+  7. **Defense-in-depth.** `StoreServiceRequest::withValidator()` rejects opt-in payloads with zero enabled-with-windows days; `OnboardingController::writeProviderSchedule()` throws a `LogicException` on empty schedules. Either layer alone would close HIGH-1; together they block future callers that skip validation.
+- **Consequences**:
+  - Onboarding cannot produce a structurally unbookable public page.
+  - Post-launch, a service that crosses into structural unbookability (admin detaches the last provider, or deletes the last availability rule) vanishes from the public listing **and** surfaces on the dashboard banner until fixed.
+  - Temporary unavailability states remain invisible to misconfiguration UIs: a vacation block or a full week doesn't trigger the banner and doesn't hide the service.
+  - The four callers move together — adding a fifth consumer is a documented one-liner. Diverging consumers are caught by the integration-level consistency test (`tests/Feature/Bookability/ScopeConsistencyTest.php`).
+- **Supersedes**: none. Extends D-061 (soft-delete semantics for providers) and D-062 (launch gate requires a provider) without replacing either — D-062's "at least one eligible provider per active service" still holds; D-078 sharpens "eligible".

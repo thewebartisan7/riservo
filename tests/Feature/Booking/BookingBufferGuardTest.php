@@ -9,6 +9,7 @@ use App\Models\BusinessHour;
 use App\Models\Customer;
 use App\Models\Service;
 use App\Models\User;
+use App\Services\SlotGeneratorService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Notification;
@@ -152,4 +153,102 @@ test('HTTP: booking immediately after buffer window succeeds', function () {
 
     $response->assertStatus(201);
     expect(Booking::count())->toBe(2);
+});
+
+test('slot generator reads snapped buffers when service buffer is widened after booking', function () {
+    // Service A at booking time has buffer_after=15 → snapped effective_ends_at is 10:45 local.
+    Booking::factory()->create([
+        'business_id' => $this->business->id,
+        'provider_id' => $this->provider->id,
+        'service_id' => $this->serviceA->id,
+        'customer_id' => $this->customer->id,
+        'starts_at' => CarbonImmutable::parse('2026-05-01 10:00', 'Europe/Zurich')->utc(),
+        'ends_at' => CarbonImmutable::parse('2026-05-01 10:30', 'Europe/Zurich')->utc(),
+        'buffer_before_minutes' => 0,
+        'buffer_after_minutes' => 15,
+        'status' => BookingStatus::Confirmed,
+    ]);
+
+    // Admin widens service A's buffer_after post-booking. The snapshot on the booking row must win.
+    $this->serviceA->update(['buffer_after' => 120]);
+
+    $slots = app(SlotGeneratorService::class)->getAvailableSlots(
+        $this->business,
+        $this->serviceB,
+        CarbonImmutable::parse('2026-05-01', 'Europe/Zurich'),
+        $this->provider,
+    );
+
+    $slotTimes = collect($slots)
+        ->map(fn (CarbonImmutable $s) => $s->setTimezone('Europe/Zurich')->format('H:i'))
+        ->all();
+
+    expect($slotTimes)->toContain('10:45');
+
+    // Cross-check: the DB invariant agrees. A 10:45 booking for Service B (zero buffers) succeeds,
+    // confirming the snapshot — not the live inflated buffer — is authoritative.
+    Booking::factory()->create([
+        'business_id' => $this->business->id,
+        'provider_id' => $this->provider->id,
+        'service_id' => $this->serviceB->id,
+        'customer_id' => $this->customer->id,
+        'starts_at' => CarbonImmutable::parse('2026-05-01 10:45', 'Europe/Zurich')->utc(),
+        'ends_at' => CarbonImmutable::parse('2026-05-01 11:15', 'Europe/Zurich')->utc(),
+        'buffer_before_minutes' => 0,
+        'buffer_after_minutes' => 0,
+        'status' => BookingStatus::Confirmed,
+    ]);
+
+    expect(Booking::count())->toBe(2);
+});
+
+test('slot generator reads snapped buffers when service buffer is shrunk after booking', function () {
+    Booking::factory()->create([
+        'business_id' => $this->business->id,
+        'provider_id' => $this->provider->id,
+        'service_id' => $this->serviceA->id,
+        'customer_id' => $this->customer->id,
+        'starts_at' => CarbonImmutable::parse('2026-05-01 10:00', 'Europe/Zurich')->utc(),
+        'ends_at' => CarbonImmutable::parse('2026-05-01 10:30', 'Europe/Zurich')->utc(),
+        'buffer_before_minutes' => 0,
+        'buffer_after_minutes' => 15,
+        'status' => BookingStatus::Confirmed,
+    ]);
+
+    // Admin shrinks service A's buffer_after post-booking. The 10:30-10:45 window stays blocked
+    // because the snapshot on the booking row is authoritative.
+    $this->serviceA->update(['buffer_after' => 0]);
+
+    $slots = app(SlotGeneratorService::class)->getAvailableSlots(
+        $this->business,
+        $this->serviceB,
+        CarbonImmutable::parse('2026-05-01', 'Europe/Zurich'),
+        $this->provider,
+    );
+
+    $slotTimes = collect($slots)
+        ->map(fn (CarbonImmutable $s) => $s->setTimezone('Europe/Zurich')->format('H:i'))
+        ->all();
+
+    expect($slotTimes)->not->toContain('10:30');
+
+    // Cross-check: the DB invariant agrees. A direct 10:30 booking fails with 23P01 because
+    // the existing booking's effective_ends_at is still 10:45 per the snapshot.
+    try {
+        Booking::factory()->create([
+            'business_id' => $this->business->id,
+            'provider_id' => $this->provider->id,
+            'service_id' => $this->serviceB->id,
+            'customer_id' => $this->customer->id,
+            'starts_at' => CarbonImmutable::parse('2026-05-01 10:30', 'Europe/Zurich')->utc(),
+            'ends_at' => CarbonImmutable::parse('2026-05-01 11:00', 'Europe/Zurich')->utc(),
+            'buffer_before_minutes' => 0,
+            'buffer_after_minutes' => 0,
+            'status' => BookingStatus::Confirmed,
+        ]);
+
+        throw new RuntimeException('expected QueryException not thrown');
+    } catch (QueryException $e) {
+        expect($e->getPrevious()?->getCode() ?? $e->getCode())->toBe('23P01');
+    }
 });

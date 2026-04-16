@@ -23,11 +23,14 @@ import {
     SidebarRail,
     SidebarTrigger,
 } from '@/components/ui/sidebar';
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Display } from '@/components/ui/display';
 import { useTrans } from '@/hooks/use-trans';
 import { getInitials } from '@/lib/booking-format';
+import { services as settingsServices } from '@/routes/settings';
 import {
+    AlertTriangleIcon,
     CalendarDaysIcon,
     ClipboardListIcon,
     HomeIcon,
@@ -60,11 +63,12 @@ export default function AuthenticatedLayout({
     fullBleed = false,
     children,
 }: PropsWithChildren<AuthenticatedLayoutProps>) {
-    const { auth } = usePage<PageProps>().props;
+    const { auth, bookability } = usePage<PageProps>().props;
     const { t } = useTrans();
     const isAdmin = auth.role === 'admin';
     const currentPath = window.location.pathname;
     const hasPageHeader = Boolean(eyebrow || heading || description || actions);
+    const unbookableServices = bookability?.unbookableServices ?? [];
 
     const navItems: { label: string; href: string; active: boolean; icon: LucideIcon }[] = [
         { label: t('Dashboard'), href: dashboardIndex.url(), active: currentPath === '/dashboard', icon: HomeIcon },
@@ -183,6 +187,43 @@ export default function AuthenticatedLayout({
                                 : 'flex-1'
                         }
                     >
+                        {unbookableServices.length > 0 && (
+                            <div
+                                className={
+                                    fullBleed
+                                        ? 'border-b border-border/60 px-5 pb-3 pt-3 sm:px-8'
+                                        : 'mx-auto w-full max-w-6xl px-5 pt-5 sm:px-8 sm:pt-8'
+                                }
+                                data-testid="unbookable-banner"
+                            >
+                                <Alert variant="warning">
+                                    <AlertTriangleIcon aria-hidden="true" />
+                                    <AlertTitle>
+                                        {t("Some services can't be booked yet")}
+                                    </AlertTitle>
+                                    <AlertDescription>
+                                        <p>
+                                            {t(
+                                                "Customers can't see these services until a provider with available hours is assigned:",
+                                            )}
+                                        </p>
+                                        <p className="font-medium text-foreground">
+                                            {unbookableServices
+                                                .map((service) => service.name)
+                                                .join(', ')}
+                                        </p>
+                                    </AlertDescription>
+                                    <AlertAction>
+                                        <Link
+                                            href={settingsServices().url}
+                                            className="inline-flex items-center text-xs font-medium uppercase tracking-[0.22em] text-warning underline-offset-4 hover:underline"
+                                        >
+                                            {t('Fix')}
+                                        </Link>
+                                    </AlertAction>
+                                </Alert>
+                            </div>
+                        )}
                         {fullBleed ? (
                             <div className="flex min-h-0 flex-1 flex-col animate-rise">
                                 {children}

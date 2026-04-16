@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\AssignmentStrategy;
+use App\Enums\BusinessMemberRole;
 use App\Enums\ConfirmationMode;
 use App\Enums\PaymentMode;
 use Database\Factories\BusinessFactory;
@@ -55,12 +56,21 @@ class Business extends Model
         ];
     }
 
-    /** @return BelongsToMany<User, $this, BusinessMember, 'pivot'> */
+    /**
+     * Active memberships only. The BusinessMember pivot uses SoftDeletes, but
+     * Eloquent's BelongsToMany does not auto-apply a pivot's SoftDeletes scope,
+     * so we filter here explicitly. Per D-079, the pivot uniqueness shape is
+     * (business_id, user_id, deleted_at) — trashed rows live alongside active
+     * ones and must be hidden from every live read.
+     *
+     * @return BelongsToMany<User, $this, BusinessMember, 'pivot'>
+     */
     public function members(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'business_members')
             ->using(BusinessMember::class)
             ->withPivot(['role'])
+            ->wherePivotNull('deleted_at')
             ->withTimestamps();
     }
 
@@ -115,6 +125,41 @@ class Business extends Model
     public function isOnboarded(): bool
     {
         return $this->onboarding_completed_at !== null;
+    }
+
+    /**
+     * Restore-or-create membership for `(this, user)`. Per D-079 this is the
+     * single home for the membership re-entry semantic — every caller that
+     * adds a user to a business routes through this method so the flow is
+     * identical whether the row is fresh or restored from soft-delete.
+     *
+     * If a trashed row exists for the pair, restore it and update its role.
+     * Otherwise attach a new row. Either way the returned pivot is active
+     * (deleted_at IS NULL) and carries the requested role.
+     */
+    public function attachOrRestoreMember(User $user, BusinessMemberRole $role): BusinessMember
+    {
+        $existing = BusinessMember::withTrashed()
+            ->where('business_id', $this->id)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if ($existing !== null) {
+            if ($existing->trashed()) {
+                $existing->restore();
+            }
+
+            $existing->update(['role' => $role->value]);
+
+            return $existing->refresh();
+        }
+
+        $this->members()->attach($user->id, ['role' => $role->value]);
+
+        return BusinessMember::query()
+            ->where('business_id', $this->id)
+            ->where('user_id', $user->id)
+            ->firstOrFail();
     }
 
     /**
