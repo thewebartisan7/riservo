@@ -31,7 +31,10 @@
       "Bash(php:*)",
       "Bash(git:*)",
       "WebSearch",
-      "Bash(sort -t- -k2 -n)"
+      "Bash(sort -t- -k2 -n)",
+      "Bash(herd services:*)",
+      "Bash(herd services:available)",
+      "Bash(psql --version)"
     ]
   },
   "enableAllProjectMcpServers": true,
