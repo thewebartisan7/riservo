@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Dashboard;
 
 use App\Enums\BookingSource;
 use App\Enums\BookingStatus;
+use App\Exceptions\Booking\NoProviderAvailableException;
+use App\Exceptions\Booking\SlotNoLongerAvailableException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Dashboard\StoreManualBookingRequest;
 use App\Http\Requests\Dashboard\UpdateBookingStatusRequest;
@@ -17,9 +19,11 @@ use App\Notifications\BookingConfirmedNotification;
 use App\Notifications\BookingReceivedNotification;
 use App\Services\SlotGeneratorService;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
@@ -243,70 +247,87 @@ class BookingController extends Controller
 
         $endsAt = $startsAt->addMinutes($service->duration_minutes);
 
-        $provider = null;
+        $selectedProvider = null;
         if (! empty($validated['provider_id'])) {
-            $provider = $service->providers()
+            $selectedProvider = $service->providers()
                 ->where('providers.id', $validated['provider_id'])
                 ->where('providers.business_id', $business->id)
                 ->first();
 
-            if (! $provider) {
+            if (! $selectedProvider) {
                 return back()->with('error', __('Selected provider is not available for this service.'));
             }
         }
 
         $dateInTz = CarbonImmutable::createFromFormat('Y-m-d', $validated['date'], $timezone)->startOfDay();
-        $availableSlots = $this->slotGenerator->getAvailableSlots($business, $service, $dateInTz, $provider);
-
         $requestedTime = CarbonImmutable::createFromFormat(
             'Y-m-d H:i',
             $validated['date'].' '.$validated['time'],
             $timezone,
         );
 
-        $slotAvailable = collect($availableSlots)->contains(fn (CarbonImmutable $slot) => $slot->eq($requestedTime));
+        try {
+            [$booking, $customer] = DB::transaction(function () use (
+                $business, $service, $selectedProvider, $validated,
+                $startsAt, $endsAt, $dateInTz, $requestedTime,
+            ) {
+                $availableSlots = $this->slotGenerator->getAvailableSlots($business, $service, $dateInTz, $selectedProvider);
 
-        if (! $slotAvailable) {
+                $slotAvailable = collect($availableSlots)->contains(fn (CarbonImmutable $slot) => $slot->eq($requestedTime));
+
+                if (! $slotAvailable) {
+                    throw new SlotNoLongerAvailableException;
+                }
+
+                $provider = $selectedProvider;
+                if (! $provider) {
+                    $provider = $this->slotGenerator->assignProvider($business, $service, $requestedTime);
+
+                    if (! $provider) {
+                        throw new NoProviderAvailableException;
+                    }
+                }
+
+                $customer = Customer::firstOrCreate(
+                    ['email' => $validated['customer_email']],
+                    ['name' => $validated['customer_name'], 'phone' => $validated['customer_phone'] ?? null],
+                );
+
+                if ($customer->name !== $validated['customer_name'] || ($validated['customer_phone'] ?? null) !== $customer->phone) {
+                    $customer->update([
+                        'name' => $validated['customer_name'],
+                        'phone' => $validated['customer_phone'] ?? null,
+                    ]);
+                }
+
+                $booking = Booking::create([
+                    'business_id' => $business->id,
+                    'provider_id' => $provider->id,
+                    'service_id' => $service->id,
+                    'customer_id' => $customer->id,
+                    'starts_at' => $startsAt,
+                    'ends_at' => $endsAt,
+                    'buffer_before_minutes' => $service->buffer_before ?? 0,
+                    'buffer_after_minutes' => $service->buffer_after ?? 0,
+                    'status' => BookingStatus::Confirmed,
+                    'source' => BookingSource::Manual,
+                    'payment_status' => 'pending',
+                    'notes' => $validated['notes'] ?? null,
+                    'cancellation_token' => Str::uuid()->toString(),
+                ]);
+
+                return [$booking, $customer];
+            });
+        } catch (SlotNoLongerAvailableException) {
             return back()->with('error', __('This time slot is no longer available. Please select another time.'));
-        }
-
-        if (! $provider) {
-            $provider = $this->slotGenerator->assignProvider($business, $service, $requestedTime);
-
-            if (! $provider) {
-                return back()->with('error', __('No provider is available for this time slot.'));
+        } catch (NoProviderAvailableException) {
+            return back()->with('error', __('No provider is available for this time slot.'));
+        } catch (QueryException $e) {
+            if (($e->getPrevious()?->getCode() ?? $e->getCode()) === '23P01') {
+                return back()->with('error', __('This time slot is no longer available. Please select another time.'));
             }
+            throw $e;
         }
-
-        $customer = Customer::firstOrCreate(
-            ['email' => $validated['customer_email']],
-            ['name' => $validated['customer_name'], 'phone' => $validated['customer_phone'] ?? null],
-        );
-
-        if ($customer->name !== $validated['customer_name'] || ($validated['customer_phone'] ?? null) !== $customer->phone) {
-            $customer->update([
-                'name' => $validated['customer_name'],
-                'phone' => $validated['customer_phone'] ?? null,
-            ]);
-        }
-
-        $cancellationToken = Str::uuid()->toString();
-
-        $booking = Booking::create([
-            'business_id' => $business->id,
-            'provider_id' => $provider->id,
-            'service_id' => $service->id,
-            'customer_id' => $customer->id,
-            'starts_at' => $startsAt,
-            'ends_at' => $endsAt,
-            'buffer_before_minutes' => $service->buffer_before ?? 0,
-            'buffer_after_minutes' => $service->buffer_after ?? 0,
-            'status' => BookingStatus::Confirmed,
-            'source' => BookingSource::Manual,
-            'payment_status' => 'pending',
-            'notes' => $validated['notes'] ?? null,
-            'cancellation_token' => $cancellationToken,
-        ]);
 
         Notification::route('mail', $customer->email)
             ->notify(new BookingConfirmedNotification($booking));
