@@ -90,6 +90,25 @@ test('admin can upload logo', function () {
     Storage::disk('public')->assertExists($this->business->fresh()->logo);
 });
 
+test('updating profile with empty logo deletes the existing file and stores null', function () {
+    Storage::fake('public');
+
+    $path = UploadedFile::fake()->image('existing.jpg')->store('logos', 'public');
+    $this->business->update(['logo' => $path]);
+    Storage::disk('public')->assertExists($path);
+
+    $this->actingAs($this->admin)
+        ->put('/dashboard/settings/profile', [
+            'name' => 'Test Salon',
+            'slug' => 'test-salon',
+            'logo' => '',
+        ])
+        ->assertRedirect('/dashboard/settings/profile');
+
+    expect($this->business->fresh()->logo)->toBeNull();
+    Storage::disk('public')->assertMissing($path);
+});
+
 test('staff cannot access profile settings', function () {
     $staff = User::factory()->create();
     attachStaff($this->business, $staff);

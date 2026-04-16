@@ -46,9 +46,10 @@ interface Props {
     staff: StaffItem[];
     invitations: InvitationItem[];
     services: { id: number; name: string }[];
+    inviteExpiryHours: number;
 }
 
-export default function Staff({ staff, invitations, services }: Props) {
+export default function Staff({ staff, invitations, services, inviteExpiryHours }: Props) {
     const { t } = useTrans();
     const [inviteOpen, setInviteOpen] = useState(false);
 
@@ -216,6 +217,7 @@ export default function Staff({ staff, invitations, services }: Props) {
                 open={inviteOpen}
                 onOpenChange={setInviteOpen}
                 services={services}
+                expiryHours={inviteExpiryHours}
             />
         </SettingsLayout>
     );

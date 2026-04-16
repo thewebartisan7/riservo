@@ -42,7 +42,9 @@ class MagicLinkController extends Controller
                 ['user' => $user->id, 'token' => $token],
             );
 
-            $user->notify(new MagicLinkNotification($url));
+            dispatch(function () use ($user, $url) {
+                $user->notify(new MagicLinkNotification($url));
+            })->afterResponse();
         }
 
         // Always return success to prevent email enumeration

@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * @property PaymentMode $payment_mode
@@ -114,5 +115,26 @@ class Business extends Model
     public function isOnboarded(): bool
     {
         return $this->onboarding_completed_at !== null;
+    }
+
+    /**
+     * Normalise a cleared `logo` field submitted via profile forms. When the
+     * form posts an empty value (null after the ConvertEmptyStringsToNull
+     * middleware, or an empty string when that middleware is off), delete the
+     * current file from the public disk and force the persisted value to null.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    public function removeLogoIfCleared(array &$data): void
+    {
+        if (! array_key_exists('logo', $data) || ! in_array($data['logo'], [null, ''], true)) {
+            return;
+        }
+
+        if ($this->logo && Storage::disk('public')->exists($this->logo)) {
+            Storage::disk('public')->delete($this->logo);
+        }
+
+        $data['logo'] = null;
     }
 }

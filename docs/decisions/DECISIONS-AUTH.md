@@ -177,3 +177,130 @@ This file contains live decisions about auth boundaries, roles, invitations, ver
   - *Putting values in a new `config/throttle.php`.* Adjacent and reasonable, but pre-existing rate-limiter registrations (`booking-api`, `booking-create`) live as hardcoded values in `AppServiceProvider`. A new config file just for two new keys creates a second convention. `config/auth.php` is auth-themed and already loaded — cleaner for now. Future consolidation into `config/throttle.php` is captured in §10.
   - *Emitting `Illuminate\Auth\Events\Lockout`.* The event listener surface is for auth-lockout reactions (logging, user notification, admin alert). Rate-limit-exceeded on a magic-link request isn't an auth lockout in the domain sense; emitting the event would add noise.
   - *Returning 429 with a friendly page.* Would require a new error template / Inertia page. Validation-error shape reuses the existing auth form rendering.
+
+---
+
+### D-074 — Customer registration is open; a prior booking is not required
+- **Date**: 2026-04-16
+- **Status**: accepted
+- **Context**: Pre-R-13, `CustomerRegisterRequest` line 23 enforced
+  `email => exists:customers,email` and `CustomerRegisterController::store`
+  assumed a Customer record existed for the submitted email. The page
+  copy ("Register with the email you used when booking …") and error
+  message ("No bookings found for this email address. You must have at
+  least one booking to register.") matched the implementation. SPEC §10
+  describes optional account registration as a peer offering of magic
+  link, with no narrowing clause — the implementation tightened beyond
+  the spec. REVIEW-1 §#14 surfaced the gap; ROADMAP-REVIEW §R-13 asked
+  the planner to either widen the flow or formalise the narrowing.
+- **Decision**: Customer registration is open. Any email may register
+  without a prior booking. Registration creates a `User` row plus a
+  `Customer` row (or links to an existing `Customer` if one exists for
+  that email from a prior booking) and links them via `customer.user_id`.
+  Subsequent bookings reuse the existing Customer via the
+  `Customer::firstOrCreate(['email' => …])` pattern already used by
+  `Dashboard\BookingController::store` and `PublicBookingController::store`.
+  Validation gates: `email => unique:users,email` (no double registration)
+  + standard email/password rules.
+- **Consequences**:
+  - SPEC §10 needs no update — the existing wording matches the new
+    behaviour. The narrow-rule clause never made it into SPEC.
+  - The `customers` table now permits Customer rows with zero bookings
+    (a registered visitor who never books). These are invisible to
+    per-business CRM (`Dashboard\CustomerController` filters via
+    `whereHas('bookings', fn ($q) => $q->where('business_id', …))`),
+    so no CRM noise.
+  - `MagicLinkController::resolveUser` step 1 (`User::where('email',
+    $email)->first()`) naturally finds users that registered without
+    booking. No separate change to magic-link required.
+  - `CustomerRegisterController::store` is rewritten to handle three
+    cases: existing User (caught by validation `unique:users,email`),
+    existing Customer no User (link Customer to new User), neither
+    (create both).
+  - The data model has zero migration footprint. `customers.email`
+    remains globally unique (per migration `2026_04_16_100004_create_customers_table.php`).
+- **Rejected alternative — Option B (keep narrow + update SPEC)**:
+  - Would require adding a sentence to SPEC §10 codifying "registration
+    requires prior booking", which has no product justification beyond
+    the historical implementation shortcut.
+  - Frustrates a class of users who want to set up an account before
+    their first appointment — a normal SaaS flow.
+  - Trivial implementation (copy + SPEC update only) but trades long-
+    term product fit for short-term implementation savings; not worth
+    it.
+
+---
+
+### D-075 — `MagicLinkNotification` and `InvitationNotification` dispatch via closure-after-response, not the queue
+- **Date**: 2026-04-16
+- **Status**: accepted
+- **Context**: Pre-R-14, both notifications used the `Queueable` trait
+  but did NOT implement `ShouldQueue`, so they ran synchronously on
+  the request path. SMTP latency (or, in local dev, log-driver write
+  latency) sat in front of the user response for two interactive
+  flows: magic-link request and staff invitation. The four
+  `Booking*Notification` classes already implement `ShouldQueue` +
+  `afterCommit()`; ROADMAP-REVIEW §R-14 carved them out — they stay
+  on the real queue because they benefit from worker-based retries
+  and async system processing. The interactive pair is different:
+  user-triggered, immediate-UX, and idempotent at the user-recourse
+  layer ("request another magic link", "ask the inviter to resend").
+  Laravel 13 surface for "after response" was audited:
+  `Notification::sendAfterResponse()` does NOT exist;
+  `Job::dispatchAfterResponse()` and the closure form
+  `dispatch(fn () => …)->afterResponse()` do exist (as of
+  `Illuminate\Foundation\Bus\Dispatchable::dispatchAfterResponse`).
+  `app()->terminating()` exists as a kernel-level alternative.
+- **Decision**: Both notifications are dispatched via Laravel's
+  closure-after-response pattern:
+  ```php
+  dispatch(function () use ($user, $url) {
+      $user->notify(new MagicLinkNotification($url));
+  })->afterResponse();
+  ```
+  Same shape applied at the four call sites
+  (`MagicLinkController::store`, `Dashboard\Settings\StaffController::invite`,
+  `Dashboard\Settings\StaffController::resendInvitation`,
+  `OnboardingController::storeInvitations`).
+- **Consequences**:
+  - User-perceived response latency for these two flows drops to the
+    Laravel response time alone; mail send happens after the response
+    is flushed.
+  - No new files (no dedicated job classes); no new abstractions.
+  - No worker dependency for local dev. The mail driver (`log` per
+    `.env`) writes immediately after the response cycle ends.
+  - In production (Laravel Cloud), the closure runs in the web process
+    after response flush, before the request worker is recycled. The
+    SMTP / Postmark call happens inline within the web process.
+  - Failure mode: if the closure throws, Laravel reports it via the
+    default exception handler (logged) but the user has already
+    received a generic-success response. For magic-link, D-037's
+    enumeration-resistant generic response is already the user's
+    contract — silent failure is consistent. For invitation, an admin
+    can resend if mail doesn't arrive.
+  - No retry semantics. Acceptable because (a) magic-link is
+    re-requestable in 15 min, (b) invitation is re-sendable from the
+    staff page.
+  - `Booking*Notification` classes are NOT changed — they keep
+    `ShouldQueue` + `afterCommit()`. ROADMAP-REVIEW §R-14 explicitly
+    carves them out.
+- **Rejected alternatives**:
+  - *`implements ShouldQueue` (real queue)* — adds queue infrastructure
+    dependency for two notifications that don't need retries. Local
+    dev breaks for any contributor not running `queue:listen` (notifications
+    accumulate in the `jobs` table). The user-recourse story (resend)
+    already covers what queue retries would provide.
+  - *Dedicated job classes via `JobClass::dispatchAfterResponse`* —
+    same mechanism with extra ceremony. Two new job files for two
+    notifications is YAGNI for a one-line wrapper.
+  - *`app()->terminating(fn () => …)`* — bypasses `Bus`/`Notification`
+    fakes; harder to test. Conventionally used for cleanup, not work.
+  - *Switching only these two to the `sync` queue driver* — keeps
+    `ShouldQueue` interface but means notifications still fire
+    in-request. No latency improvement.
+- **Branding fixes ride along (no D-NNN)**: `config/app.php` `name`
+  default → `'riservo.ch'`; `.env` and `.env.example` `APP_NAME=riservo.ch`;
+  `MAIL_FROM_ADDRESS="hello@riservo.ch"`. Vendor mail templates
+  already read `config('app.name')` — setting the value cascades
+  through layout, header, and footer templates with no per-template
+  edit.

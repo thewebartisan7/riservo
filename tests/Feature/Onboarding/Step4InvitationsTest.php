@@ -29,6 +29,8 @@ test('step 4 page renders with services', function () {
 test('step 4 creates invitations with service ids', function () {
     Notification::fake();
 
+    $this->travelTo(now()->startOfMinute());
+
     $response = $this->actingAs($this->user)->postJson('/onboarding/step/4', [
         'invitations' => [
             ['email' => 'alice@example.com', 'service_ids' => [$this->service->id]],
@@ -42,6 +44,7 @@ test('step 4 creates invitations with service ids', function () {
 
     $aliceInvite = BusinessInvitation::where('email', 'alice@example.com')->first();
     expect($aliceInvite->service_ids)->toBe([$this->service->id]);
+    expect($aliceInvite->expires_at->equalTo(BusinessInvitation::defaultExpiresAt()))->toBeTrue();
 
     $bobInvite = BusinessInvitation::where('email', 'bob@example.com')->first();
     expect($bobInvite->service_ids)->toBeEmpty();

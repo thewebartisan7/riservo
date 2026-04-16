@@ -284,7 +284,9 @@ class OnboardingController extends Controller
 
     private function storeProfile(StoreProfileRequest $request, Business $business): RedirectResponse
     {
-        $business->update($request->validated());
+        $data = $request->validated();
+        $business->removeLogoIfCleared($data);
+        $business->update($data);
 
         $this->advanceStep($business, 2);
 
@@ -424,11 +426,16 @@ class OnboardingController extends Controller
                 'role' => BusinessMemberRole::Staff,
                 'token' => Str::random(64),
                 'service_ids' => $scopedServiceIds,
-                'expires_at' => now()->addHours(48),
+                'expires_at' => BusinessInvitation::defaultExpiresAt(),
             ]);
 
-            Notification::route('mail', $invitationData['email'])
-                ->notify(new InvitationNotification($invitation, $business->name));
+            $inviteEmail = $invitationData['email'];
+            $businessName = $business->name;
+
+            dispatch(function () use ($inviteEmail, $invitation, $businessName) {
+                Notification::route('mail', $inviteEmail)
+                    ->notify(new InvitationNotification($invitation, $businessName));
+            })->afterResponse();
         }
 
         $this->advanceStep($business, 5);

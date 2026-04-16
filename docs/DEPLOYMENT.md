@@ -106,7 +106,11 @@ php artisan queue:restart
 
 ## Local Development
 
-- **PHP**: served by Laravel Herd at `https://riservo-ch.test`.
+- **PHP**: served by Laravel Herd at `https://riservo-ch.test` (the default).
+  `php artisan serve` (defaults to `http://localhost:8000`) is also supported
+  as a manual fallback — run it in a side terminal if you prefer the artisan
+  port. `composer dev` runs only queue, logs, and vite; it no longer spawns
+  `php artisan serve`.
 - **Database**: Postgres 16 via DBngin at `127.0.0.1:5432`. The local database
   is `riservo-ch`; the test database is `riservo_ch_testing` (used by
   `phpunit.xml`). Copy `.env.example` to `.env` and fill the `DB_PASSWORD`

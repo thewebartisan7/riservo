@@ -6,6 +6,7 @@ import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { useTrans } from '@/hooks/use-trans';
 import { Link } from '@inertiajs/react';
 import { dashboard } from '@/routes/index';
+import { services as settingsServices, staff as settingsStaff, booking as settingsBooking } from '@/routes/settings';
 import { useState } from 'react';
 import {
     CheckIcon,
@@ -41,7 +42,7 @@ export default function Welcome({ publicUrl, businessName, logoUrl = null }: Pro
             description: t(
                 'Add treatments, adjust durations, set prices. The richer the menu, the smoother the booking.',
             ),
-            href: '/dashboard/settings/services',
+            href: settingsServices().url,
         },
         {
             eyebrow: '02',
@@ -49,7 +50,7 @@ export default function Welcome({ publicUrl, businessName, logoUrl = null }: Pro
             description: t(
                 'Send invites so each team member manages their own calendar and customers.',
             ),
-            href: '/dashboard/settings/staff',
+            href: settingsStaff().url,
         },
         {
             eyebrow: '03',
@@ -57,7 +58,7 @@ export default function Welcome({ publicUrl, businessName, logoUrl = null }: Pro
             description: t(
                 'Set when confirmation and reminder emails go out, in your tone of voice.',
             ),
-            href: '/dashboard/settings/notifications',
+            href: settingsBooking().url,
         },
     ];
 

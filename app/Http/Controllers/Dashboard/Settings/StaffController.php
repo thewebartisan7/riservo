@@ -81,6 +81,7 @@ class StaffController extends Controller
             'staff' => $members,
             'invitations' => $invitations,
             'services' => $services,
+            'inviteExpiryHours' => BusinessInvitation::EXPIRY_HOURS,
         ]);
     }
 
@@ -190,11 +191,16 @@ class StaffController extends Controller
             'role' => BusinessMemberRole::Staff,
             'token' => Str::random(64),
             'service_ids' => $scopedServiceIds,
-            'expires_at' => now()->addHours(48),
+            'expires_at' => BusinessInvitation::defaultExpiresAt(),
         ]);
 
-        Notification::route('mail', $validated['email'])
-            ->notify(new InvitationNotification($invitation, $business->name));
+        $inviteEmail = $validated['email'];
+        $businessName = $business->name;
+
+        dispatch(function () use ($inviteEmail, $invitation, $businessName) {
+            Notification::route('mail', $inviteEmail)
+                ->notify(new InvitationNotification($invitation, $businessName));
+        })->afterResponse();
 
         return redirect()->route('settings.staff')->with('success', __('Invitation sent.'));
     }
@@ -209,11 +215,16 @@ class StaffController extends Controller
 
         $invitation->update([
             'token' => Str::random(64),
-            'expires_at' => now()->addHours(48),
+            'expires_at' => BusinessInvitation::defaultExpiresAt(),
         ]);
 
-        Notification::route('mail', $invitation->email)
-            ->notify(new InvitationNotification($invitation, $business->name));
+        $inviteEmail = $invitation->email;
+        $businessName = $business->name;
+
+        dispatch(function () use ($inviteEmail, $invitation, $businessName) {
+            Notification::route('mail', $inviteEmail)
+                ->notify(new InvitationNotification($invitation, $businessName));
+        })->afterResponse();
 
         return redirect()->route('settings.staff')->with('success', __('Invitation resent.'));
     }

@@ -26,6 +26,15 @@ test('admin can view staff list', function () {
         );
 });
 
+test('staff index exposes invite expiry hours from BusinessInvitation::EXPIRY_HOURS', function () {
+    $this->actingAs($this->admin)
+        ->get('/dashboard/settings/staff')
+        ->assertOk()
+        ->assertInertia(fn ($page) => $page
+            ->where('inviteExpiryHours', BusinessInvitation::EXPIRY_HOURS)
+        );
+});
+
 test('staff list includes the admin with role and provider flags', function () {
     $this->actingAs($this->admin)
         ->get('/dashboard/settings/staff')
@@ -80,13 +89,17 @@ test('admin can view staff detail', function () {
 test('admin can invite staff', function () {
     Notification::fake();
 
+    $this->travelTo(now()->startOfMinute());
+
     $this->actingAs($this->admin)
         ->post('/dashboard/settings/staff/invite', [
             'email' => 'new@example.com',
         ])
         ->assertRedirect('/dashboard/settings/staff');
 
-    expect(BusinessInvitation::where('email', 'new@example.com')->exists())->toBeTrue();
+    $invitation = BusinessInvitation::where('email', 'new@example.com')->first();
+    expect($invitation)->not->toBeNull();
+    expect($invitation->expires_at->equalTo(BusinessInvitation::defaultExpiresAt()))->toBeTrue();
 });
 
 test('cannot invite existing member', function () {
@@ -103,15 +116,20 @@ test('admin can resend invitation', function () {
 
     $invitation = BusinessInvitation::factory()->create([
         'business_id' => $this->business->id,
+        'expires_at' => now()->subHour(),
     ]);
 
     $oldToken = $invitation->token;
+
+    $this->travelTo(now()->startOfMinute());
 
     $this->actingAs($this->admin)
         ->post("/dashboard/settings/staff/invitations/{$invitation->id}/resend")
         ->assertRedirect();
 
-    expect($invitation->fresh()->token)->not->toBe($oldToken);
+    $fresh = $invitation->fresh();
+    expect($fresh->token)->not->toBe($oldToken);
+    expect($fresh->expires_at->equalTo(BusinessInvitation::defaultExpiresAt()))->toBeTrue();
 });
 
 test('admin can cancel invitation', function () {

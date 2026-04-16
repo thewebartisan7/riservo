@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\BusinessMemberRole;
+use Carbon\CarbonInterface;
 use Database\Factories\BusinessInvitationFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -21,6 +22,13 @@ class BusinessInvitation extends Model
 {
     /** @use HasFactory<BusinessInvitationFactory> */
     use HasFactory;
+
+    public const int EXPIRY_HOURS = 48;
+
+    public static function defaultExpiresAt(): CarbonInterface
+    {
+        return now()->addHours(self::EXPIRY_HOURS);
+    }
 
     protected function casts(): array
     {

@@ -22,7 +22,8 @@ This file is the scoped instruction entry point for work in this directory subtr
 - Use `docs/DECISIONS.md` as the decision index. Read only the topical decision files relevant to the current task.
 - Active implementation plans live in `docs/plans/`.
 - Completed implementation plans live in `docs/archive/plans/`.
-- Review remediation plans live in `docs/reviews/`.
+- The active review round lives in `docs/reviews/` (empty between rounds). Closed rounds move to `docs/archive/reviews/`; the remediation roadmap is numbered on archive (`ROADMAP-REVIEW-{N}.md`).
+- Completed long-running documents follow the same pattern: `docs/archive/{plans|reviews|…}/` mirrors the active directory name.
 
 ---
 

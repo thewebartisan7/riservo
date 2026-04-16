@@ -1,25 +1,27 @@
-# riservo.ch — Review Roadmap
+# riservo.ch — Review Roadmap (Round 1)
 
-> Version: 1.1  
-> Status: Draft  
-> Scope: Fixes and improvements identified in REVIEW-1.md, after Sessions 1–11.  
-> Format: WHAT is defined here. HOW is decided by the agent at plan time.  
-> Each session is a focused, reviewable unit of work with a clear deliverable.
+> **Status**: **CLOSED**, 2026-04-16
+> **Scope**: Remediation of REVIEW-1 findings (17 issues, consolidated into 16 R-NN items).
+> **Outcome**: R-1 – R-15 complete. R-16 deferred to `docs/BACKLOG.md`. All 16 items dispositioned.
+> **Source review**: `docs/archive/reviews/REVIEW-1.md`.
+> **Next round**: REVIEW-2 (pending; will produce `ROADMAP-REVIEW-2.md` if remediation is needed).
+> **Archived as**: `docs/archive/reviews/ROADMAP-REVIEW-1.md`.
 
 ---
 
 ## Overview
 
-This roadmap addresses the issues found during the post-Session-11 code review (REVIEW-1.md). Items are grouped into sessions by theme and dependency order — fixing the data model and authorization first, then booking correctness, then frontend issues, then operations. The original review contained 17 findings; some are consolidated here into shared sessions, but all are covered.
+This roadmap addressed the issues found during the post-Session-11 code review (REVIEW-1.md). Items are grouped into sessions by theme and dependency order — data model and authorization first, then booking correctness, then frontend issues, then operations. The original review contained 17 findings; some were consolidated here into shared sessions, but all were covered.
 
-Sessions are ordered so that later sessions do not have to work around unfixed earlier issues. Each session must leave all tests green.
+Sessions were ordered so that later sessions did not have to work around unfixed earlier issues. Each session left all tests green.
 
 ---
 
 ## R-1 — Admin as Provider (Critical)
 
 **Source**: REVIEW-1.md issue #1  
-**Priority**: Critical — blocks solo-business use case
+**Priority**: Critical — blocks solo-business use case  
+**Status**: **complete**, 2026-04-16 — resolved via D-061 (`Provider` as first-class entity, `business_members` pivot with role-only semantics) and D-062 (launch requires at least one eligible provider per active service; one-click "be your own first provider" recovery).
 
 ### Context
 
@@ -51,7 +53,8 @@ The fix must also work for a larger business where the owner is both admin and a
 ## R-2 — Tenant Context and Multi-Business Membership (High)
 
 **Source**: REVIEW-1.md issue #2  
-**Priority**: High — security and correctness risk
+**Priority**: High — security and correctness risk  
+**Status**: **complete**, 2026-04-16 — resolved via D-063 (Option B: explicit tenant context per request via `App\Support\TenantContext` + `ResolveTenantContext` middleware). Multi-business membership remains a data-model capability; business-switcher UX deferred as R-2B (`docs/BACKLOG.md`).
 
 ### Context
 
@@ -86,7 +89,8 @@ Regardless of which option is chosen:
 ## R-3 — Cross-Tenant Validation of Foreign Keys (High)
 
 **Source**: REVIEW-1.md issue #6  
-**Priority**: High — security, tenant isolation
+**Priority**: High — security, tenant isolation  
+**Status**: **complete**, 2026-04-16 — resolved via D-064 (`App\Rules\BelongsToCurrentBusiness` reusable validation rule; Form Requests migrated; controllers re-filter FK arrays through the owning business's Eloquent relation as defense-in-depth).
 
 ### Context
 
@@ -168,7 +172,8 @@ The documented rule (D-005, SPEC §14) is that customers always see the business
 ## R-7 — Collaborator-Choice Policy Enforcement (Medium)
 
 **Source**: REVIEW-1.md issue #7  
-**Priority**: Medium
+**Priority**: Medium  
+**Status**: **complete**, 2026-04-16 — server-side enforcement landed; `PublicBookingController::store()` ignores a submitted `provider_id` when `allow_provider_choice = false` and falls through to auto-assignment; public page skips the provider step consistently. (Terminology swap `collaborator_choice` → `provider_choice` per D-061.)
 
 ### Context
 
@@ -185,7 +190,8 @@ The documented rule (D-005, SPEC §14) is that customers always see the business
 ## R-8 — Calendar Bug Fixes and Mobile Improvements (Medium)
 
 **Source**: REVIEW-1.md issue #8  
-**Priority**: Medium — includes a confirmed hydration error
+**Priority**: Medium — includes a confirmed hydration error  
+**Status**: **complete**, 2026-04-16 — nested `<li>` hydration bug fixed; mobile view switcher added; week-view booking items rendered below `sm`. Developer-driven manual QA on real mobile devices remains a carry-over (`docs/HANDOFF.md`).
 
 ### Context
 
@@ -206,7 +212,8 @@ The documented rule (D-005, SPEC §14) is that customers always see the business
 ## R-9 — Popup Embed: Service Pre-Filter and Modal Robustness (Medium)
 
 **Source**: REVIEW-1.md issue #10  
-**Priority**: Medium
+**Priority**: Medium  
+**Status**: **complete**, 2026-04-16 — resolved via D-070 (canonical service pre-filter is a URL path segment; applies to iframe, popup, and direct link). Popup became a proper modal (focus trap, scroll lock, Escape to close, single-instance guard). Developer-driven manual QA on keyboard + screen-reader behaviour remains a carry-over (`docs/HANDOFF.md`).
 
 ### Context
 
@@ -261,7 +268,8 @@ Magic-link request and password-reset request endpoints are not rate-limited, de
 ## R-12 — Dashboard Welcome Links and Copy Drift (Medium)
 
 **Source**: REVIEW-1.md issue #13  
-**Priority**: Medium
+**Priority**: Medium  
+**Status**: **complete**, 2026-04-16
 
 ### Context
 
@@ -277,7 +285,8 @@ The post-onboarding welcome screen links to `/dashboard/settings/team` and `/das
 ## R-13 — Customer Registration Scope Clarification (Medium)
 
 **Source**: REVIEW-1.md issue #14  
-**Priority**: Medium — product-fit
+**Priority**: Medium — product-fit  
+**Status**: **complete**, 2026-04-16
 
 ### Context
 
@@ -298,7 +307,8 @@ The agent should evaluate which option better matches the actual product intent 
 ## R-14 — Notification Delivery and Branding Cleanup (Low)
 
 **Source**: REVIEW-1.md issue #15  
-**Priority**: Low
+**Priority**: Low  
+**Status**: **complete**, 2026-04-16
 
 ### What to deliver
 
@@ -316,7 +326,8 @@ The agent should evaluate which option better matches the actual product intent 
 ## R-15 — Dependency and URL Generation Cleanup (Low)
 
 **Source**: REVIEW-1.md issue #16, #17  
-**Priority**: Low — maintenance hygiene
+**Priority**: Low — maintenance hygiene  
+**Status**: **complete**, 2026-04-16
 
 ### What to deliver
 
@@ -332,7 +343,8 @@ The agent should evaluate which option better matches the actual product intent 
 ## R-16 — Frontend Code Splitting (Performance)
 
 **Source**: REVIEW-1.md issue #9  
-**Priority**: Medium — performance
+**Priority**: Medium — performance  
+**Status**: **deferred to BACKLOG**, 2026-04-16 — not a launch blocker. The ~958 kB main JS bundle is cached by the browser after first load, and public booking / auth are the only surfaces where first-paint latency materially matters. Post-launch real-user metrics will tell us whether the FCP cost on those surfaces justifies the refactor. Tracked in `docs/BACKLOG.md` under "R-16 — Frontend code splitting (deferred from ROADMAP-REVIEW-1)".
 
 ### Context
 

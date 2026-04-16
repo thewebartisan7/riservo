@@ -19,6 +19,14 @@ This file captures unscheduled follow-up work, UX ideas, and deferred engineerin
 - The onboarding logo upload path still reflects the older standalone-request implementation described in D-042. When that area is touched again, evaluate migrating it to the current Inertia v3 `useHttp` pattern.
 - If `docs/design/ui.pen` stops being useful as a repo-local reference, move it out of the repository and update `docs/README.md` accordingly.
 
+## R-16 — Frontend code splitting (deferred from ROADMAP-REVIEW-1)
+
+- The Inertia page resolver uses `import.meta.glob(..., { eager: true })`, producing a single ~958 kB main JS asset. Every user — including those on the lean public booking page — downloads all dashboard, settings, and calendar code upfront.
+- Not a launch blocker: the bundle is cached after first load, and public booking / auth are the only surfaces where first-paint latency materially matters.
+- Revisit if post-launch real-user metrics show meaningful FCP regression on those surfaces, or as a follow-up optimisation pass.
+- Implementation sketch: switch to `import.meta.glob(..., { eager: false })` and let Vite split per page boundary; verify no Inertia `resolveComponent` adjustment is required; re-measure bundle output.
+- Source: `docs/archive/reviews/REVIEW-1.md` §9 / `docs/archive/reviews/ROADMAP-REVIEW-1.md` §R-16.
+
 ## Embed & Share (R-9 carry-overs)
 
 - Popup widget i18n — load translations into `public/embed.js` (decide: per-script `data-locale`? server-rendered `/embed-{locale}.js`? `window.riservoLocale` global?). Today `iframe.title = 'Book appointment'` and the close button's `aria-label='Close'` are English-only.

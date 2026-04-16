@@ -27,9 +27,10 @@ interface StaffInviteDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     services: Service[];
+    expiryHours: number;
 }
 
-export function StaffInviteDialog({ open, onOpenChange, services }: StaffInviteDialogProps) {
+export function StaffInviteDialog({ open, onOpenChange, services, expiryHours }: StaffInviteDialogProps) {
     const { t } = useTrans();
     const [selectedServices, setSelectedServices] = useState<number[]>([]);
 
@@ -55,7 +56,7 @@ export function StaffInviteDialog({ open, onOpenChange, services }: StaffInviteD
                             <DialogHeader>
                                 <DialogTitle>{t('Invite a team member')}</DialogTitle>
                                 <DialogDescription>
-                                    {t('They receive an email to set up a password. The invite expires in 7 days.')}
+                                    {t('They receive an email to set up a password. The invite expires in :hours hours.', { hours: expiryHours })}
                                 </DialogDescription>
                             </DialogHeader>
                             <DialogPanel>

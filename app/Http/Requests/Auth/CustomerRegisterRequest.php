@@ -20,18 +20,8 @@ class CustomerRegisterRequest extends FormRequest
     {
         return [
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'exists:customers,email'],
+            'email' => ['required', 'string', 'email', 'unique:users,email'],
             'password' => ['required', 'confirmed', Password::defaults()],
-        ];
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    public function messages(): array
-    {
-        return [
-            'email.exists' => __('No bookings found for this email address. You must have at least one booking to register.'),
         ];
     }
 }

@@ -24,6 +24,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -67,7 +68,7 @@ class PublicBookingController extends Controller
                 'slug' => $business->slug,
                 'description' => $business->description,
                 'logo_url' => $business->logo
-                    ? asset('storage/'.$business->logo)
+                    ? Storage::disk('public')->url($business->logo)
                     : null,
                 'phone' => $business->phone,
                 'email' => $business->email,
@@ -115,7 +116,7 @@ class PublicBookingController extends Controller
                 'id' => $provider->id,
                 'name' => $provider->user?->name ?? '',
                 'avatar_url' => $provider->user?->avatar
-                    ? asset('storage/'.$provider->user->avatar)
+                    ? Storage::disk('public')->url($provider->user->avatar)
                     : null,
             ]);
 

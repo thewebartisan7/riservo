@@ -158,15 +158,31 @@ export default function Profile({ business, logoUrl }: Props) {
                                                 onChange={handleLogoChange}
                                                 className="sr-only"
                                             />
-                                            <Button
-                                                type="button"
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={() => fileInputRef.current?.click()}
-                                                loading={logoHttp.processing}
-                                            >
-                                                {previewUrl ? t('Replace logo') : t('Upload logo')}
-                                            </Button>
+                                            <div className="flex items-center gap-2">
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => fileInputRef.current?.click()}
+                                                    loading={logoHttp.processing}
+                                                >
+                                                    {previewUrl ? t('Replace logo') : t('Upload logo')}
+                                                </Button>
+                                                {previewUrl && (
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="text-muted-foreground"
+                                                        onClick={() => {
+                                                            setPreviewUrl(null);
+                                                            setLogoPath('');
+                                                        }}
+                                                    >
+                                                        {t('Remove')}
+                                                    </Button>
+                                                )}
+                                            </div>
                                             <FieldDescription>
                                                 {t('JPG, PNG, or WebP · up to 2 MB')}
                                             </FieldDescription>

@@ -9,6 +9,7 @@ use App\Models\Service;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -90,7 +91,7 @@ class CalendarController extends Controller
                     'id' => $booking->provider->id,
                     'name' => $booking->provider->user?->name ?? '',
                     'avatar_url' => $booking->provider->user?->avatar
-                        ? asset('storage/'.$booking->provider->user->avatar)
+                        ? Storage::disk('public')->url($booking->provider->user->avatar)
                         : null,
                     'is_active' => ! $booking->provider->trashed(),
                 ],
@@ -104,7 +105,7 @@ class CalendarController extends Controller
             'providers' => $providers->map(fn (Provider $p) => [
                 'id' => $p->id,
                 'name' => $p->user?->name ?? '',
-                'avatar_url' => $p->user?->avatar ? asset('storage/'.$p->user->avatar) : null,
+                'avatar_url' => $p->user?->avatar ? Storage::disk('public')->url($p->user->avatar) : null,
             ])->values(),
             'services' => $services->map(fn (Service $service) => [
                 'id' => $service->id,

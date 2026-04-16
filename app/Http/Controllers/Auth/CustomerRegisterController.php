@@ -20,16 +20,16 @@ class CustomerRegisterController extends Controller
 
     public function store(CustomerRegisterRequest $request): RedirectResponse
     {
-        $customer = Customer::where('email', $request->validated('email'))->first();
+        $email = $request->validated('email');
 
-        if ($customer->user_id) {
-            return redirect()->route('login')
-                ->with('status', __('An account already exists for this email. Please log in.'));
-        }
+        $customer = Customer::firstOrCreate(
+            ['email' => $email],
+            ['name' => $request->validated('name')],
+        );
 
         $user = User::create([
             'name' => $request->validated('name'),
-            'email' => $request->validated('email'),
+            'email' => $email,
             'password' => $request->validated('password'),
         ]);
 

@@ -1,173 +1,167 @@
 # Handoff
 
-**Session**: R-10 + R-11 — Reminder DST/delayed-run resilience; auth-recovery rate limiting
+**Session**: R-15 — Dependency + URL-generation cleanup (Session 3 of 3 and FINAL in the R-12/13/14/15 polish bundle)
 **Date**: 2026-04-16
-**Status**: Code complete; no manual QA required (Pest suite covers the full behaviour end-to-end)
+**Status**: Code complete; full Pest suite green (496 passed); public-booking smoke check clean; entire R-12 → R-15 bundle closed
+
+---
+
+## Review Round 1 — CLOSED (2026-04-16)
+
+The post-Session-3 housekeeping pass closed the first review round:
+
+- **R-1 – R-15** complete. **R-16** deferred to `docs/BACKLOG.md` (not a launch blocker — main bundle is cached after first load; post-launch real-user metrics decide whether the refactor ships).
+- `docs/reviews/REVIEW-1.md` and `docs/reviews/ROADMAP-REVIEW.md` were moved to `docs/archive/reviews/`; the roadmap was renamed to `ROADMAP-REVIEW-1.md` on archive.
+- `docs/reviews/` is now empty (the active round lives there; it will refill when REVIEW-2 lands).
+- Archive convention documented in `docs/README.md`, `docs/reviews/CLAUDE.md` (+ `AGENTS.md`), and `.claude/CLAUDE.md`.
+
+**Next phases** (running in parallel once this commit lands):
+
+1. **Codex-driven REVIEW-2** — a fresh re-review of the current codebase. Output will land in `docs/reviews/REVIEW-2.md`, with `ROADMAP-REVIEW-2.md` if remediation is needed.
+2. **ROADMAP-E2E** — Claude Code Max-driven end-to-end test roadmap planning (see `docs/roadmaps/ROADMAP-E2E.md`). Likely starts with a doc-alignment pass (SPEC, ARCHITECTURE-SUMMARY, DEPLOYMENT) before planning test coverage.
 
 ---
 
 ## What Was Built
 
-R-10 + R-11 closed REVIEW-1 §#11 (reminder scheduling fragility) and §#12
-(unthrottled auth-recovery POSTs). Two independent decisions (D-071, D-072),
-two orthogonal rewrites, 12 new tests, zero frontend changes, zero
-migrations, zero new dependencies.
+Session 3 closes REVIEW-1 §#16 (dependency + URL generation drift)
+and §#17 (logo removal). One decision recorded verbatim in
+`docs/decisions/DECISIONS-FOUNDATIONS.md`: **D-076** (canonical
+storage URL helper).
+Plan: `docs/plans/PLAN-R-12-15-PRE-LAUNCH-POLISH.md` §3.4, §4.3,
+§6.4, §7.4. Plan file moved to `docs/archive/plans/` — the R-12 →
+R-15 bundle is complete.
 
-### D-071 — Reminder eligibility = business-timezone wall-clock; past-due fires with row-level idempotency (new)
+### R-15 — Dependency + URL cleanup + logo removal (D-076)
 
-Appended to `docs/decisions/DECISIONS-BOOKING-AVAILABILITY.md`. Pins two
-properties. First, "N hours before" is computed against the booking's
-business timezone in wall-clock (not absolute UTC), matching the customer's
-mental model for in-person appointments (consistent with D-005, D-030).
-Across DST, the absolute UTC interval between the reminder and the
-appointment drifts by ±1 hour — explicitly accepted. Second, a reminder is
-eligible when `reminderTimeUtc <= now && starts_at > now && no booking_reminders
-row exists for (booking, hoursBefore)` — an *open* look-back window with no
-tuning knob. A scheduler outage of any duration shorter than `hoursBefore`
-cannot drop an eligible reminder; the `booking_reminders` unique
-`(booking_id, hours_before)` constraint from D-056 continues to provide
-idempotency, now doing double duty as the race-safe slot claim.
+**Sub-area 1 — Dependency removal.** Dropped `axios` (devDependencies)
+and `geist` (dependencies) from `package.json`. `npm install`
+regenerated the lockfile — 15 packages removed — and `npm run build`
+is green. No transitive imports broke (audit confirmed zero direct
+imports before removal).
 
-### D-072 — Auth-recovery POSTs throttled per-email AND per-IP via FormRequest (new)
+**Sub-area 2 — `composer dev` script.** Dropped `php artisan serve`
+from the concurrently command; colour list and `--names` reduced to
+three. The script now runs `queue:listen + pail + vite`. Artisan-
+served port remains available as a manual fallback — contributors
+who prefer `http://localhost:8000` run `php artisan serve` in a
+side terminal. Added a one-line note to `docs/DEPLOYMENT.md` Local
+Development section documenting both options.
 
-Appended to `docs/decisions/DECISIONS-AUTH.md`. `POST /magic-link` and
-`POST /forgot-password` each check two independent buckets — one keyed on
-the email (5/15min default), one on the IP (20/15min default). Either
-bucket exceeding its limit throws
-`ValidationException::withMessages(['email' => ...])`, matching the
-LoginRequest UX (Inertia-native 302 back with validation error). Values
-live under `auth.throttle.{magic_link|password_reset}.{max_per_email,max_per_ip,decay_minutes}`
-in `config/auth.php`, env-tunable via `THROTTLE_MAGIC_LINK_*` /
-`THROTTLE_PASSWORD_RESET_*`. Hits fire on every invocation (no "success
-clears" semantics — the endpoints always return generic success to resist
-enumeration per D-037). The `Lockout` event is deliberately NOT emitted —
-that's an auth-lockout signal, not an abuse-prevention signal.
+**Sub-area 3 — Storage URL standardisation (D-076).** Migrated the
+five remaining `asset('storage/'.$path)` call sites to
+`Storage::disk('public')->url($path)`:
 
-### Backend — `SendBookingReminders::handle()` rewritten
+- `app/Http/Controllers/Dashboard/BookingController.php:126`
+- `app/Http/Controllers/Dashboard/CalendarController.php:93, 107`
+- `app/Http/Controllers/Booking/PublicBookingController.php:70, 118`
 
-`app/Console/Commands/SendBookingReminders.php`. Structural changes:
+Added `use Illuminate\Support\Facades\Storage;` where missing.
+Grep across `app/` for `asset('storage/` returns zero matches
+post-migration. The regression suite is the gate (both helpers
+output identical URLs in local/Herd dev; the refactor pays off
+only on Laravel Cloud object storage per D-065).
 
-- `$now = CarbonImmutable::now('UTC')` (was `now()`).
-- Single candidate query:
-  `Booking::where('status', BookingStatus::Confirmed)->whereBetween('starts_at', [$now, $now->addHours(max + 1)])`
-  with `reminders` eager-loaded. The 1-hour buffer past `max(reminder_hours)`
-  covers DST fall-back, where wall-clock 24h can span up to 25 absolute UTC
-  hours. Replaces the pre-R-10 per-hours-before inner-query loop with the
-  ±5-minute window (lines 38-46 of the old file).
-- Per-booking × per-business-configured-`hours_before` inner loop:
-  - Wall-clock reminder time:
-    `$booking->starts_at->toImmutable()->setTimezone($tz)->modify("-{$hoursBefore} hours")->utc()`.
-    **Honest drift from plan sketch**: the plan's §3.1.2 sketch used
-    `->subHours($hoursBefore)`, but Carbon's `subHours()` subtracts
-    absolute UTC seconds (not wall-clock hours) and therefore does NOT
-    implement D-071 decision 1. `modify("-N hours")` is the correct
-    primitive — it preserves wall-clock across DST and rolls forward into
-    the spring-forward gap (matching D-071 decision 4). Verified in
-    tinker; the plan's `subHours(24)` lands at `2026-10-25 09:00 UTC`
-    post-DST (absolute), while `modify("-24 hours")` matches the
-    semantics D-071 decision 4 prescribes.
-  - Past-due filter: `if ($reminderTimeUtc->greaterThan($now)) continue;`.
-  - In-memory check: `$booking->reminders->contains('hours_before', $hoursBefore)`.
-  - Slot claim first:
-    `try { BookingReminder::create(...) } catch (UniqueConstraintViolationException) { continue; }`.
-    Only after successful claim does `Notification::route('mail', ...)->notify(...)` fire.
+**Manual smoke check** — `http://riservo-app.test/salone-bella`
+(the onboarded local business) returns `HTTP 200` and renders the
+booking page; `logo_url` prop is `null` as expected (no logo on the
+local fixture). Tinker-probed the helper output directly:
+`Storage::disk('public')->url('logos/test.png')` →
+`http://riservo-app.test/storage/logos/test.png` — identical to
+what `asset('storage/logos/test.png')` would return.
 
-### Backend — Two new FormRequests for auth-recovery throttle
+**Sub-area 4 — Logo removal hygiene.** Added
+`Business::removeLogoIfCleared(array &$data): void` — the single
+home for the empty-string-/null-to-null normalisation + physical
+file delete. The plan's `$data['logo'] === ''` check was widened
+to `in_array($data['logo'], [null, ''], true)` because Laravel 13's
+default `ConvertEmptyStringsToNull` global middleware rewrites
+empty-string form posts to null before validation fires. The method
+deletes the file from the `public` disk (if present) and forces the
+persisted value to `null`. Wired from
+`Dashboard\Settings\ProfileController::update` and
+`OnboardingController::storeProfile`, each called once before
+`$business->update($data)`.
 
-`app/Http/Requests/Auth/SendMagicLinkRequest.php` and
-`app/Http/Requests/Auth/SendPasswordResetRequest.php`. Shape mirrors
-`LoginRequest::ensureIsNotRateLimited()` but (a) checks two buckets
-(per-email + per-IP), (b) hits unconditionally on every call, (c) does
-NOT emit `Illuminate\Auth\Events\Lockout`. Rules reduce to
-`['email' => ['required', 'string', 'email']]` — validation migrates
-out of the controller. Keys are `magic-link:email:…`, `magic-link:ip:…`,
-`password-reset:email:…`, `password-reset:ip:…` — deliberately namespaced
-so the two endpoints don't share counters.
+Added a Remove button to
+`resources/js/pages/dashboard/settings/profile.tsx` mirroring the
+onboarding step-1 pattern exactly — `variant="ghost"`, `size="sm"`,
+`onClick={() => { setPreviewUrl(null); setLogoPath(''); }}`, and
+rendered only when `previewUrl` is truthy. Wrapped with the
+existing Upload/Replace button in a `flex items-center gap-2` row.
 
-### Controllers — signature swaps only
+**Sub-area 5 — `.env.example` `APP_URL`.** Line 5 now reads
+`APP_URL=http://riservo-ch.test`, matching the CLAUDE.md Herd
+convention (`kebab-case-project-dir.test`). `.env` is untouched —
+it remains the developer's personal config.
 
-`MagicLinkController::store` now takes `SendMagicLinkRequest`, calls
-`$request->ensureIsNotRateLimited()` as the first line, and drops its
-inline `$request->validate([...])`. `PasswordResetController::store`
-mirrors the same three-line change. Rest of both methods is untouched.
+**D-076** appended verbatim to `docs/decisions/DECISIONS-FOUNDATIONS.md`.
+D-077 was considered and explicitly not claimed: the `APP_URL`
+convention was already documented in `.claude/CLAUDE.md`, so the
+`.env.example` edit is mechanical drift reconciliation, not an
+architectural choice.
 
-### Config + i18n
+### New tests (+2, full suite 494 → 496)
 
-`config/auth.php` grows an `auth.throttle.*` subtree with defaults
-5/email, 20/ip, 15min decay per endpoint. `lang/en.json` gains one new
-key: `"Too many requests. Please try again in :minutes minute(s)."`.
+- `tests/Feature/Settings/ProfileTest.php` — added
+  `updating profile with empty logo deletes the existing file and stores null`.
+  Fakes the `public` disk, stores an `existing.jpg` at `logos/...`,
+  seeds it onto the business, PUTs `/dashboard/settings/profile`
+  with `logo=''`, asserts redirect, fresh logo is null, and the
+  fake disk no longer contains the file.
+- `tests/Feature/Onboarding/Step1ProfileTest.php` — added
+  `storing profile with empty logo deletes the existing file and stores null`.
+  Same shape against `/onboarding/step/1`.
 
-### New test coverage (+12 tests)
+Both cover the new `Business::removeLogoIfCleared` path end-to-end.
+The five storage-URL swaps have no dedicated tests — `asset()` and
+`Storage::disk('public')->url()` produce identical strings on the
+local symlink, so the regression suite (185 passing
+Booking/Calendar/PublicBooking tests) is the gate.
 
-`tests/Feature/Commands/SendBookingRemindersTest.php` (+5 tests,
-appended for cohesion):
+### Audit drift vs plan §1.4
 
-- DST fall-back (2026-10-25, Europe/Zurich) — booking 2026-10-26 09:00
-  UTC with `reminder_hours=[24]`; travel to `now = 2026-10-25 09:00 UTC`;
-  assert reminder fires.
-- DST spring-forward + gap hour (2026-03-29) — two bookings in one test:
-  a regular 10:00 CEST appointment and a 02:30 CEST appointment whose
-  24h wall-clock predecessor falls in the non-existent 02:00-03:00
-  local hour; Carbon's `modify()` rolls forward into post-transition.
-  Asserts both reminders fire without exception.
-- Delayed run — `now = 2026-04-13 10:30 UTC`, booking at 2026-04-14
-  10:00 UTC with `[24]`; the wall-clock 24h-before eligibility passed
-  30 min ago. New code fires; the pre-R-10 ±5-min window would have
-  missed.
-- Delayed-run idempotency — same fixture, command invoked twice;
-  assert `BookingReminder::count() === 1` and notification sent exactly
-  once.
-- Past-appointment cutoff — booking 1 hour in the past; the
-  `whereBetween(starts_at, [now, ...])` lower bound excludes it; no
-  reminder fires.
-
-`tests/Feature/Auth/AuthRecoveryThrottleTest.php` (+7 test cases across
-5 test blocks, using `dataset(['magic-link', 'forgot-password'])` where
-the behaviour is symmetric):
-
-- Per-email bucket blocks after 5 hits (dataset over both endpoints → 2 cases).
-- Per-IP bucket blocks after 20 hits with rotating emails (dataset → 2 cases).
-- Per-email and per-IP buckets are orthogonal (4 alice + 1 bob + 1 alice
-  all succeed; 6th alice trips the per-email bucket).
-- Throttle keys are endpoint-scoped (exhaust magic-link for alice@;
-  forgot-password for alice@ still succeeds — different namespace).
-- Decay window frees the bucket (`$this->travel(16)->minutes()` after
-  exhaustion; the next hit succeeds).
+- Plan's §3.4 Sub-area 4 step 2 code snippet checked `$data['logo']
+  === ''`. At implementation time, Laravel 13's global
+  `ConvertEmptyStringsToNull` middleware rewrites empty strings to
+  null *before* the FormRequest runs, so the validated `$data`
+  never carries an empty string for `logo`. The first attempt of the
+  two new tests failed on `assertMissing` until the check was
+  widened to `in_array($data['logo'], [null, ''], true)`. The
+  empty-string branch is preserved for robustness (e.g., if the
+  middleware is ever disabled on a specific route). No scope change;
+  the behaviour the plan described is delivered.
+- Plan §8.4 anticipated a `.env.example` URL change to match Herd
+  convention. The only edit was line 5 as planned.
+- Plan §3.4 Sub-area 2 step 2 specified the resulting concurrently
+  command; implementation matches exactly (3 colours, 3 names).
 
 ---
 
 ## Current Project State
 
-- **Backend**: `SendBookingReminders` now computes eligibility in
-  wall-clock local time with past-due eligibility and row-level
-  idempotency. Two new FormRequests wrap the two auth-recovery
-  POST endpoints with a per-email + per-IP throttle pair. Two
-  controllers got three-line signature swaps; no other backend code
-  changed.
-- **Frontend**: no changes. The throttle error surfaces on the existing
-  `errors.email` prop that magic-link and forgot-password pages already
-  render (same prop login uses) — no React changes needed.
-- **Routes**: no changes. `php artisan route:list --path=magic-link`
-  and `--path=forgot-password` confirm the endpoints still resolve to
-  the same controllers.
-- **Scheduler**: cadence unchanged — `everyFiveMinutes()->withoutOverlapping()`
-  per `routes/console.php:11`. Correctness now lives in the eligibility
-  math, not the cadence (D-071 decision 6).
-- **Tests**: full Pest suite green on Postgres — **484 passed, 2013
-  assertions**. +12 from the R-9 baseline of 472 (5 reminder + 7
-  throttle cases).
-- **Decisions**: D-071 in `DECISIONS-BOOKING-AVAILABILITY.md`
-  (reminder semantics). D-072 in `DECISIONS-AUTH.md` (throttle
-  pattern). D-001 – D-068 untouched.
-- **Migrations**: none. The existing `booking_reminders` table
-  (D-056, migration `2026_04_16_100012_create_booking_reminders_table.php`)
-  carries both the deduplication and the race-safe slot-claim duty.
-- **i18n**: one new key in `lang/en.json`
-  (`"Too many requests. Please try again in :minutes minute(s)."`).
-- **Config**: `config/auth.php` grew `auth.throttle.*` subtree;
-  defaults encoded as
-  `(int) env('THROTTLE_MAGIC_LINK_EMAIL', 5)` etc., so ops can tune
-  post-launch without a redeploy.
+- **Backend**:
+  - `Business::removeLogoIfCleared($data)` model method is the single
+    home for empty-logo normalisation + file delete.
+  - 5 storage URLs migrated to `Storage::disk('public')->url()`;
+    `asset('storage/')` is no longer used in `app/`.
+- **Frontend**: Remove button added to `dashboard/settings/profile.tsx`.
+  Bundle size unchanged (958 kB main chunk — R-16's territory).
+- **Config**:
+  - `.env.example` `APP_URL=http://riservo-ch.test`.
+  - `config/app.php` and `MAIL_FROM_*` from Session 2 are unchanged.
+  - `composer.json` `dev` script runs 3 processes only.
+  - `package.json` has no `axios` or `geist`; lockfile regenerated
+    (15 packages removed).
+- **Tests**: full Pest suite green on Postgres — **496 passed, 2073
+  assertions**. +2 from the Session 2 baseline of 494. Matches plan
+  §6.5's ≥496 expectation exactly.
+- **Decisions**: **D-076** appended to
+  `docs/decisions/DECISIONS-FOUNDATIONS.md`. D-001 – D-075 untouched.
+  D-073 / D-077 both considered and not claimed.
+- **Migrations**: none.
+- **i18n**: no changes this session.
+- **Routes**: no changes.
 
 ---
 
@@ -179,118 +173,115 @@ vendor/bin/pint --dirty --format agent
 npm run build
 ```
 
-All three green: **484 passed** (in ~21 s), `{"result":"pass"}`, clean
-Vite build in under 1 s (only the pre-existing 500 kB chunk-size notice,
-unchanged).
+All three green: **496 passed** (in ~22 s), `{"result":"pass"}`,
+clean Vite build in ~760 ms. The pre-existing 958 kB main-bundle
+chunk-size warning is unchanged and remains R-16's scope.
 
 Targeted checks:
 
 ```bash
-php artisan test --compact --filter=SendBookingReminders   # 9 passed
-php artisan test --compact --filter=AuthRecoveryThrottle   # 7 passed
-php artisan schedule:list                                  # cadence unchanged
-php artisan route:list --path=magic-link                   # POST → MagicLinkController@store
-php artisan route:list --path=forgot-password              # POST → PasswordResetController@store
+php artisan test --compact --filter='Profile'
+# → 18 passed (includes both new logo-removal tests)
+
+php artisan test --compact --filter='PublicBooking|Calendar|Booking'
+# → 185 passed (storage-URL refactor regression gate)
+
+grep "asset('storage/" app/ -r
+# → zero matches
+
+grep -E "axios|geist" package.json
+# → zero matches
+
+grep "php artisan serve" composer.json
+# → zero matches in the dev script
 ```
 
-**No browser QA required this session.** Unlike R-8 and R-9 (which
-depended on visual + keyboard + screen-reader behaviour the agent
-cannot automate), the R-10 + R-11 scope is purely backend logic.
-The 12 new Pest tests cover DST math, delayed-run recovery,
-idempotency, past-due cutoff, and both throttle dimensions including
-decay — end-to-end via the route layer, not unit-level mocks. A
-smoke-check in a real browser would re-discover the same behaviour
-the tests already pin.
+Manual smoke for the public booking path (what the plan called out
+as the regression-risk surface):
+
+```bash
+curl -s -o /dev/null -w "HTTP %{http_code}\n" http://riservo-app.test/salone-bella
+# → HTTP 200
+```
 
 ---
 
 ## What the Next Session Needs to Know
 
-R-10 and R-11 are complete. The remediation roadmap moves on to the
-**R-12 + R-13 + R-14 + R-15** polish bundle (copy drift + customer
-registration scope + notification delivery/branding + dependency and
-URL-generation cleanup — per ROADMAP-REVIEW's "can be one session"
-grouping), then **R-16** (frontend code splitting / lazy page
-resolver, standalone).
+Session 3 is complete. The R-12 → R-15 polish bundle is fully
+closed. The remediation roadmap moves on to the final REVIEW-1 item:
 
-When touching reminder code or auth throttling:
+- **R-16 — Frontend code splitting** (ROADMAP-REVIEW §R-16, lines
+  332-348). Standalone session. Switch the Inertia page resolver
+  from `import.meta.glob(..., { eager: true })` to lazy loading.
+  Expected to drop the 958 kB main JS bundle to per-page chunks
+  measured in tens of kB. No decisions. No backend touches. After
+  R-16, the REVIEW-1 backlog is exhausted.
 
-- **D-071 is the spec.** Wall-clock local semantics, past-due
-  eligibility, row-level idempotency via `booking_reminders`. Do not
-  reintroduce a `±N` minute window — it silently drops reminders past
-  the `N` minute outage boundary. Do not add a watermark table — the
-  unique constraint already provides the correctness guarantee at the
-  right granularity.
-- **Carbon `subHours()` is absolute-UTC; `modify("-N hours")` is
-  wall-clock.** The two differ by 1 hour whenever the wall-clock
-  interval crosses a DST transition. `modify()` is the primitive D-071
-  requires; a future refactor must not silently swap back to
-  `subHours()`.
-- **D-072 decision 2 — two independent buckets, NOT combined.**
-  Rejecting the LoginRequest `email|ip` single-key shape was a
-  deliberate call — auth-recovery has no "success clears" signal
-  (D-037 generic response) so a combined key leaves either attack
-  axis open to rotation. Any future auth-adjacent throttle endpoint
-  (e.g., email-verification resend, if it migrates off route-level
-  `throttle:`) should follow the same two-bucket shape.
-- **Do not emit `Illuminate\Auth\Events\Lockout` for abuse-prevention
-  throttles.** That event is reserved for auth-lockout semantics
-  (LoginRequest). The two new FormRequests deliberately skip it
-  (D-072 decision 7).
-- **Throttle values are in `config/auth.php`, not a new
-  `config/throttle.php`.** If a third auth-adjacent throttle endpoint
-  lands, consider a unified `config/throttle.php` consolidation pass
-  (captured in PLAN §10 as a carry-over), but do not split values
-  across two config files piecemeal.
+### Conventions that R-16 must not break
+
+- **D-076 — Canonical storage URL helper.** Any new controller or
+  prop-builder uses `Storage::disk('public')->url($path)`. Do not
+  reintroduce `asset('storage/...')` anywhere in `app/`.
+- **`Business::removeLogoIfCleared` is the single home for
+  empty-logo normalisation.** Both controllers (settings profile,
+  onboarding step 1) must call it. Do not duplicate the delete
+  logic in a third place; extract into the model if a new flow ever
+  needs the same normalisation.
+- **D-074 — open customer registration.** Do not reintroduce
+  `exists:customers,email`. Do not remove `unique:users,email`.
+- **D-075 — closure-after-response dispatch.** Do not unwrap the
+  four `dispatch(fn)->afterResponse()` call sites. `Booking*Notification`
+  classes stay queued + `afterCommit()`.
+- **Config branding.** `config/app.php` default is `'riservo.ch'`.
+  `.env.example` `APP_NAME=riservo.ch`,
+  `MAIL_FROM_ADDRESS="hello@riservo.ch"`, and
+  `APP_URL=http://riservo-ch.test`.
+- **`BusinessInvitation::EXPIRY_HOURS` is still the single source
+  of truth.**
+- **Welcome-page next-steps are Wayfinder-routed.**
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **R-9 manual QA — developer-driven.** The 15-item browser + SR
-  checklist from the prior HANDOFF is still the one remaining gate on
-  R-9. Unrelated to this session.
-- **R-8 manual QA** — also carried over from the R-8 HANDOFF.
-- **Scheduler-lag alerting.** Nothing today pages ops if `schedule:run`
-  hasn't executed for an hour. D-071 accepts a reminder being dropped
-  when a scheduler outage exceeds `hoursBefore`; the detection gap is
-  a post-launch ops concern, captured in the R-10-11 plan §10.
-- **Consolidate rate-limiter definitions in `config/throttle.php`.**
-  `booking-api` / `booking-create` are hardcoded in
-  `AppServiceProvider::boot()`; `magic_link` / `password_reset` live
-  in `config/auth.php`. A future pass can unify. Non-blocking.
-- **`X-RateLimit-Remaining` / `Retry-After` headers on throttled
-  auth-recovery responses.** The current validation-error shape
-  doesn't set them (parity with LoginRequest). API-first clients
-  would want them; post-launch concern.
-- **Per-email-bucket lockout telemetry.** If abuse monitoring shows
-  >1% of legitimate users tripping the per-email cap, tune
-  `THROTTLE_MAGIC_LINK_EMAIL` / `THROTTLE_PASSWORD_RESET_EMAIL` up via
-  env flip (no redeploy).
-- **Emit a `RateLimitExceeded` event for auth-recovery throttle.**
-  Not today. Add a listener if abuse telemetry wants it.
-- **SMS / WhatsApp reminder channel.** SPEC §9 post-MVP. The
-  eligibility shape (wall-clock local, past-due, `booking_reminders`
-  idempotency) composes over a per-channel extension — likely via
-  `(booking_id, hours_before, channel)` unique.
-- **Reminder `hours_before` per-booking override.** `reminder_hours`
-  is per-Business per D-019; per-booking override is a post-MVP
-  product decision.
-- **Dashboard UI for reminder status / replay / manual trigger.**
-  Post-MVP. The `booking_reminders` table is already queryable, so
-  this is a UI-only follow-up.
-- **Fall-back-overlap wall-clock ambiguity.** Carbon picks the first
-  occurrence (earlier UTC instant); D-071 decision 4 accepts this.
-  If a support case surfaces customer-perceived-wrong behaviour on
-  the autumn DST weekend, we revisit.
+R-15 closes cleanly with no new open questions. All items below
+are unchanged from the R-13/14 handoff:
+
+- **R-16 — frontend code splitting** — standalone session, next.
+- **R-9 / R-8 manual QA** — developer-driven; carry-over.
+- **Orphan-logo cleanup** — the R-15 logo-removal fix only applies
+  to post-fix remove actions. A background job to prune orphaned
+  files from prior remove actions is out of scope (plan §2.4,
+  deferred in §10.4).
+- **Profile + onboarding logo upload deduplication** — the two
+  `uploadLogo` methods are near-duplicates. Deferred (plan §10.4).
+- **Per-business invite-lifetime override** — global 48h today;
+  `EXPIRY_HOURS` constant is the seam (PLAN §10.1).
+- **Real `/dashboard/settings/notifications` page** — no current
+  product driver.
+- **Per-business email branding** (DKIM "send from your domain") —
+  post-launch (D-075 §10.3).
+- **Mail rendering smoke-test in CI** — post-MVP (plan §10.3).
+- **Failure observability for after-response dispatch** — post-MVP
+  (plan §10.3).
+- **Customer email verification flow** — customer registration
+  auto-verifies; real verify-email-then-login flow is post-MVP
+  (plan §10.2).
+- **Customer profile page** — post-MVP.
+- **Scheduler-lag alerting** — carry-over.
+- **`X-RateLimit-Remaining` / `Retry-After` headers on auth-recovery
+  throttle** — carry-over.
+- **SMS / WhatsApp reminder channel** — SPEC §9 post-MVP.
 - **Browser-test infrastructure** (Pest Browser, Playwright) —
-  carry-over from R-7 / R-8 / R-9.
-- **Popup widget i18n** — carried over from R-9.
-- **`docs/ARCHITECTURE-SUMMARY.md` stale terminology** — carry-over
-  from R-5/R-6.
-- **Real-concurrency smoke test** — carried over from R-4B.
-- **Availability-exception race** — carried over from R-4B.
-- **Parallel test execution** (`paratest`) — carried over from R-4A.
+  carry-over.
+- **Popup widget i18n** — carry-over.
+- **`docs/ARCHITECTURE-SUMMARY.md` stale terminology** — carry-over.
+- **Real-concurrency smoke test** — carry-over.
+- **Availability-exception race** — carry-over.
+- **Parallel test execution** (`paratest`) — carry-over.
 - **Multi-business join flow + business-switcher UI (R-2B)** — still
   deferred.
 - **Dashboard-level "unstaffed service" warning** — still deferred.
+- **Slug-alias history** — ROADMAP-REVIEW carry-over.
+- **Booking-flow state persistence** — ROADMAP-REVIEW carry-over.

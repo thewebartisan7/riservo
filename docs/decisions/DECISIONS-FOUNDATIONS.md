@@ -139,3 +139,48 @@ This file contains live cross-cutting architectural decisions about platform def
     supports Postgres natively whenever it is adopted.
 - **Supersedes**: none. D-009 and D-025 remain accepted; their consequences
   are extended in this decision rather than replaced.
+
+---
+
+### D-076 — Canonical storage URL helper is `Storage::disk('public')->url(...)`
+- **Date**: 2026-04-16
+- **Status**: accepted
+- **Context**: Pre-R-15, controllers split 10/5 between
+  `Storage::disk('public')->url($path)` (settings, onboarding,
+  dashboard-shell layer) and `asset('storage/'.$path)` (booking +
+  calendar layer). Both helpers produce the same URL on a default
+  Laravel install with the public symlink in place, so the drift
+  was invisible in local dev and CI. Per D-009 + D-065, production
+  uses Laravel Cloud's managed object storage — not a public-symlink
+  layout. `asset('storage/...')` would generate a wrong URL there;
+  `Storage::disk('public')->url(...)` consults the disk config and
+  returns the correct CDN/S3 URL. REVIEW-1 §#16 surfaced the drift;
+  R-15 requires a single canonical helper across all controllers.
+- **Decision**: All controllers and Inertia prop-builders use
+  `Storage::disk('public')->url($path)` for any URL pointing to a
+  user-uploaded file (logos, avatars). The `asset('storage/...')`
+  pattern is removed from the codebase. Future contributors writing
+  new controllers default to the canonical helper.
+- **Consequences**:
+  - On Laravel Cloud, file URLs resolve through the configured object-
+    storage driver without code changes — the `Storage` facade
+    abstraction is exactly what D-009 was set up to enable.
+  - 5 call sites migrated:
+    - `app/Http/Controllers/Dashboard/BookingController.php:126`
+    - `app/Http/Controllers/Dashboard/CalendarController.php:93, 107`
+    - `app/Http/Controllers/Booking/PublicBookingController.php:70, 118`
+  - 10 call sites already canonical — unchanged.
+  - No migration of previously-uploaded files needed; the helper
+    only changes URL generation, not file paths.
+  - Pre-launch test pass exercises every URL via the regression suite
+    (logo upload + render in onboarding step-1, profile, welcome,
+    public booking page; avatar render in calendar, manual booking,
+    staff list).
+- **Rejected alternative**:
+  - *`asset('storage/...')` everywhere* — would require keeping the
+    public symlink alive on Laravel Cloud, which contradicts the
+    object-storage migration path D-065 set up. Net regression on
+    deploy-time flexibility.
+  - *Per-feature freedom* — leave both helpers in use, document
+    which to use when. Adds rule-following overhead for a one-line
+    convention; no upside.

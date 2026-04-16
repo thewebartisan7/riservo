@@ -16,13 +16,13 @@ Start here before reading any other project documentation. This file is the sour
 - `docs/DEPLOYMENT.md` — required for deployment, queue, mail, cron, or environment work
 - `docs/BACKLOG.md` — unscheduled UI follow-up, UX ideas, and technical debt notes
 - `docs/plans/` — active implementation plans and current planning artifacts
-- `docs/reviews/REVIEW-1.md` — detailed review findings after Sessions 1–11
-- `docs/reviews/ROADMAP-REVIEW.md` — remediation roadmap derived from REVIEW-1
+- `docs/reviews/` — active review round only (empty between rounds); past rounds live under `docs/archive/reviews/`
 - `docs/roadmaps/` — secondary or future-oriented roadmap documents
 
 ## Archive / Reference
 
 - `docs/archive/plans/` — completed implementation plans kept for history and rationale
+- `docs/archive/reviews/` — closed review rounds and their remediation roadmaps (e.g., `REVIEW-1.md`, `ROADMAP-REVIEW-1.md`)
 - `docs/design/ui.pen` — design asset reference
 - `docs/decisions/DECISIONS-HISTORY.md` — superseded or resolved decision history
 
@@ -31,4 +31,4 @@ Start here before reading any other project documentation. This file is the sour
 - Record new architectural decisions in the appropriate topical file linked from `docs/DECISIONS.md`.
 - Put new active implementation plans in `docs/plans/`.
 - Move completed implementation plans into `docs/archive/plans/` once they are no longer part of the current working set.
-- Keep review remediation plans in `docs/reviews/`.
+- Keep the active review round in `docs/reviews/`; move closed rounds to `docs/archive/reviews/`, numbering the roadmap file on archive (`ROADMAP-REVIEW-{N}.md`).

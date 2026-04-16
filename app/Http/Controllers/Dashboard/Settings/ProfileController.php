@@ -28,7 +28,9 @@ class ProfileController extends Controller
     public function update(UpdateProfileRequest $request): RedirectResponse
     {
         $business = tenant()->business();
-        $business->update($request->validated());
+        $data = $request->validated();
+        $business->removeLogoIfCleared($data);
+        $business->update($data);
 
         return redirect()->route('settings.profile')->with('success', __('Business profile updated.'));
     }

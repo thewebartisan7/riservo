@@ -35,6 +35,8 @@ class InvitationNotification extends Notification
                 'role' => $this->invitation->role->value,
             ]))
             ->action(__('Accept invitation'), $url)
-            ->line(__('This invitation expires in 48 hours.'));
+            ->line(__('This invitation expires in :hours hours.', [
+                'hours' => BusinessInvitation::EXPIRY_HOURS,
+            ]));
     }
 }

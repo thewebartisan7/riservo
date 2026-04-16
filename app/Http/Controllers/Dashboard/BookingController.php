@@ -25,6 +25,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -123,7 +124,7 @@ class BookingController extends Controller
                     'id' => $booking->provider->id,
                     'name' => $booking->provider->user?->name ?? '',
                     'avatar_url' => $booking->provider->user?->avatar
-                        ? asset('storage/'.$booking->provider->user->avatar)
+                        ? Storage::disk('public')->url($booking->provider->user->avatar)
                         : null,
                     'is_active' => ! $booking->provider->trashed(),
                 ],

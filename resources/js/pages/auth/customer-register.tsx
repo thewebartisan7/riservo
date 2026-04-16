@@ -17,7 +17,7 @@ export default function CustomerRegister() {
                 <CardHeader>
                     <CardTitle>{t('Create customer account')}</CardTitle>
                     <CardDescription>
-                        {t('Register with the email you used when booking to manage all your appointments.')}
+                        {t('Create an account to manage all your appointments in one place.')}
                     </CardDescription>
                 </CardHeader>
                 <Form action={store()}>
