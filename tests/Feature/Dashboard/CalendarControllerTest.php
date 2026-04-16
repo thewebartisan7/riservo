@@ -206,6 +206,33 @@ test('invalid view parameter falls back to week', function () {
         ->assertInertia(fn ($page) => $page->where('view', 'week'));
 });
 
+test('week view exposes bookings prop usable for the mobile agenda fallback', function () {
+    $booking = Booking::factory()->confirmed()->create([
+        'business_id' => $this->business->id,
+        'provider_id' => $this->provider->id,
+        'service_id' => $this->service->id,
+        'customer_id' => $this->customer->id,
+        'starts_at' => CarbonImmutable::parse('2026-04-16 09:00', 'Europe/Zurich')->utc(),
+        'ends_at' => CarbonImmutable::parse('2026-04-16 10:00', 'Europe/Zurich')->utc(),
+    ]);
+
+    $this->actingAs($this->admin)
+        ->get('/dashboard/calendar?view=week&date=2026-04-15')
+        ->assertOk()
+        ->assertInertia(fn ($page) => $page
+            ->component('dashboard/calendar')
+            ->where('view', 'week')
+            ->has('bookings', 1)
+            ->where('bookings.0.id', $booking->id)
+            ->has('bookings.0.starts_at')
+            ->has('bookings.0.ends_at')
+            ->has('bookings.0.service.name')
+            ->has('bookings.0.customer.name')
+            ->has('bookings.0.provider.id')
+            ->has('timezone')
+        );
+});
+
 test('calendar renders bookings for a deactivated provider with is_active=false', function () {
     $staff = User::factory()->create(['name' => 'Trashed Staff']);
     $provider = attachProvider($this->business, $staff);

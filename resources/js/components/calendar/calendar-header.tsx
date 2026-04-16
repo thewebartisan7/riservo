@@ -156,18 +156,16 @@ export function CalendarHeader({ view, date, isAdmin, onNewBooking }: CalendarHe
                     {t('Today')}
                 </Button>
 
-                <div className="hidden md:block">
-                    <Select value={view} onValueChange={changeView}>
-                        <SelectTrigger className="w-[130px]">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectPopup>
-                            <SelectItem value="day">{t('Day view')}</SelectItem>
-                            <SelectItem value="week">{t('Week view')}</SelectItem>
-                            <SelectItem value="month">{t('Month view')}</SelectItem>
-                        </SelectPopup>
-                    </Select>
-                </div>
+                <Select value={view} onValueChange={changeView}>
+                    <SelectTrigger className="w-[110px] sm:w-[130px]">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectPopup>
+                        <SelectItem value="day">{t('Day view')}</SelectItem>
+                        <SelectItem value="week">{t('Week view')}</SelectItem>
+                        <SelectItem value="month">{t('Month view')}</SelectItem>
+                    </SelectPopup>
+                </Select>
 
                 {isAdmin && (
                     <Button onClick={onNewBooking} className="hidden md:inline-flex">

@@ -2,6 +2,8 @@ import { Fragment, useEffect, useRef } from 'react';
 import { parseISO, startOfWeek, addDays, format, isToday } from 'date-fns';
 import type { DashboardBooking } from '@/types';
 import type { ProviderColor } from '@/lib/calendar-colors';
+import { formatTimeShort } from '@/lib/datetime-format';
+import { useTrans } from '@/hooks/use-trans';
 import {
     CalendarEvent,
     getBookingGridPosition,
@@ -36,6 +38,7 @@ function formatHourLabel(hour: number): string {
 }
 
 export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }: WeekViewProps) {
+    const { t } = useTrans();
     const containerRef = useRef<HTMLDivElement>(null);
     const parsedDate = parseISO(date);
     const weekStart = startOfWeek(parsedDate, { weekStartsOn: 1 });
@@ -119,8 +122,76 @@ export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }:
                     </div>
                 </div>
 
+                {/* Mobile agenda list (under sm) */}
+                <ol className="flex flex-col divide-y divide-border/60 px-5 pb-6 sm:hidden">
+                    {weekDays.map((day) => {
+                        const dayKey = format(day, 'yyyy-MM-dd');
+                        const dayBookings = bookingsByDay.get(dayKey) ?? [];
+                        return (
+                            <li key={dayKey} className="flex flex-col gap-2 py-4">
+                                <div className="flex items-center gap-2">
+                                    <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                                        {format(day, 'EEEE, MMM d')}
+                                    </p>
+                                    {isToday(day) && (
+                                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-primary">
+                                            {t('Today')}
+                                        </span>
+                                    )}
+                                </div>
+                                {dayBookings.length > 0 ? (
+                                    <ul className="flex flex-col gap-1">
+                                        {dayBookings
+                                            .slice()
+                                            .sort(
+                                                (a, b) =>
+                                                    new Date(a.starts_at).getTime() -
+                                                    new Date(b.starts_at).getTime(),
+                                            )
+                                            .map((booking) => {
+                                                const color = colorMap.get(booking.provider.id) ?? DEFAULT_COLOR;
+                                                const startTime = formatTimeShort(booking.starts_at, timezone);
+                                                const endTime = formatTimeShort(booking.ends_at, timezone);
+                                                return (
+                                                    <li key={booking.id}>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => onBookingClick(booking)}
+                                                            className="group flex w-full items-center gap-3 rounded-lg border border-border/60 bg-background px-3 py-2 text-left transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                                        >
+                                                            <span
+                                                                aria-hidden="true"
+                                                                className={`size-2 shrink-0 rounded-full ${color.dot}`}
+                                                            />
+                                                            <div className="flex min-w-0 flex-1 flex-col">
+                                                                <p className="truncate text-sm font-semibold text-foreground">
+                                                                    {booking.service.name}
+                                                                </p>
+                                                                <p className="truncate text-xs text-muted-foreground">
+                                                                    {booking.customer.name}
+                                                                </p>
+                                                            </div>
+                                                            <time
+                                                                dateTime={booking.starts_at}
+                                                                className="shrink-0 text-xs font-medium tabular-nums text-muted-foreground"
+                                                            >
+                                                                {startTime}–{endTime}
+                                                            </time>
+                                                        </button>
+                                                    </li>
+                                                );
+                                            })}
+                                    </ul>
+                                ) : (
+                                    <p className="text-xs text-muted-foreground">{t('No bookings')}</p>
+                                )}
+                            </li>
+                        );
+                    })}
+                </ol>
+
                 {/* Time grid */}
-                <div className="flex flex-auto">
+                <div className="hidden flex-auto sm:flex">
                     <div className="sticky left-0 z-10 w-14 flex-none border-r border-border/60 bg-background" />
                     <div className="grid flex-auto grid-cols-1 grid-rows-1">
                         {/* Hour lines */}

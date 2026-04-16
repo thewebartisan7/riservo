@@ -1,196 +1,239 @@
 # Handoff
 
-**Session**: R-7 — Server-side enforcement of `allow_provider_choice`
+**Session**: R-8 — Calendar mobile improvements
 **Date**: 2026-04-16
-**Status**: Complete
+**Status**: Code complete; developer-driven browser QA pending
 
 ---
 
 ## What Was Built
 
-R-7 closed the server-side enforcement gap for the `allow_provider_choice`
-business setting. Before this session, the setting was respected by the
-multi-step React flow but not by any of the four server surfaces that
-know about `provider_id` (`PublicBookingController::providers`,
-`availableDates`, `slots`, `store`). A crafted POST could target a
-specific provider even when the business had disabled provider choice; a
-preselected-service URL dropped the customer onto the provider picker
-regardless of the setting. The setting was effectively a client-side
-suggestion.
+R-8 closed the remaining mobile-UX gaps in the dashboard calendar.
+Before this session, a phone admin landing on `/dashboard/calendar`
+dropped onto week view (D-058 default) and saw an empty time grid with
+no way out: each booking `<li>` in week view carried `hidden sm:flex`
+(`week-view.tsx:179`), the 7-column grid collapses to 1 column below
+`sm`, and the view-switcher `<Select>` was wrapped in
+`hidden md:block` (`calendar-header.tsx:159`). Two findings; one
+decision; one new prop-contract test.
 
-D-068 is the new architectural decision recorded in
-`docs/decisions/DECISIONS-BOOKING-AVAILABILITY.md`. It establishes the
-"gate in controller, silent ignore, empty-list for GET" pattern for
-future business-setting enforcements.
+The third issue from REVIEW-1 §#8 — the nested `<li>` hydration
+warning between `WeekView` and `CurrentTimeIndicator` — was **already
+fixed in commit `191c029`** (R-1A, 2026-04-16). R-8's pre-audit
+verified the fix is still in place: `CurrentTimeIndicator` renders as
+a sibling of the booking `<li>`s inside the outer `<ol>`, not a child.
+R-8 inherits this fix without reopening it.
 
-### Backend — one helper, four surgical method changes
+D-069 is the new architectural decision recorded in
+`docs/decisions/DECISIONS-FRONTEND-UI.md`. It codifies the
+mobile-calendar policy: agenda-list fallback for week view below 640 px,
+view switcher always visible, URL semantics unchanged.
 
-`app/Http/Controllers/Booking/PublicBookingController.php`:
+### Frontend — two surgical component edits
 
-- New private helper `resolveProviderIfChoiceAllowed(Business, ?int): ?Provider`
-  centralises the single expression used across the three availability /
-  store methods. Returns `null` when the setting is off or no
-  `provider_id` was supplied; otherwise looks the provider up via
-  `$business->providers()->where('id', ...)->firstOrFail()`.
-- `providers()` — short-circuits with `200 { providers: [] }` before the
-  service lookup when the setting is off.
-- `availableDates()` — replaced the inline `$request->filled(...)
-  ? firstOrFail() : null` with a helper call; submitted `provider_id` is
-  silently ignored when the setting is off (falls through to "any
-  provider").
-- `slots()` — same treatment as `availableDates()`.
-- `store()` — replaced the inline block with a helper call and retained
-  the service-membership re-check as a second guard. The existing 409
-  for "provider exists in the business but is not attached to the
-  service" is preserved; when the setting is off the 409 branch is
-  unreachable because the helper returns null.
+`resources/js/components/calendar/calendar-header.tsx`:
 
-`StorePublicBookingRequest` is unchanged: it still validates that
-`provider_id` (when non-null) names a real provider in the business, so
-a crafted ID still returns a 422 from the Form Request regardless of the
-setting. The policy gate lives in the controller by design — see D-068
-for the rationale (three GET endpoints have no Form Request; the Form
-Request should not couple to a business-model read).
+- Unwrapped the view-switcher `<Select>` — removed the
+  `<div className="hidden md:block">` parent so the switcher renders at
+  every viewport width.
+- Trigger width is now `w-[110px] sm:w-[130px]` — a touch narrower on
+  mobile to keep the header row from overflowing on 320 px viewports.
+- No prop or handler changes; `changeView` is untouched.
 
-### Frontend — one-line step-init fix
+`resources/js/components/calendar/week-view.tsx`:
 
-`resources/js/pages/booking/show.tsx:36` — the `useState` initial value
-now honours `business.allow_provider_choice`:
+- Added two imports: `useTrans` from `@/hooks/use-trans`,
+  `formatTimeShort` from `@/lib/datetime-format`.
+- Inserted a new mobile agenda `<ol className="... sm:hidden">` above
+  the existing time-grid container. It iterates `weekDays`, pulls from
+  the already-built `bookingsByDay` map, sorts each day's bookings by
+  `starts_at`, and renders a tappable card per booking
+  (service + customer + start–end time + provider-color dot). Empty
+  days show `{t('No bookings')}`. Today's row gets a
+  `{t('Today')}` badge. Each card calls the existing
+  `onBookingClick(booking)` handler — same `BookingDetailSheet` as
+  desktop.
+- The time-grid container at former line 123 changed from
+  `<div className="flex flex-auto">` to
+  `<div className="hidden flex-auto sm:flex">` — hidden below 640 px,
+  unchanged at `sm+`.
+- The mobile day strip at the top of `WeekView` (lines 70-94) is
+  preserved. It gives phone users week context above the agenda.
+- The `useEffect` that auto-scrolls the desktop grid to 7 AM is
+  untouched; it's a no-op when the grid is hidden and has no effect on
+  the agenda.
 
-```tsx
-const [step, setStep] = useState<BookingStep>(
-    preSelectedService
-        ? (business.allow_provider_choice ? 'provider' : 'datetime')
-        : 'service',
-);
-```
+### Decision D-069
 
-All other step transitions (`handleServiceSelect`, `goBack`,
-`totalSteps`, `stepOrder`) already respected the setting; this was the
-one escaped branch.
+Appended to `docs/decisions/DECISIONS-FRONTEND-UI.md`. Codifies:
 
-### New test coverage (+6 tests)
+1. Mobile week view (< 640 px) renders an agenda list; time grid
+   renders at `sm+`.
+2. The view switcher is always visible (drops the `hidden md:block`
+   wrapper; trigger width becomes `w-[110px] sm:w-[130px]`).
+3. D-058 (week is the default view) is preserved — the URL
+   `?view=week` is never rewritten based on viewport.
+4. Day view and month view are unchanged; audit confirmed they already
+   have working mobile patterns.
+5. The mobile "New booking" CTA is deferred to BACKLOG ("mobile
+   calendar primary CTA").
 
-Policy enforcement on the four server surfaces:
+Rejected alternatives documented in D-069: auto-redirect to day view,
+compact 7-column cards, swipe gestures, hide week view on mobile,
+horizontal-scroll grid. Each with a one-line rationale.
 
-- `tests/Feature/Booking/ProvidersApiTest.php` —
-  `returns empty list when allow_provider_choice is false`.
-- `tests/Feature/Booking/AvailableDatesApiTest.php` —
-  `ignores provider_id when allow_provider_choice is false`. Two
-  providers; A has Monday availability, B has none. Request with
-  `provider_id = B` returns A's dates (proving the ID was ignored).
-  Cross-checked against a control request without `provider_id`.
-- `tests/Feature/Booking/SlotsApiTest.php` —
-  `ignores provider_id when allow_provider_choice is false`. Same shape
-  as above, for `slots()`.
-- `tests/Feature/Booking/BookingCreationTest.php` —
-  `ignores provider_id when allow_provider_choice is false and
-  auto-assigns`. Submits `provider_id = B` when only A has Monday
-  availability; asserts `booking.provider_id === A.id`.
-- `tests/Feature/Booking/BookingCreationTest.php` —
-  `honours provider_id when allow_provider_choice is true`. Regression
-  pin for the helper refactor: submits `provider_id = B` when both A
-  and B have Monday availability and the setting is on; asserts the
-  booking lands on B.
+### New test coverage (+1 test)
 
-Backend Inertia prop contract the React step-init depends on:
+`tests/Feature/Dashboard/CalendarControllerTest.php`:
 
-- `tests/Feature/Booking/PublicBookingPageTest.php` —
-  `preselected service page exposes allow_provider_choice = false when
-  setting is off`. Locks the page props contract; the React ternary on
-  line 36 is a trivial derivation from these props.
+- `week view exposes bookings prop usable for the mobile agenda
+  fallback` — locks the Inertia-prop contract that the new agenda list
+  reads: `bookings.0.id`, `starts_at`, `ends_at`, `service.name`,
+  `customer.name`, `provider.id`, and `timezone`. This is the
+  strongest assertion the current test infra supports (the project
+  has no Pest Browser / Playwright setup); it firewalls the agenda
+  rendering against silent prop renames.
 
 ---
 
 ## Current Project State
 
-- **Backend**: the four public-booking surfaces that know about
-  `provider_id` now gate on `$business->allow_provider_choice`. The
-  single helper is the authoritative expression; future additions (a
-  new availability endpoint, a new write path) should route through it.
-- **Frontend**: the step-init fix means the honest customer flow skips
-  the provider step when the setting is off — the 4-step flow
-  (service → datetime → details → summary → confirmation) is used when
-  both the setting is off and a service was preselected via URL.
+- **Frontend**: the dashboard calendar renders an agenda list on phones
+  (< 640 px) for week view, and the day/week/month switcher is reachable
+  from every viewport. Day view, month view, provider filter, and the
+  booking detail sheet are unchanged.
+- **Backend**: no changes. The `CalendarController` prop shape is
+  identical — R-8 is purely a frontend-responsive-rendering pass.
 - **Routes**: no changes.
-- **Tests**: full Pest suite green on Postgres — **467 passed, 1835
-  assertions**. +6 from the R-5/R-6 baseline of 461.
-- **Decisions**: D-068 appended to
-  `docs/decisions/DECISIONS-BOOKING-AVAILABILITY.md`.
+- **Tests**: full Pest suite green on Postgres — **468 passed, 1855
+  assertions**. +1 from the R-7 baseline of 467.
+- **Decisions**: D-069 appended to
+  `docs/decisions/DECISIONS-FRONTEND-UI.md`. Covers mobile-calendar
+  policy.
 - **Migrations**: none.
-- **i18n**: no new keys. The existing `"Selected provider is not
-  available for this service."` copy is reused for the retained 409
-  branch.
+- **i18n**: two reused string keys (`Today`, `No bookings`). Both
+  already exist in `lang/en.json` — no new keys added.
 
 ---
 
 ## How to Verify Locally
 
 ```bash
-php artisan migrate:fresh --seed
 php artisan test --compact
+vendor/bin/pint --dirty --format agent
 npm run build
 ```
 
-Manual smoke:
+All three are green: **468 passed**, `{"result":"pass"}`, clean Vite
+build in under 1 s (modules transformed: 3672; no new TypeScript
+errors, no new warnings beyond the pre-existing 500 kB chunk-size
+notice).
 
-1. As admin, visit `/dashboard/settings/booking`, set **Allow customer
-   to choose collaborator = OFF**, save.
-2. In a fresh incognito window, visit `/{slug}/{service-slug}`
-   (preselected-service URL). The flow should open on the date-time
-   picker, not the provider picker; the step indicator should show the
-   4-step sequence.
-3. Complete a booking through the flow. The booking is created, the
-   customer receives confirmation, and the provider is auto-assigned
-   via `first_available`.
-4. Open DevTools Network tab: `GET /booking/{slug}/providers?service_id=...`
-   is not fired (the step was skipped). Hit the URL directly in a new
-   tab: `{ providers: [] }`.
-5. Manually POST to `/booking/{slug}/book` with `provider_id` set to a
-   valid provider via DevTools console or curl. The booking is created,
-   but the `provider_id` is the auto-assigned one (visible in
-   `/dashboard/bookings` or the DB).
-6. Toggle the setting back ON. Repeat step 2. The flow now opens on the
-   provider picker. Happy path still works end-to-end.
+### Manual QA (developer-driven; not yet performed)
+
+The agent could not drive a browser interactively to complete the
+manual-QA checklist below. Code-level verification (tests, Pint,
+build) is complete, but for a frontend-responsive change the primary
+verification is visual. Please run through the following in Chrome
+DevTools device emulator at 375 px, 768 px, and 1280 px (and a real
+phone if available). The URL is `http://riservo-app.test/dashboard/calendar`.
+
+1. **Default landing on mobile (375 px).** Visit `/dashboard/calendar`
+   as admin. Expected: week view renders the 7-day strip at top, then
+   an agenda list grouped by day with date headers. Days with no
+   bookings show "No bookings". Today's row shows a "Today" badge.
+   The view switcher in the header reads "Week view".
+2. **Switch view on mobile.** Tap the switcher → "Day view".
+   Expected: navigates to `?view=day&date=...`; day view renders
+   correctly (mobile day strip + single-column time grid). Switch
+   back to week → agenda. Switch to month → existing mobile month
+   grid.
+3. **Tap a booking on mobile.** From the week-view agenda, tap a
+   booking card. Expected: `BookingDetailSheet` opens. Close, tap
+   another.
+4. **Empty week on mobile.** Navigate to a week with no bookings
+   (e.g., `?view=week&date=2030-01-01`). Expected: 7 day rows, each
+   with "No bookings".
+5. **Tablet (768 px).** Expected: time grid back; switcher still
+   visible at `w-[130px]`; events render in 7-column layout normally.
+6. **Desktop (1280 px).** Expected: identical to pre-R-8.
+7. **Hydration console check.** Open DevTools Console on the
+   mobile-emulated week view; refresh. Expected: no
+   `<li> cannot be a descendant of <li>` warning; no other calendar
+   hydration warnings. (The hydration fix itself landed in
+   `191c029`; this is a regression check.)
+8. **ProviderFilter mobile.** Admin with multiple providers: chips
+   wrap; toggling chips filters the agenda (shares the same
+   `filteredBookings` source as the time grid).
+9. **Today indicator.** On desktop week view, confirm the honey-tinted
+   current-time line still renders on today's column (regression
+   check for the R-1A fix).
+10. **Back button on mobile.** From agenda → day view → browser back.
+    Expected: returns to week view (agenda); URL is
+    `?view=week&date=...`. No JS-driven rewriting.
+
+If any check reveals an issue covered by plan §8 (Risks), apply the
+documented mitigation (already enumerated in the archived plan). If
+something surfaces that the plan did not anticipate, treat it as a
+fresh finding rather than scope-creeping R-8.
 
 ---
 
 ## What the Next Session Needs to Know
 
-R-7 is complete. The remediation roadmap moves on to R-8, R-9, or R-10
-— the developer picks based on priority. None depends on R-7.
+R-8 code is complete. Developer-driven manual QA is the one remaining
+verification step; it gates closure. The remediation roadmap moves on
+to R-9 or R-10 — the developer picks.
 
-- **R-8 — Calendar hydration + mobile view switcher.** Medium priority.
-  Files: `resources/js/components/calendar/week-view.tsx`,
-  `current-time-indicator.tsx`, `calendar-header.tsx`, `day-view.tsx`,
-  `month-view.tsx`, `calendar-event.tsx`. Priority: fix the confirmed
-  hydration warning first; mobile view switcher second.
 - **R-9 — Popup embed service prefilter + modal robustness.** Medium
   priority. Files: `public/embed.js`,
-  `resources/js/pages/dashboard/settings/embed.tsx`. Priority: canonical
-  service-prefilter contract (needs a decision) → per-service popup
-  snippet → focus trap / scroll lock / duplicate-overlay guard.
-- **R-10** — next in the remediation roadmap; consult
-  `docs/reviews/ROADMAP-REVIEW.md` for the latest scope.
+  `resources/js/pages/dashboard/settings/embed.tsx`,
+  `resources/js/components/settings/embed-snippet.tsx`. R-9's
+  non-trivial decision is the canonical service-prefilter contract —
+  SPEC documents `?embed=1&service=taglio-capelli` but the iframe uses
+  the path form `/{slug}/{service-slug}?embed=1`. This decision
+  deserves its own planning session (reason R-8 was not bundled with
+  R-9 — see §1.3 of the archived R-8 plan).
+- **R-10 — Reminder DST + delayed-run resilience.** Medium priority.
+  Independent of R-8 and R-9.
 
-When adding new public-booking code that touches `provider_id`:
+When adding new mobile calendar code:
 
-- Go through `PublicBookingController::resolveProviderIfChoiceAllowed`
-  (or D-068's pattern if you're outside this controller).
-- Do not re-add the setting check in `StorePublicBookingRequest` — the
-  gate is the controller's responsibility; the Form Request stays as a
-  pure existence-and-tenant-scope validator.
-- Manual booking (`Dashboard\BookingController::store`) is explicitly
-  out of scope for this setting per SPEC §7.6 / D-051. Staff always
-  pick the provider (or auto-assign) for manual bookings; the customer
-  setting does not apply.
+- Respect the agenda-vs-grid split at `sm` (D-069). Don't hide
+  bookings below `sm` in the time grid without also extending the
+  mobile agenda.
+- The mobile "New booking" CTA is a BACKLOG item, not blocked by a
+  missing decision. If added, likely a FAB anchored bottom-right that
+  opens `ManualBookingDialog`.
+- If a future session introduces gesture infra (e.g., `@use-gesture`),
+  D-069's agenda choice can be superseded by a new decision (swipe-
+  driven mobile week view). D-069 was chosen on scope grounds, not
+  design grounds — the path to swipe remains open.
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **R-8 — Calendar hydration + mobile view switcher** — next candidate
-  in the remediation roadmap.
+- **R-8 manual QA.** The 10-item checklist above needs to run in a
+  real browser / DevTools emulator. Code-level verification is green;
+  visual verification is the one remaining gate.
+- **Browser-test infrastructure** (Pest Browser plugin, Playwright).
+  R-8 could have added a browser test for the mobile agenda; the plan
+  deliberately deferred this because introducing browser-test infra is
+  itself a non-trivial session. Flagged as a cross-cutting open
+  question.
+- **Mobile "New booking" CTA on calendar header.** Captured as BACKLOG
+  ("mobile calendar primary CTA"). Not blocking — admins create
+  bookings on desktop today.
+- **Tap-on-day in mobile week-view day strip → switch to that day's
+  day view.** Small extension noted in the archived plan §3.4; could
+  ship in a future calendar polish pass.
+- **Auto-scroll-to-7-AM on mobile `date` change.** Risks 8.3/8.4 in
+  the archived plan flagged this. On mobile the grid is hidden, so
+  the `scrollTop = hourHeight * 7` effect lands on the agenda-holding
+  outer container. If manual QA reveals an annoying jump-scroll when
+  navigating weeks, gate the effect behind
+  `window.matchMedia('(min-width: 640px)').matches`.
 - **R-9 — Popup embed service prefilter + modal robustness** — next
   candidate in the remediation roadmap.
 - **R-10 and beyond** — consult `docs/reviews/ROADMAP-REVIEW.md`.
