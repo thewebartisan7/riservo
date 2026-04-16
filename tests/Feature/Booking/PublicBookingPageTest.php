@@ -1,5 +1,7 @@
 <?php
 
+use App\Enums\DayOfWeek;
+use App\Models\AvailabilityRule;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\Service;
@@ -15,6 +17,15 @@ function createStaffedService(Business $business, array $attrs = []): Service
     $staff = User::factory()->create();
     $provider = attachProvider($business, $staff);
     $provider->services()->attach($service->id);
+    // D-078: a service is only structurally bookable when its provider holds
+    // at least one availability rule — otherwise the public page hides it.
+    AvailabilityRule::factory()->create([
+        'provider_id' => $provider->id,
+        'business_id' => $business->id,
+        'day_of_week' => DayOfWeek::Monday->value,
+        'start_time' => '09:00',
+        'end_time' => '17:00',
+    ]);
 
     return $service;
 }
@@ -90,6 +101,13 @@ test('service disappears when its last provider is soft-deleted', function () {
     $staff = User::factory()->create();
     $provider = attachProvider($business, $staff);
     $provider->services()->attach($service->id);
+    AvailabilityRule::factory()->create([
+        'provider_id' => $provider->id,
+        'business_id' => $business->id,
+        'day_of_week' => DayOfWeek::Monday->value,
+        'start_time' => '09:00',
+        'end_time' => '17:00',
+    ]);
 
     $this->get('/'.$business->slug)
         ->assertInertia(fn ($page) => $page->has('services', 1));

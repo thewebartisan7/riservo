@@ -147,8 +147,7 @@ class AccountController extends Controller
 
         if ($fresh && $fresh->trashed()) {
             $unstaffed = $business->services()
-                ->where('is_active', true)
-                ->whereDoesntHave('providers')
+                ->structurallyUnbookable()
                 ->count();
 
             if ($unstaffed > 0) {

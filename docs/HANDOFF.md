@@ -1,225 +1,202 @@
 # Handoff
 
-**Session**: E2E-0 — Infrastructure & Tooling Setup
+**Session**: R-19 — Existing-user invitation flow + `business_members` schema drift (Round 2, Session C of 3 — final)
 **Date**: 2026-04-16
-**Status**: Infrastructure complete; Unit+Feature suite green (481 passed) and the single Browser smoke test green (1 passed). No application code changed.
+**Status**: Code complete; full Pest suite green (518 passed / 2248 assertions); Pint clean; `npm run build` green; R-19 closed and **Review Round 2 fully closed** in `docs/archive/reviews/ROADMAP-REVIEW-2.md`.
+
+---
+
+## Review Round 2 — CLOSED
+
+All three sessions complete:
+
+- **R-17** — Bookability enforcement (closed 2026-04-16, D-078).
+- **R-18** — Slot generator reads snapped buffers (closed 2026-04-16, no new decision).
+- **R-19** — Existing-user invitation + `business_members` schema drift (closed this session, D-079).
+
+Round 2 archived to `docs/archive/reviews/`:
+
+- `docs/archive/reviews/REVIEW-2.md`
+- `docs/archive/reviews/ROADMAP-REVIEW-2.md`
+
+`docs/reviews/` is empty again, per `docs/reviews/CLAUDE.md`.
 
 ---
 
 ## What Was Built
 
-Session E2E-0 lays the groundwork for browser testing under
-`docs/roadmaps/ROADMAP-E2E.md`. It installs tooling, configures the Pest
-harness, scaffolds the test tree, fully implements two shared helpers, stubs
-the other two, and adds a CI job. Plan file:
-`docs/plans/PLAN-E2E-0.md` (moved to `docs/archive/plans/` on close).
+Session closes REVIEW-2 **MEDIUM-1** (invitation flow must branch on existing-user) and **INFO-1** (`business_members` uniqueness shape drift vs. D-061). One new decision — **D-079** — covers both items together in `docs/decisions/DECISIONS-AUTH.md`.
 
-### Tooling installed
+Plan: `docs/plans/PLAN-R-19-INVITE-AND-SCHEMA.md`, moved to `docs/archive/plans/` at session close.
 
-- `pestphp/pest-plugin-browser` `^4.3` (dev).
-- `playwright@1.59` (prod-scoped in `package.json` to stay alongside Vite).
-- Chromium downloaded to `~/Library/Caches/ms-playwright/` via
-  `npx playwright install --with-deps chromium`. CI installs on demand.
+### R-19A — Existing-user invitation flow
 
-### Harness configuration
+`InvitationController::accept()` now branches on `User::where('email', $invitation->email)->exists()`:
 
-- `phpunit.xml` now declares three testsuites: `Unit`, `Feature`, `Browser`.
-  The `Browser` testsuite points at `tests/Browser/` and reuses the existing
-  testing `<php>` env block (Postgres `riservo_ch_testing`,
-  `QUEUE_CONNECTION=sync`, `MAIL_MAILER=array`, `CACHE_STORE=array`,
-  `SESSION_DRIVER=array`).
-- `tests/Pest.php` binds `RefreshDatabase` to both `Feature` and `Browser`,
-  and sets Pest's browser timeout to 10 seconds.
-- `.gitignore` adds `tests/Browser/Screenshots/` and `tests/Browser/Traces/`.
+- **New-user branch** (`acceptAsNewUser`): unchanged contract — create the user, mark email verified, attach membership via the new helper, create a provider row, attach services, `Auth::login()`, pin session.
+- **Existing-user branch** (`acceptAsExistingUser`): no `User::create()`; no mutation of `name`, `password`, or `email_verified_at`. Three acceptance states handled:
+  - **No session** — `AcceptInvitationRequest` requires only `password`; controller calls `Auth::attempt(['email' => $invitation->email, 'password' => ...])`; failure throws a `ValidationException` on the `password` field so the field-level error renders in the same shape as `/login`.
+  - **Session already matches invitation email** — `AcceptInvitationRequest::rules()` returns an empty array (no password required); controller runs the attach directly.
+  - **Session does not match** — controller redirects to `invitation.show` with a flash error naming both the current and target emails; the accept page renders a "Sign out and try again" button that posts to the Wayfinder `logout` action.
 
-### Directory tree
+On success in either branch, `current_business_id` is pinned to the invitation's business, matching the LoginController / MagicLinkController convention (D-063).
 
-```
-tests/Browser/
-├── Auth/                  (empty, owned by E2E-1)
-├── Onboarding/            (empty, owned by E2E-2)
-├── Booking/               (empty, owned by E2E-3)
-├── Dashboard/             (empty, owned by E2E-4)
-├── Settings/              (empty, owned by E2E-5)
-├── Embed/                 (empty, owned by E2E-6)
-├── CrossCutting/          (empty, owned by E2E-6)
-├── Support/
-│   ├── BusinessSetup.php       (fully implemented — E2E-0)
-│   ├── AuthHelper.php          (fully implemented — E2E-0)
-│   ├── OnboardingHelper.php    (stub, owned by E2E-2)
-│   └── BookingFlowHelper.php   (stub, owned by E2E-3)
-├── Screenshots/           (.gitignored)
-├── Traces/                (.gitignored)
-├── SmokeTest.php          (single smoke test)
-└── route-coverage.md      (coverage ledger of every named route)
-```
+**Route relocation**: `GET` and `POST /invite/{token}` leave the `guest` middleware group. `guest` redirects authenticated users to `/dashboard` before the controller runs, which would make the "already signed in as invitee" and "signed in as other user" branches unreachable. The routes now sit in the top-level public routing space in `routes/web.php`.
 
-Each empty per-feature directory has a `.gitkeep` so the tree is visible on
-checkout.
+**Frontend**: `resources/js/pages/auth/accept-invitation.tsx` receives two new props from the controller — `isExistingUser: boolean` and `authUserEmail: string | null` — and renders the four UI states (new user / existing-not-signed-in / existing-signed-in-matches / existing-signed-in-mismatches). Each state uses the same Wayfinder `accept()` action; the mismatch state adds a `logout()` action for the sign-out button.
 
-### Shared helpers (E2E-0 owns)
+**Invite-time contract unchanged**: `StaffController::invite()` still accepts emails that already belong to a `User`. Rejection is at the acceptance layer (wrong password → field error; wrong session user → redirect + flash). This matches the roadmap's explicit choice to keep admin workflow frictionless and defer the decision to acceptance.
 
-`Tests\Browser\Support\BusinessSetup` exposes five static factory methods
-for downstream sessions: `createBusinessWithAdmin`,
-`createBusinessWithStaff`, `createBusinessWithService`,
-`createLaunchedBusiness`, `createBusinessWithProviders`. All admin/staff
-users get `email_verified_at=now()` and plaintext password `password`.
-`createLaunchedBusiness` builds a business with `onboarded()` state,
-Mon–Fri 09:00–18:00 BusinessHours (ISO 1–5 per D-024; weekends absent),
-one Service (60 min duration, 30 min slot interval, no buffers), an admin
-opted-in as provider with matching AvailabilityRules, the Service attached
-to the provider, and a seed Customer row.
+### R-19B — `business_members` uniqueness + restore-or-create + soft-delete audit
 
-`Tests\Browser\Support\AuthHelper` exposes `loginAs`, `loginViaMagicLink`
-(signed URL generated via `URL::temporarySignedRoute('magic-link.verify', …)`,
-matching `MagicLinkController::store`), `logout`, and `loginAsCustomer`.
+**Migration**: `database/migrations/2026_04_16_100013_update_business_members_unique_index.php` drops `UNIQUE(business_id, user_id)` and installs `UNIQUE(business_id, user_id, deleted_at)`. Matches the `providers` index shape from D-061. Safe against fresh DB + seeder; no data migration needed (project reseeds pre-launch).
 
-`OnboardingHelper` and `BookingFlowHelper` are stubs that throw
-`RuntimeException` pointing to E2E-2 / E2E-3 respectively.
+**Helper**: `Business::attachOrRestoreMember(User $user, BusinessMemberRole $role): BusinessMember`. Queries `BusinessMember::withTrashed()` for `(business, user)`; if a trashed row exists, restores + updates the role; otherwise attaches a new row. Returns the active pivot.
 
-### Smoke test
+Every caller that adds a user to a business now routes through the helper:
 
-`tests/Browser/SmokeTest.php` visits `/` and asserts on the landing-page
-"riservo" copy (matches `resources/js/pages/welcome.tsx:14`), plus no JS
-errors and no console logs. Runs in ~1 s after warmup.
+- `InvitationController::accept()` — both branches.
+- `RegisterController::store()` — the initial admin attach on new business registration.
 
-### CI
+No raw `$business->members()->attach()` outside the helper's body.
 
-`.github/workflows/ci.yml` gains a new `browser-tests` job, depending on
-the existing `tests` job. The `tests` job now runs
-`php artisan test --testsuite=Unit --testsuite=Feature --compact` so it
-does not try to run browser tests without Playwright. The new
-`browser-tests` job installs Node + npm deps, caches Playwright browsers,
-installs Chromium with deps, builds the frontend, migrates against the
-same Postgres 16 service, and runs `./vendor/bin/pest --testsuite=Browser
---parallel`. Screenshots and traces are uploaded as a GitHub Actions
-artifact on failure.
+**Soft-delete audit**. Eloquent's `BelongsToMany` does NOT auto-apply a pivot model's `SoftDeletes` scope — `BusinessMember` carries the trait, but `$business->members()` and `$user->businesses()` would return trashed pivot rows unless filtered explicitly. Both relations now apply `->wherePivotNull('deleted_at')`. The filter propagates to:
+
+- `Business::admins()` / `Business::staff()` (via `members()`).
+- `User::hasBusinessRole()` (via `businesses()`).
+- `StaffController::index` / `show` / `invite` / `ensureUserBelongsToBusiness` (all via `members()`).
+
+Other consumers use `BusinessMember::query()`, which applies the model's `SoftDeletingScope` automatically. Verified in-session, unchanged:
+
+- `ResolveTenantContext::resolveMembership()`
+- `LoginController::pinCurrentBusiness()`
+- `MagicLinkController::verify()`
+
+No consumer intentionally reads trashed rows for historical display in the app today, so there is no "preserve trashed-inclusive behaviour" exception to document.
+
+**Provider semantics** are unchanged. The existing-user branch still calls `Provider::create()` for a fresh row per acceptance. D-061's `UNIQUE(business_id, user_id, deleted_at)` permits one active + any number of trashed provider rows per `(business, user)`, so historical bookings remain attached to their original (possibly trashed) provider via `Booking::provider()->withTrashed()` (D-067).
+
+### Tests added (+10, suite 508 → 518)
+
+**`tests/Feature/Auth/InvitationTest.php` — +5 cases**:
+
+1. *existing user accepting invite does not recreate user or touch user fields* — invite an email already registered to a user in another business; accept with that user's existing password; assert `User` row count unchanged, `name`/`password`/`email_verified_at` untouched, new membership + provider + services present, session pinned to the new business, old membership intact, invitation marked accepted.
+2. *existing user invite rejects wrong password and does not attach* — same fixture, submit wrong password; assert `password` field error, guest session, no membership, no provider, invitation not accepted.
+3. *cannot accept existing-user invite while signed in as a different user* — `actingAs($other)`; assert redirect back to `invitation.show` with a flash error and no attach.
+4. *existing user already signed in as invitee accepts without password* — `actingAs($invitee)`, POST with no password; assert redirect to dashboard, attach ran, session pinned.
+5. *accept-invitation page signals new-user vs existing-user branch* — render `GET /invite/{token}` for two invitations (one for a new email, one for an existing user); assert `isExistingUser` Inertia prop matches the user existence check.
+
+**`tests/Feature/Settings/MembershipReEntryTest.php` — +5 cases**:
+
+1. *soft-deleted business_members row does not block a new active row* — insert + soft-delete + insert new; assert both rows coexist under the new index.
+2. *`Business::members()` excludes soft-deleted rows* — verifies the `wherePivotNull` fix.
+3. *`User::businesses()` excludes soft-deleted rows* — mirror.
+4. *`attachOrRestoreMember()` restores a soft-deleted row instead of duplicating* — assert the restored row shares the original `id` and total row count stays at 1.
+5. *full cycle: invite → soft-delete membership → re-invite → accept lands on restored row* — exercises the end-to-end R-19A + R-19B integration through the HTTP layer.
+
+All pre-existing cases stay green (including `StaffTest.php`, which still uses `$business->members()->attach()` directly in its pre-existing `'admin can invite staff'` and `'cannot invite existing member'` coverage).
+
+### No scope drift
+
+No unplanned refactors. `SlotGeneratorService`, the R-17 bookability scopes, the R-18 generated-column reads, the D-075 closure-after-response dispatch, and the `bookability` shared prop are all untouched. The `EXPIRY_HOURS` constant remains the single source of truth for invitation expiry.
 
 ---
 
-## Deviations from Plan
+## Current Project State
 
-- **Per-testsuite `<php>` env block**: PHPUnit's schema does not support
-  `<php>` as a child of `<testsuite>`. The plan proposed scoping
-  `DB_DATABASE=riservo_ch_e2e` and `APP_URL=http://127.0.0.1` only to the
-  Browser suite; instead, the Browser suite reuses the existing testing
-  `<php>` block. `RefreshDatabase` + sequential Pest execution means
-  browser and feature tests cannot collide on the shared `riservo_ch_testing`
-  DB within a single run. Parallel runs in CI use separate Postgres
-  services per job, so DB naming is irrelevant there.
-- **CI workflow file**: the plan considered creating
-  `.github/workflows/browser-tests.yml`. Instead, the new job was appended
-  to the existing `.github/workflows/ci.yml` (alongside `pint`, `larastan`,
-  `tests`) so CI stays configured in one file.
+- **Backend**:
+  - `InvitationController::accept()` splits on existing-user and uses the helper for the attach in both branches.
+  - `AcceptInvitationRequest` has dynamic rules: password-only for existing-user, empty when the session user already matches the invitation, name+password+confirmation for the new-user branch.
+  - `Business::attachOrRestoreMember()` is the single home for adding a user to a business.
+  - `Business::members()` and `User::businesses()` filter trashed pivot rows via `wherePivotNull('deleted_at')`.
+  - `RegisterController::store()` uses the helper for the initial admin attach.
+  - Invitation routes moved out of the `guest` middleware group.
+- **Database**: `business_members` now carries `UNIQUE(business_id, user_id, deleted_at)` — same shape as `providers`.
+- **Frontend**: `auth/accept-invitation.tsx` renders four states driven by `isExistingUser` + `authUserEmail`. Uses Wayfinder `accept()` and `logout()` actions. Bundle size unchanged (~963 kB main chunk).
+- **Config / i18n**: no changes. New user-facing strings flow through `__()` and the existing translation file pipeline.
+- **Tests**: full Pest suite green on Postgres — **518 passed, 2248 assertions**. +10 from R-18's baseline of 508.
+- **Decisions**: **D-079** recorded in `docs/decisions/DECISIONS-AUTH.md`. No existing decision superseded — D-079 extends D-061 and D-063.
+- **Dependencies**: no changes.
 
 ---
 
 ## How to Verify Locally
 
 ```bash
-# Unit + Feature (fast path — no Playwright needed)
-php artisan test --testsuite=Unit --testsuite=Feature --compact
-# → 481 passed (~29 s)
-
-# Browser smoke only (needs Chromium installed locally)
-./vendor/bin/pest --testsuite=Browser
-# → 1 passed (~1 s)
-
+php artisan test --compact
 vendor/bin/pint --dirty --format agent
-# → {"result":"pass"}
-
 npm run build
-# → clean Vite build
 ```
 
-First-time Playwright setup on a fresh checkout:
+All three green: **518 passed** (in ~24 s), `{"result":"pass"}`, Vite build in ~700 ms with only the pre-existing large-chunk warning.
+
+Targeted checks:
 
 ```bash
-npm install
-npx playwright install --with-deps chromium
+php artisan test --compact --filter='InvitationTest|MembershipReEntry'
+# → 16 passed
+
+grep -rn "business_members\|->members(\|->businesses(\|BusinessMember::" app/
+# → only the helper, the SoftDeletes-aware model-level queries, and the
+#   relation definitions remain; no raw attach() outside the helper's body
 ```
 
-Running `php artisan test` without the `--testsuite` flag now runs all
-three suites, including Browser — that works too, provided Playwright is
-installed. For the fast pre-commit loop prefer the explicit Unit+Feature
-run above.
+Manual smoke for the D-079 existing-user flow:
+
+1. Register business A as admin `alice@example.com`.
+2. Sign out. Register business B as admin `bob@example.com`.
+3. As Bob, go to `/dashboard/settings/staff` and invite `alice@example.com`.
+4. Copy the invite link from the mail log; open it in a new incognito window.
+5. The accept page should say "You already have a riservo.ch account. Sign in to accept." and show a password-only form.
+6. Submit Alice's password → redirect to Business B's dashboard. Alice is logged in; session `current_business_id` = B.
+7. In a new tab, log in as Alice → lands on Business A's dashboard (her oldest active membership per `ResolveTenantContext`).
 
 ---
 
 ## What the Next Session Needs to Know
 
-The E2E roadmap now unblocks five sessions that can run in parallel:
+Review Round 2 is fully closed. The next agent returns to the main roadmap: `docs/ROADMAP.md`. No review-remediation work remains open.
 
-- **E2E-1 Authentication Flows** — owns `tests/Browser/Auth/`. Uses
-  `AuthHelper` read-only.
-- **E2E-2 Business Onboarding Wizard** — owns `tests/Browser/Onboarding/`.
-  Owns `OnboardingHelper` (currently a stub).
-- **E2E-3 Public Booking Flow** — owns `tests/Browser/Booking/`. Owns
-  `BookingFlowHelper` (currently a stub).
-- **E2E-4 Dashboard: Bookings / Calendar / Customers** — owns
-  `tests/Browser/Dashboard/`.
-- **E2E-5 Dashboard: Settings** — owns `tests/Browser/Settings/`.
+### Conventions that future work must not break (post-R-19)
 
-E2E-6 (Embed & Cross-Cutting) waits for E2E-3's `BookingFlowHelper`.
-E2E-7 (Google Calendar Sync UI) is deferred until main-roadmap Session 12
-lands.
-
-Every session appends rows to `tests/Browser/route-coverage.md` — the
-orchestrator verifies completeness when the roadmap closes.
-
-### Conventions for downstream E2E sessions
-
-- **Never write `collaborator`.** Use **staff** (dashboard role) and
-  **provider** (bookable identity) — see D-061.
-- **`BusinessSetup` and `AuthHelper` are read-only for E2E-1..6.** Do not
-  edit them. If a new setup shape is needed, propose it in the session
-  plan so E2E-0 can extend these helpers.
-- Tests interact through the browser API (`visit`, `click`, `type`,
-  `press`, `assertSee`, `assertUrlIs`, …). Direct DB reads are allowed
-  only for assertion purposes.
-- Each test uses `RefreshDatabase` (applied globally). No shared state.
-- Signed URLs (magic link, invitation, verification, password reset) are
-  generated inside the test via Laravel helpers and then `visit()`ed.
-- `Carbon::setTestNow()` should be used before generating signed URLs
-  whose expiry is asserted, to keep assertions deterministic.
-
----
-
-## Current Project State
-
-- **Backend**: no application code changed.
-- **Frontend**: no application code changed. Playwright added as a devtime
-  peer dependency of the browser plugin.
-- **Config**:
-  - `phpunit.xml` adds `Browser` testsuite.
-  - `tests/Pest.php` binds `RefreshDatabase` to `Browser`, sets 10 s
-    browser timeout.
-  - `.gitignore` ignores `tests/Browser/Screenshots/` and
-    `tests/Browser/Traces/`.
-- **Tests**: 481 Unit+Feature passed (unchanged from Session R-15 baseline
-  minus non-browser drift); 1 Browser smoke passed.
-- **Decisions**: no new decisions; D-001 – D-076 untouched.
-- **Migrations**: none.
-- **i18n**: no changes.
-- **Routes**: no changes.
+- **D-079 — restore-or-create is the only membership-add path.** No new code may call `$business->members()->attach(...)` directly. Routes through `Business::attachOrRestoreMember($user, $role)`. Rationale: the only way to ship "add user to business" on top of the new uniqueness index without a future uniqueness-violation incident.
+- **D-079 — soft-deleted pivot rows stay out of live reads.** `Business::members()` and `User::businesses()` filter `deleted_at`. Any new relation or eager-load on `business_members` must apply the same filter, unless the caller explicitly wants trashed rows for historical display (no such caller exists today). `BusinessMember::query()` is soft-delete-aware via the model scope; use it for direct pivot reads.
+- **D-079 — invitation routes are public.** `GET` / `POST /invite/{token}` sit outside `guest` and outside `auth`. Do not wrap them in either — the existing-user branch needs to handle all three session states.
+- **Earlier conventions are unchanged**: D-078 (structural bookability single scope, R-17), D-066 read/write symmetry (R-18), D-077/D-076/D-075/D-074/D-073 and earlier remain as described in prior handoffs.
+- **Factories / test helpers**: `tests/Pest.php::attachStaff` / `attachAdmin` / `attachProvider` still use raw pivot attaches in test setup. This is acceptable — tests pre-seed clean state and never exercise the re-entry path through the helper via those functions. Tests that need restore-or-create semantics call `Business::attachOrRestoreMember` directly (see `tests/Feature/Settings/MembershipReEntryTest.php`).
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **E2E-2 — wizard helper**: `OnboardingHelper::completeWizard` must cover
-  the five onboarding steps, admin-as-provider opt-in, and the launch
-  gate (D-062). Stub in place; E2E-2 owns the implementation.
-- **E2E-3 — booking helper**: `BookingFlowHelper::bookAsGuest` /
-  `bookAsRegistered` must cover provider choice on/off, honeypot,
-  customer-prefill, and return the management token. Stub in place;
-  E2E-3 owns the implementation.
-- **Pest browser parallelism**: the CI browser-tests job uses
-  `--parallel`. E2E-1..6 authors should verify locally with `--parallel`
-  before landing — if a test relies on implicit singleton state it will
-  surface there.
-- Carry-over items from R-15:
-  - R-16 frontend code splitting (standalone session).
-  - All carry-over items previously listed in the R-15 HANDOFF remain
-    deferred (SMS/WhatsApp reminders, popup widget i18n, slug-alias
-    history, etc.).
+R-19 adds three new `docs/BACKLOG.md` entries under "Tenancy (R-19 carry-overs)":
+
+- **R-2B — Business-switcher UI** in the dashboard header. Post-D-079 multi-business membership is reachable through the invite flow but not yet switchable in-app.
+- **Admin-driven member deactivation + re-invite flow**. D-079's restore-or-create helper unblocks this but no UI drives soft-delete of a `business_members` row today.
+- **"Leave business" self-serve UX** for staff members. Same prerequisite.
+
+Earlier carry-overs remain unchanged:
+
+- **R-16** — frontend code splitting (deferred, tracked in `docs/BACKLOG.md`).
+- R-17 carry-overs: admin email/push notification when a service crosses into unbookable post-launch; richer "provider is on vacation" UX on the public page; per-user banner dismiss / ack history.
+- R-9 / R-8 manual QA — carry-over.
+- Orphan-logo cleanup — carry-over.
+- Profile + onboarding logo upload deduplication — deferred.
+- Per-business invite-lifetime override — carry-over.
+- Real `/dashboard/settings/notifications` page — no product driver.
+- Per-business email branding — post-launch (D-075).
+- Mail rendering smoke-test in CI — post-MVP.
+- Failure observability for after-response dispatch — post-MVP.
+- Customer email verification flow — post-MVP.
+- Customer profile page — post-MVP.
+- Scheduler-lag alerting — carry-over.
+- `X-RateLimit-Remaining` / `Retry-After` headers on auth-recovery throttle — carry-over.
+- SMS / WhatsApp reminder channel — SPEC §9 post-MVP.
+- Browser-test infrastructure (Pest Browser, Playwright) — carry-over.
+- Popup widget i18n — carry-over.
+- `docs/ARCHITECTURE-SUMMARY.md` stale terminology — carry-over.
+- Real-concurrency smoke test — carry-over.
+- Availability-exception race — carry-over.
+- Parallel test execution (`paratest`) — carry-over.
+- Slug-alias history — carry-over.
+- Booking-flow state persistence — carry-over.

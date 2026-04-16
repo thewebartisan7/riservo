@@ -33,9 +33,7 @@ class RegisterController extends Controller
             'slug' => $slugService->generateUniqueSlug($request->validated('business_name')),
         ]);
 
-        $business->members()->attach($user->id, [
-            'role' => BusinessMemberRole::Admin->value,
-        ]);
+        $business->attachOrRestoreMember($user, BusinessMemberRole::Admin);
 
         Auth::login($user);
 

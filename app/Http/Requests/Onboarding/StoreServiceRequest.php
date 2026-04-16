@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Onboarding;
 
 use App\Enums\BusinessMemberRole;
+use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -45,5 +46,24 @@ class StoreServiceRequest extends FormRequest
         return [
             'provider_schedule.*.windows.*.close_time.after' => __('The closing time must be after the opening time.'),
         ];
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $v) {
+            if (! $this->boolean('provider_opt_in')) {
+                return;
+            }
+
+            $schedule = $this->input('provider_schedule', []);
+            $hasAnyWindow = collect($schedule)
+                ->contains(fn ($day) => ! empty($day['enabled']) && ! empty($day['windows']));
+
+            if (! $hasAnyWindow) {
+                $v->errors()->add('provider_schedule', __(
+                    'Add at least one available window so customers can book with you.'
+                ));
+            }
+        });
     }
 }

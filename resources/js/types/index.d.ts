@@ -196,6 +196,9 @@ export interface PageProps {
         success: string | null;
         error: string | null;
     };
+    bookability: {
+        unbookableServices: Array<{ id: number; name: string }>;
+    };
     locale: string;
     translations: Record<string, string>;
     [key: string]: unknown;

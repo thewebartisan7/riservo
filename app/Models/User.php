@@ -54,12 +54,19 @@ class User extends Authenticatable implements MustVerifyEmail
         return Customer::where('user_id', $this->id)->exists();
     }
 
-    /** @return BelongsToMany<Business, $this, BusinessMember, 'pivot'> */
+    /**
+     * Active memberships only. Mirrors Business::members() — the BusinessMember
+     * pivot uses SoftDeletes but BelongsToMany does not auto-apply the scope,
+     * so we filter trashed pivot rows out explicitly (D-079).
+     *
+     * @return BelongsToMany<Business, $this, BusinessMember, 'pivot'>
+     */
     public function businesses(): BelongsToMany
     {
         return $this->belongsToMany(Business::class, 'business_members')
             ->using(BusinessMember::class)
             ->withPivot(['role'])
+            ->wherePivotNull('deleted_at')
             ->withTimestamps();
     }
 

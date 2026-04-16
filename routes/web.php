@@ -47,12 +47,17 @@ Route::middleware('guest')->group(function () {
     Route::get('/reset-password/{token}', [PasswordResetController::class, 'edit'])->name('password.reset');
     Route::post('/reset-password', [PasswordResetController::class, 'update'])->name('password.update');
 
-    Route::get('/invite/{token}', [InvitationController::class, 'show'])->name('invitation.show');
-    Route::post('/invite/{token}', [InvitationController::class, 'accept'])->name('invitation.accept');
-
     Route::get('/customer/register', [CustomerRegisterController::class, 'create'])->name('customer.register');
     Route::post('/customer/register', [CustomerRegisterController::class, 'store']);
 });
+
+// Invitation acceptance is open to both guests and authenticated users:
+// per D-079 the existing-user branch requires an authenticated (or
+// authenticate-on-submit) session whose email matches the invitation, and a
+// session user whose email does NOT match is rejected with a clean error — so
+// these routes cannot sit behind `guest` or `auth` middleware.
+Route::get('/invite/{token}', [InvitationController::class, 'show'])->name('invitation.show');
+Route::post('/invite/{token}', [InvitationController::class, 'accept'])->name('invitation.accept');
 
 // Magic link verify (works whether logged in or not, must be signed)
 Route::get('/magic-link/verify/{user}', [MagicLinkController::class, 'verify'])

@@ -445,9 +445,11 @@ class OnboardingController extends Controller
 
     private function storeLaunch(Business $business): RedirectResponse
     {
+        // D-078: a service blocks launch when it is active but fails structural
+        // bookability — no provider attached, or the attached provider(s) hold
+        // zero availability rules. Both states produce an empty public listing.
         $unstaffedServices = $business->services()
-            ->where('is_active', true)
-            ->whereDoesntHave('providers')
+            ->structurallyUnbookable()
             ->get(['id', 'name'])
             ->map(fn (Service $s) => ['id' => $s->id, 'name' => $s->name])
             ->values()
@@ -547,6 +549,17 @@ class OnboardingController extends Controller
      */
     private function writeProviderSchedule(Provider $provider, Business $business, array $schedule): void
     {
+        // Defense-in-depth against a future caller that skips StoreServiceRequest.
+        // Structural bookability (D-078) requires the opted-in provider to hold at
+        // least one availability rule; persisting zero rules would produce a
+        // service that passes attachment checks but can never generate a slot.
+        $hasAnyWindow = collect($schedule)
+            ->contains(fn (array $day) => ! empty($day['enabled']) && ! empty($day['windows']));
+
+        if (! $hasAnyWindow) {
+            throw new \LogicException('Refusing to persist an empty provider schedule.');
+        }
+
         $provider->availabilityRules()->delete();
 
         $rules = collect($schedule)
@@ -561,9 +574,7 @@ class OnboardingController extends Controller
                 'updated_at' => now(),
             ]));
 
-        if ($rules->isNotEmpty()) {
-            $provider->availabilityRules()->insert($rules->all());
-        }
+        $provider->availabilityRules()->insert($rules->all());
     }
 
     private function writeScheduleFromBusinessHours(Provider $provider, Business $business): void

@@ -304,3 +304,107 @@ This file contains live decisions about auth boundaries, roles, invitations, ver
   already read `config('app.name')` — setting the value cascades
   through layout, header, and footer templates with no per-template
   edit.
+
+---
+
+### D-079 — Existing-user invitation flow + `business_members` uniqueness parity
+- **Date**: 2026-04-16
+- **Status**: accepted
+- **Extends**: D-061 (uniqueness shape on `providers`), D-063 (explicit tenant context)
+- **Context**: Post-D-063, multi-business membership is a data-model
+  capability but the invitation flow was never updated for it.
+  `InvitationController::accept()` always called `User::create([...])`,
+  which crashes for any invitee whose email already exists anywhere on
+  the platform (`users.email` is globally unique). Adjacent to that,
+  `business_members` carried `UNIQUE(business_id, user_id)` while
+  `providers` carried `UNIQUE(business_id, user_id, deleted_at)` — the
+  two tables that together define membership disagreed on the re-entry
+  shape described in D-061, SPEC, and ARCHITECTURE-SUMMARY. REVIEW-2
+  flagged both as MEDIUM-1 and INFO-1.
+- **Decision**:
+  1. **`business_members` uniqueness is `(business_id, user_id, deleted_at)`**,
+     matching D-061 on `providers`. Migration
+     `2026_04_16_100013_update_business_members_unique_index.php` drops
+     the old two-column index and installs the three-column one.
+  2. **Membership re-entry semantics are restore-or-create**, homed in
+     `Business::attachOrRestoreMember(User, BusinessMemberRole): BusinessMember`.
+     Every caller that adds a user to a business routes through this
+     method (new-user invitation, existing-user invitation,
+     `RegisterController::store` for the initial admin). No raw
+     `$business->members()->attach()` outside the helper's body.
+  3. **`InvitationController::accept()` branches on
+     `User::where('email', $invitation->email)->exists()`**. The
+     new-user branch creates the user, marks email verified, calls the
+     helper, creates a provider, attaches services. The existing-user
+     branch does NOT create or mutate the user; it authenticates the
+     invitee, calls the helper, creates a provider, attaches services.
+     Session `current_business_id` is pinned to the invitation's
+     business on success (matches the LoginController /
+     MagicLinkController convention).
+  4. **Existing-user authentication is login-required** (password against
+     the existing `User` row). Three acceptance states are handled:
+     - **no session**: the accept page shows a password-only form; the
+       controller calls `Auth::attempt` and, on failure, throws
+       `ValidationException::withMessages(['password' => ...])` so the
+       page surfaces the error in the same FieldError shape as
+       `/login`.
+     - **session already matches invitation email**: controller skips
+       the password prompt and runs the attach; the page renders a
+       simple "Accept as {email}" confirmation.
+     - **session does not match**: controller redirects back to
+       `invitation.show` with a flash error naming both the current
+       session email and the target email; the page renders a "Sign
+       out and try again" action that posts to `logout` via the
+       existing Wayfinder action.
+  5. **Invitation routes leave the `guest` middleware group**. Both
+     `GET` and `POST /invite/{token}` sit in the top-level public
+     routing space — `guest` would redirect the already-signed-in
+     branches to `/dashboard` before the controller runs.
+  6. **`StaffController::invite()` contract is unchanged**. It still
+     accepts existing emails; rejection is at the acceptance layer if
+     auth fails or the session email mismatches.
+- **Consequences**:
+  - Multi-business membership is reachable through the invite flow
+    without touching the existing user's credentials.
+  - `Business::members()` and `User::businesses()` apply a
+    `wherePivotNull('deleted_at')` filter. Eloquent's `BelongsToMany`
+    does not auto-apply a pivot's SoftDeletes scope, so a trashed
+    pivot row would have leaked into every live reader otherwise. The
+    filter is invisible from the outside (the pivot model's own
+    `BusinessMember::query()` consumers already get the scope via the
+    `SoftDeletingScope` on the model — `ResolveTenantContext`,
+    `LoginController::pinCurrentBusiness`, and
+    `MagicLinkController::verify` are unaffected).
+  - The `alreadyMember` check in `StaffController::invite()` inherits
+    the relation-level filter, so a soft-deleted membership no longer
+    blocks a re-invite. Pairs cleanly with the restore-or-create
+    helper for any future admin-driven deactivate-then-re-invite UX.
+  - `Provider::create()` on the existing-user branch still creates a
+    fresh provider row for each acceptance — D-061 permits one active
+    + any number of trashed provider rows per `(business, user)`.
+    Historical bookings remain attached to their original (possibly
+    trashed) provider via `Booking::provider()->withTrashed()` (D-067),
+    so no history is mis-attributed to a new stint.
+- **Rejected alternatives**:
+  - *Magic-link redemption for existing-user acceptance.* Would have
+    meant extending `MagicLinkController::verify` or introducing a new
+    signed-link flow on the invitation. An invitee who is already a
+    business user is password-first per D-006, so the payoff was small
+    relative to the second-trust-sensitive-redemption-flow cost. The
+    login-required path reuses the existing field-level error UX and
+    does not require a new notification template.
+  - *Treating existing-user invites as "new user with password reset".*
+    Would either rotate the user's credentials silently or violate
+    `users.email` uniqueness. Both outcomes are incident-class risks.
+    Splitting the branches explicitly keeps the user's existing
+    credentials untouched.
+  - *Rejecting existing-email invites at invite-time in `StaffController::invite()`.*
+    Would have deferred the problem to R-2B (business-switcher UI) and
+    left admins without a way to add an existing user to a second
+    business today. The acceptance-layer split closes the gap without
+    waiting on R-2B.
+  - *Action class or dedicated service for restore-or-create.* No
+    `app/Actions` directory exists; a one-method service would
+    duplicate the idiom `Business::removeLogoIfCleared()` already set
+    for model-owned behaviour. The method on `Business` is the
+    narrowest change.
