@@ -217,3 +217,25 @@ This file contains live decisions about timezone handling, availability rules, b
 - **Context**: The roadmap listed "Booking confirmed (to collaborator)" and "New booking received (to business/collaborator)" as separate templates. These are near-identical in structure — both notify staff about a booking with its details.
 - **Decision**: A single `BookingReceivedNotification` class with a `$context` parameter ('new' | 'confirmed') adapts the subject line and heading. Sent to business admins + assigned collaborator on booking creation (context='new') and on admin confirmation of a pending booking (context='confirmed').
 - **Consequences**: One fewer notification class. Template reuse. The distinction between "new" and "confirmed" is still clear to the recipient via subject/heading.
+
+---
+
+### D-066 — Booking overlap invariant via EXCLUDE USING GIST on effective interval
+- **Date**: 2026-04-16
+- **Status**: accepted
+- **Context**: Both booking write paths perform a read-check-write sequence (availability check in application code, then `Booking::create`) with no transaction, no lock, and no DB-level invariant. Two concurrent requests can both pass the check and both insert overlapping bookings. Per D-065 the database engine is Postgres; `EXCLUDE USING GIST` with `btree_gist` expresses the invariant declaratively at the schema level.
+- **Decision**: The `bookings` table carries a snapshot of the service's buffers at booking time (`buffer_before_minutes`, `buffer_after_minutes`) plus Postgres generated columns `effective_starts_at` and `effective_ends_at`. A partial exclusion constraint, `bookings_no_provider_overlap`, enforces:
+
+    EXCLUDE USING GIST (
+      provider_id WITH =,
+      tsrange(effective_starts_at, effective_ends_at, '[)') WITH &&
+    ) WHERE (status IN ('pending', 'confirmed'))
+
+  Both controller write paths are wrapped in `DB::transaction(...)`. The existing `SlotGeneratorService::getAvailableSlots()` check is kept as the first-line fast-fail. A Postgres `23P01` (exclusion_violation) at `Booking::create` is caught and translated into the same 409 "slot no longer available" response the fast-fail produces.
+- **Consequences**:
+  - A booking and its effective interval carry the buffer state of the service at the moment of creation; editing the service's buffers later does not retroactively change the effective interval of existing bookings. This is also semantically correct — a booking is a contract for a specific occupied window.
+  - Only `pending` and `confirmed` bookings participate in the constraint, matching D-031. A cancelled booking is removed from the GIST index and no longer blocks new bookings.
+  - New booking write sites (future jobs, imports, admin tools, Google Calendar pull sync) inherit the guard with no extra code. They cannot produce overlapping bookings even if they forget a transaction.
+  - Concurrent writes targeting different providers do not interact — the GIST index is per-provider. Deadlock surface is minimal; no `SELECT FOR UPDATE`, no advisory locks.
+  - Migration rewrites the `bookings` schema; pre-launch, the seeder re-provisions all data.
+- **Supersedes**: none.
