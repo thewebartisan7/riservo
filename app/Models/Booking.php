@@ -27,6 +27,8 @@ use Illuminate\Support\Carbon;
     'customer_id',
     'starts_at',
     'ends_at',
+    'buffer_before_minutes',
+    'buffer_after_minutes',
     'status',
     'source',
     'external_calendar_id',

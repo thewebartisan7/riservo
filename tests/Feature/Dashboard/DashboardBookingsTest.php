@@ -236,12 +236,17 @@ test('default sort is starts_at desc', function () {
 });
 
 test('pagination works', function () {
-    Booking::factory()->count(25)->create([
-        'business_id' => $this->business->id,
-        'provider_id' => $this->provider->id,
-        'service_id' => $this->service->id,
-        'customer_id' => $this->customer->id,
-    ]);
+    for ($i = 0; $i < 25; $i++) {
+        $day = CarbonImmutable::parse('2026-05-01 09:00', 'UTC')->addDays($i);
+        Booking::factory()->create([
+            'business_id' => $this->business->id,
+            'provider_id' => $this->provider->id,
+            'service_id' => $this->service->id,
+            'customer_id' => $this->customer->id,
+            'starts_at' => $day,
+            'ends_at' => $day->addMinutes(30),
+        ]);
+    }
 
     $response = $this->actingAs($this->admin)->get('/dashboard/bookings');
 

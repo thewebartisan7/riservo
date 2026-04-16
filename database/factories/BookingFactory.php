@@ -36,11 +36,33 @@ class BookingFactory extends Factory
             'customer_id' => Customer::factory(),
             'starts_at' => $startsAt,
             'ends_at' => Carbon::instance($startsAt)->addMinutes($duration),
+            'buffer_before_minutes' => 0,
+            'buffer_after_minutes' => 0,
             'status' => BookingStatus::Confirmed,
             'source' => BookingSource::Riservo,
             'payment_status' => PaymentStatus::Pending,
             'cancellation_token' => Str::uuid()->toString(),
         ];
+    }
+
+    public function withServiceBuffers(): static
+    {
+        return $this->state(function (array $attributes) {
+            $serviceId = $attributes['service_id'] ?? null;
+            if ($serviceId instanceof Factory) {
+                return [];
+            }
+
+            $service = Service::find($serviceId);
+            if (! $service) {
+                return [];
+            }
+
+            return [
+                'buffer_before_minutes' => $service->buffer_before ?? 0,
+                'buffer_after_minutes' => $service->buffer_after ?? 0,
+            ];
+        });
     }
 
     public function pending(): static

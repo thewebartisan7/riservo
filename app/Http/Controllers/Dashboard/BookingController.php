@@ -299,6 +299,8 @@ class BookingController extends Controller
             'customer_id' => $customer->id,
             'starts_at' => $startsAt,
             'ends_at' => $endsAt,
+            'buffer_before_minutes' => $service->buffer_before ?? 0,
+            'buffer_after_minutes' => $service->buffer_after ?? 0,
             'status' => BookingStatus::Confirmed,
             'source' => BookingSource::Manual,
             'payment_status' => 'pending',
