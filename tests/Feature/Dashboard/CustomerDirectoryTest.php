@@ -5,6 +5,7 @@ use App\Models\Business;
 use App\Models\Customer;
 use App\Models\Service;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 
 beforeEach(function () {
     $this->business = Business::factory()->onboarded()->create();
@@ -162,12 +163,15 @@ test('customer search API returns results', function () {
 
 test('pagination works for customers', function () {
     $customers = Customer::factory()->count(25)->create();
-    foreach ($customers as $customer) {
+    foreach ($customers as $i => $customer) {
+        $day = CarbonImmutable::parse('2026-05-01 09:00', 'UTC')->addDays($i);
         Booking::factory()->create([
             'business_id' => $this->business->id,
             'provider_id' => $this->provider->id,
             'service_id' => $this->service->id,
             'customer_id' => $customer->id,
+            'starts_at' => $day,
+            'ends_at' => $day->addMinutes(30),
         ]);
     }
 
