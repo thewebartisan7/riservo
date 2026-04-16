@@ -9,9 +9,6 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::create('businesses', function (Blueprint $table) {
@@ -26,17 +23,16 @@ return new class extends Migration
             $table->string('timezone')->default('Europe/Zurich');
             $table->string('payment_mode')->default(PaymentMode::Offline->value);
             $table->string('confirmation_mode')->default(ConfirmationMode::Auto->value);
-            $table->boolean('allow_collaborator_choice')->default(true);
+            $table->boolean('allow_provider_choice')->default(true);
             $table->unsignedInteger('cancellation_window_hours')->default(24);
             $table->string('assignment_strategy')->default(AssignmentStrategy::FirstAvailable->value);
             $table->json('reminder_hours')->default('[]');
+            $table->unsignedTinyInteger('onboarding_step')->default(1);
+            $table->timestamp('onboarding_completed_at')->nullable();
             $table->timestamps();
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('businesses');

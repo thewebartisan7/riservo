@@ -7,9 +7,6 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::create('business_invitations', function (Blueprint $table) {
@@ -17,6 +14,7 @@ return new class extends Migration
             $table->foreignId('business_id')->constrained()->cascadeOnDelete();
             $table->string('email');
             $table->string('role')->default(BusinessMemberRole::Staff->value);
+            $table->json('service_ids')->nullable();
             $table->string('token')->unique();
             $table->dateTime('expires_at');
             $table->dateTime('accepted_at')->nullable();
@@ -26,9 +24,6 @@ return new class extends Migration
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('business_invitations');
