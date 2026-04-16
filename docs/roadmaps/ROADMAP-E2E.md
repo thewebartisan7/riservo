@@ -124,6 +124,45 @@ These guidelines apply to every E2E session. Deviations must be documented in th
 - Browser tests are runnable locally with `./vendor/bin/pest --filter=Browser` or `./vendor/bin/pest tests/Browser`.
 - The default `php artisan test` run stays Unit + Feature only until E2E-0 explicitly adds the `Browser` testsuite.
 
+### Local command cheatsheet (post-E2E-0)
+
+One-time setup on a fresh checkout:
+
+```bash
+composer install
+npm install
+npx playwright install --with-deps chromium
+```
+
+Everyday commands:
+
+```bash
+# Fast path — Unit + Feature only (no Playwright needed)
+php artisan test --testsuite=Unit --testsuite=Feature --compact
+
+# Browser suite only
+./vendor/bin/pest --testsuite=Browser
+
+# A single browser test file
+./vendor/bin/pest tests/Browser/SmokeTest.php
+
+# Full suite (Unit + Feature + Browser)
+php artisan test --compact
+```
+
+Debugging flags for the browser suite:
+
+```bash
+./vendor/bin/pest --testsuite=Browser --headed       # show the browser window
+./vendor/bin/pest --testsuite=Browser --debug        # verbose assertion output
+./vendor/bin/pest --testsuite=Browser --browser=firefox   # webkit / chrome also accepted
+./vendor/bin/pest --testsuite=Browser --parallel     # what CI runs
+```
+
+Failure artefacts (gitignored): screenshots at `tests/Browser/Screenshots/`,
+Playwright traces at `tests/Browser/Traces/`. CI uploads both as a GitHub
+Actions artifact on failure.
+
 ---
 
 ## Session E2E-0 — Infrastructure & Tooling Setup
