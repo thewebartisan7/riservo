@@ -96,5 +96,5 @@ test('step 2 replaces existing hours on resubmit', function () {
     ]);
 
     expect(BusinessHour::where('business_id', $this->business->id)->count())->toBe(1);
-    expect(BusinessHour::first()->open_time)->toBe('10:00');
+    expect(BusinessHour::first()->open_time)->toBe('10:00:00');
 });

@@ -75,8 +75,8 @@ test('admin can create a partial-day exception', function () {
         ->assertRedirect('/dashboard/settings/exceptions');
 
     $exception = $this->business->availabilityExceptions()->first();
-    expect($exception->start_time)->toBe('10:00');
-    expect($exception->end_time)->toBe('12:00');
+    expect($exception->start_time)->toBe('10:00:00');
+    expect($exception->end_time)->toBe('12:00:00');
     expect($exception->type)->toBe(ExceptionType::Open);
 });
 

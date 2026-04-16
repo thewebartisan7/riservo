@@ -49,8 +49,8 @@ test('update replaces all existing hours', function () {
 
     expect($this->business->businessHours()->count())->toBe(1);
     $hour = $this->business->businessHours()->first();
-    expect($hour->open_time)->toBe('10:00');
-    expect($hour->close_time)->toBe('14:00');
+    expect($hour->open_time)->toBe('10:00:00');
+    expect($hour->close_time)->toBe('14:00:00');
 });
 
 test('closing time must be after opening time', function () {
