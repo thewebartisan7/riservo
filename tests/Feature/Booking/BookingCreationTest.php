@@ -213,3 +213,24 @@ test('links customer to authenticated user', function () {
     $customer = Customer::where('email', 'jane@example.com')->first();
     expect($customer->user_id)->toBe($user->id);
 });
+
+test('soft-deleted provider_id is rejected on public store', function () {
+    Notification::fake();
+
+    // Create a second staff user + provider, attach to the service, then soft-delete.
+    $trashedStaff = User::factory()->create();
+    $trashedProvider = attachProvider($this->business, $trashedStaff, active: false);
+    $trashedProvider->services()->attach($this->service);
+
+    $response = $this->postJson('/booking/'.$this->business->slug.'/book', validBookingData([
+        'provider_id' => $trashedProvider->id,
+    ]));
+
+    // StorePublicBookingRequest's inline closure uses Provider::where() which applies
+    // SoftDeletingScope → soft-deleted provider fails validation → 422 with the
+    // "The selected provider is invalid." message. Equivalent to the controller's
+    // $service->providers() re-check, which would also reject.
+    $response->assertStatus(422)
+        ->assertJsonValidationErrors(['provider_id']);
+    expect(Booking::count())->toBe(0);
+});

@@ -18,9 +18,9 @@ export function formatDateTimeShort(isoString: string, timezone?: string): strin
     });
 }
 
-export function formatDateMedium(isoString: string | null): string {
+export function formatDateMedium(isoString: string | null, timezone?: string): string {
     if (!isoString) return '—';
-    return new Date(isoString).toLocaleDateString([], { dateStyle: 'medium' });
+    return new Date(isoString).toLocaleDateString([], { dateStyle: 'medium', timeZone: timezone });
 }
 
 export function formatDateTimeMedium(isoString: string, timezone?: string): string {

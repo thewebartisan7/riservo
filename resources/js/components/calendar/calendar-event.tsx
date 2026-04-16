@@ -65,7 +65,11 @@ export function CalendarEvent({
                                 <time dateTime={booking.ends_at}>{endTime}</time>
                             </dd>
                             <dt className="text-muted-foreground">{t('With')}</dt>
-                            <dd className="truncate text-foreground">{booking.provider.name}</dd>
+                            <dd className="truncate text-foreground">
+                                {booking.provider.is_active
+                                    ? booking.provider.name
+                                    : t(':name (deactivated)', { name: booking.provider.name })}
+                            </dd>
                         </dl>
                         <Button
                             size="sm"

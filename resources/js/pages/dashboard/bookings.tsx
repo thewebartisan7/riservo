@@ -316,7 +316,9 @@ export default function BookingsPage() {
                                         </TableCell>
                                         {isAdmin && (
                                             <TableCell className="text-muted-foreground text-sm">
-                                                {booking.provider.name}
+                                                {booking.provider.is_active
+                                                    ? booking.provider.name
+                                                    : t(':name (deactivated)', { name: booking.provider.name })}
                                             </TableCell>
                                         )}
                                         <TableCell>

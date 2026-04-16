@@ -98,3 +98,54 @@ test('cancellation within window is blocked', function () {
     expect($booking->fresh()->status)->toBe(BookingStatus::Confirmed);
     $response->assertSessionHas('error');
 });
+
+test('booking management page renders with deactivated provider', function () {
+    $business = Business::factory()->create(['timezone' => 'Europe/Zurich']);
+    $staff = User::factory()->create(['name' => 'Trashed Staff']);
+    $provider = attachProvider($business, $staff);
+    $service = Service::factory()->create(['business_id' => $business->id]);
+    $customer = Customer::factory()->create();
+
+    Booking::factory()->confirmed()->create([
+        'business_id' => $business->id,
+        'provider_id' => $provider->id,
+        'service_id' => $service->id,
+        'customer_id' => $customer->id,
+        'cancellation_token' => 'deactivated-provider-token',
+    ]);
+
+    $provider->delete();
+
+    $response = $this->get('/bookings/deactivated-provider-token');
+
+    $response->assertSuccessful()
+        ->assertInertia(fn ($page) => $page
+            ->component('bookings/show')
+            ->where('booking.provider.name', 'Trashed Staff')
+            ->where('booking.provider.is_active', false)
+        );
+});
+
+test('booking management page passes business.timezone through to the page', function () {
+    $business = Business::factory()->create(['timezone' => 'Asia/Tokyo']);
+    $staff = User::factory()->create();
+    $provider = attachProvider($business, $staff);
+    $service = Service::factory()->create(['business_id' => $business->id]);
+    $customer = Customer::factory()->create();
+
+    Booking::factory()->confirmed()->create([
+        'business_id' => $business->id,
+        'provider_id' => $provider->id,
+        'service_id' => $service->id,
+        'customer_id' => $customer->id,
+        'cancellation_token' => 'timezone-token',
+    ]);
+
+    $response = $this->get('/bookings/timezone-token');
+
+    $response->assertSuccessful()
+        ->assertInertia(fn ($page) => $page
+            ->component('bookings/show')
+            ->where('booking.business.timezone', 'Asia/Tokyo')
+        );
+});

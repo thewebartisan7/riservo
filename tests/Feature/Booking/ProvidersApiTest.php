@@ -80,3 +80,20 @@ test('returns 404 for non-existent business', function () {
 
     $response->assertStatus(404);
 });
+
+test('soft-deleted provider is not returned', function () {
+    $business = Business::factory()->onboarded()->create();
+    $service = Service::factory()->create(['business_id' => $business->id, 'is_active' => true]);
+
+    $activeUser = User::factory()->create(['name' => 'Active']);
+    $trashedUser = User::factory()->create(['name' => 'Trashed']);
+    $activeProvider = attachProvider($business, $activeUser);
+    $trashedProvider = attachProvider($business, $trashedUser, active: false);
+    $service->providers()->attach([$activeProvider->id, $trashedProvider->id]);
+
+    $response = $this->getJson('/booking/'.$business->slug.'/providers?service_id='.$service->id);
+
+    $response->assertOk()
+        ->assertJsonCount(1, 'providers')
+        ->assertJsonPath('providers.0.name', 'Active');
+});

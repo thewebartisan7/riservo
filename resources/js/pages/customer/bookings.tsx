@@ -5,25 +5,28 @@ import { useTrans } from '@/hooks/use-trans';
 import { Form, Link, usePage } from '@inertiajs/react';
 import { cancel } from '@/actions/App/Http/Controllers/Customer/BookingController';
 import { destroy } from '@/actions/App/Http/Controllers/Auth/LoginController';
+import { formatDateMedium, formatTimeShort } from '@/lib/datetime-format';
 import type { BookingSummary, PageProps } from '@/types';
 
 function BookingItem({ booking }: { booking: BookingSummary }) {
     const { t } = useTrans();
-    const date = new Date(booking.starts_at);
-    const endDate = new Date(booking.ends_at);
+    const tz = booking.business.timezone;
+    const providerLabel = booking.provider.is_active
+        ? booking.provider.name
+        : t(':name (deactivated)', { name: booking.provider.name });
 
     return (
         <div className="flex items-center justify-between rounded-lg border p-4">
             <div className="flex flex-col gap-1">
                 <span className="font-medium">{booking.service.name}</span>
                 <span className="text-sm text-muted-foreground">
-                    {booking.business.name} &middot; {booking.provider.name}
+                    {booking.business.name} &middot; {providerLabel}
                 </span>
                 <span className="text-sm text-muted-foreground">
-                    {date.toLocaleDateString()} &middot;{' '}
-                    {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {formatDateMedium(booking.starts_at, tz)} &middot;{' '}
+                    {formatTimeShort(booking.starts_at, tz)}
                     {' - '}
-                    {endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {formatTimeShort(booking.ends_at, tz)}
                 </span>
                 <span className="text-xs capitalize text-muted-foreground">{booking.status}</span>
             </div>

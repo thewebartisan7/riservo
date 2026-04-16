@@ -128,7 +128,8 @@ Add a concurrency-focused test (or integration test) that simulates two near-sim
 ## R-5 — Deactivated Collaborators Still Appear in Booking Flows (High)
 
 **Source**: REVIEW-1.md issue #4  
-**Priority**: High — correctness
+**Priority**: High — correctness  
+**Status**: **complete**, 2026-04-16 — the original concern ("trashed providers leak into NEW booking flows") was already fully fixed by D-061's shift to `SoftDeletes` on `Provider`. The adjacent gap surfaced during investigation — display code would 500 on historical bookings with a trashed provider — is fixed by D-067 (`Booking::provider()` resolves trashed rows).
 
 ### Context
 
@@ -147,7 +148,8 @@ Add a concurrency-focused test (or integration test) that simulates two near-sim
 ## R-6 — Timezone Rendering on Customer-Facing Pages (High)
 
 **Source**: REVIEW-1.md issue #5  
-**Priority**: High — correctness per SPEC §14
+**Priority**: High — correctness per SPEC §14  
+**Status**: **complete**, 2026-04-16
 
 ### Context
 

@@ -437,6 +437,42 @@ test('generates slots from multiple windows independently', function () {
     expect($slotTimes)->toContain('14:00');
 });
 
+test('soft-deleted provider is excluded from eligible providers', function () {
+    $service = Service::factory()->create([
+        'business_id' => $this->business->id,
+        'duration_minutes' => 60,
+        'buffer_before' => 0,
+        'buffer_after' => 0,
+        'slot_interval_minutes' => 60,
+    ]);
+    $service->providers()->attach($this->provider);
+
+    $trashedStaff = User::factory()->create();
+    $trashedProvider = attachProvider($this->business, $trashedStaff, active: false);
+    $service->providers()->attach($trashedProvider);
+
+    AvailabilityRule::factory()->create([
+        'provider_id' => $trashedProvider->id,
+        'business_id' => $this->business->id,
+        'day_of_week' => DayOfWeek::Monday->value,
+        'start_time' => '09:00',
+        'end_time' => '18:00',
+    ]);
+
+    $slots = $this->slotService->getAvailableSlots($this->business, $service, $this->monday);
+
+    expect($slots)->not->toBeEmpty();
+
+    $assigned = $this->slotService->assignProvider(
+        $this->business,
+        $service,
+        $this->monday->setTimeFromTimeString('10:00'),
+    );
+
+    expect($assigned)->not->toBeNull();
+    expect($assigned->id)->toBe($this->provider->id);
+});
+
 test('slot times are in business timezone', function () {
     $service = Service::factory()->create([
         'business_id' => $this->business->id,

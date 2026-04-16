@@ -205,3 +205,30 @@ test('invalid view parameter falls back to week', function () {
     $response->assertSuccessful()
         ->assertInertia(fn ($page) => $page->where('view', 'week'));
 });
+
+test('calendar renders bookings for a deactivated provider with is_active=false', function () {
+    $staff = User::factory()->create(['name' => 'Trashed Staff']);
+    $provider = attachProvider($this->business, $staff);
+    $provider->services()->attach($this->service);
+
+    Booking::factory()->confirmed()->create([
+        'business_id' => $this->business->id,
+        'provider_id' => $provider->id,
+        'service_id' => $this->service->id,
+        'customer_id' => $this->customer->id,
+        'starts_at' => CarbonImmutable::parse('2026-04-16 09:00', 'Europe/Zurich')->utc(),
+        'ends_at' => CarbonImmutable::parse('2026-04-16 10:00', 'Europe/Zurich')->utc(),
+    ]);
+
+    $provider->delete();
+
+    // Isolate the trashed provider's booking from the beforeEach-created $this->provider.
+    $response = $this->actingAs($this->admin)->get('/dashboard/calendar?view=day&date=2026-04-16');
+
+    $response->assertSuccessful()
+        ->assertInertia(fn ($page) => $page
+            ->has('bookings', 1)
+            ->where('bookings.0.provider.is_active', false)
+            ->where('bookings.0.provider.name', 'Trashed Staff')
+        );
+});

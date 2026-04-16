@@ -125,6 +125,7 @@ class BookingController extends Controller
                     'avatar_url' => $booking->provider->user?->avatar
                         ? asset('storage/'.$booking->provider->user->avatar)
                         : null,
+                    'is_active' => ! $booking->provider->trashed(),
                 ],
                 'customer' => [
                     'id' => $booking->customer->id,

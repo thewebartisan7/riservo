@@ -255,3 +255,29 @@ test('pagination works', function () {
         ->where('bookings.last_page', 2)
     );
 });
+
+test('bookings list renders bookings for a deactivated provider with is_active=false', function () {
+    $staff = User::factory()->create(['name' => 'Trashed Staff']);
+    $provider = attachProvider($this->business, $staff);
+    $provider->services()->attach($this->service);
+
+    Booking::factory()->confirmed()->create([
+        'business_id' => $this->business->id,
+        'provider_id' => $provider->id,
+        'service_id' => $this->service->id,
+        'customer_id' => $this->customer->id,
+        'starts_at' => CarbonImmutable::parse('2026-04-20 10:00', 'UTC'),
+        'ends_at' => CarbonImmutable::parse('2026-04-20 11:00', 'UTC'),
+    ]);
+
+    $provider->delete();
+
+    $response = $this->actingAs($this->admin)->get('/dashboard/bookings?provider_id='.$provider->id);
+
+    $response->assertSuccessful()
+        ->assertInertia(fn ($page) => $page
+            ->has('bookings.data', 1)
+            ->where('bookings.data.0.provider.is_active', false)
+            ->where('bookings.data.0.provider.name', 'Trashed Staff')
+        );
+});

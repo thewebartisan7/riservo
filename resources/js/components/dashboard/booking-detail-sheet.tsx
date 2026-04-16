@@ -146,7 +146,11 @@ export default function BookingDetailSheet({
                             )}
                         </Meta>
                         <Meta label={t('With')}>
-                            <p className="font-medium">{booking.provider.name}</p>
+                            <p className="font-medium">
+                                {booking.provider.is_active
+                                    ? booking.provider.name
+                                    : t(':name (deactivated)', { name: booking.provider.name })}
+                            </p>
                         </Meta>
                     </div>
 

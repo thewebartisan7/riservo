@@ -92,9 +92,11 @@ class BookingController extends Controller
             ],
             'provider' => [
                 'name' => $booking->provider->user?->name ?? '',
+                'is_active' => ! $booking->provider->trashed(),
             ],
             'business' => [
                 'name' => $booking->business->name,
+                'timezone' => $booking->business->timezone,
             ],
             'can_cancel' => $canCancel,
         ];

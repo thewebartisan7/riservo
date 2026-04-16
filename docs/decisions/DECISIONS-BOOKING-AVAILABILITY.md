@@ -239,3 +239,23 @@ This file contains live decisions about timezone handling, availability rules, b
   - Concurrent writes targeting different providers do not interact — the GIST index is per-provider. Deadlock surface is minimal; no `SELECT FOR UPDATE`, no advisory locks.
   - Migration rewrites the `bookings` schema; pre-launch, the seeder re-provisions all data.
 - **Supersedes**: none.
+
+---
+
+### D-067 — `Booking::provider()` resolves the historical provider including trashed
+- **Date**: 2026-04-16
+- **Status**: accepted
+- **Context**: Providers are first-class and soft-deletable (D-061). A booking holds a `provider_id` snapshot of who the appointment was attached to at the moment it was created. When a provider is soft-deleted, Eloquent's default `SoftDeletingScope` hides the row — so `$booking->provider` returns `null` everywhere the relation is traversed. Every display, notification, and read-side payload that touches `booking.provider.*` silently crashes on historical bookings (dashboard today list, bookings table, customer's "My Bookings", public management page, email templates). Availability/eligibility queries must still exclude trashed providers.
+- **Decision**: Override the relation on the `Booking` model:
+
+      public function provider(): BelongsTo
+      {
+          return $this->belongsTo(Provider::class)->withTrashed();
+      }
+
+  Read-side payloads additionally expose `provider.is_active = ! $provider->trashed()` so the UI can render a "(deactivated)" marker where relevant. Eligibility for new work continues to flow through `Provider::query()`, `$service->providers()`, and `$business->providers()`, which keep the default scope and therefore exclude trashed providers from slot generation, `/booking/{slug}/providers`, and the `StorePublicBookingRequest` validator.
+- **Consequences**:
+  - Display and notification code can safely dereference `$booking->provider->user?->name` for any booking, past or present, without null-coalescing at every site.
+  - Historical bookings continue to render the provider's original name with a clear visual cue that the provider is no longer bookable.
+  - `Booking::provider` is the single asymmetry — everywhere else in the code a trashed provider is still hidden.
+- **Supersedes**: none.

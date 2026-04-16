@@ -143,7 +143,9 @@ export default function CustomerShowPage() {
                                                 {booking.service.name}
                                             </TableCell>
                                             <TableCell className="text-muted-foreground text-sm">
-                                                {booking.provider.name}
+                                                {booking.provider.is_active
+                                                    ? booking.provider.name
+                                                    : t(':name (deactivated)', { name: booking.provider.name })}
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <BookingStatusBadge status={booking.status} />

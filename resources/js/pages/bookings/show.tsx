@@ -4,14 +4,17 @@ import { Button } from '@/components/ui/button';
 import { useTrans } from '@/hooks/use-trans';
 import { Form, usePage } from '@inertiajs/react';
 import { cancel } from '@/actions/App/Http/Controllers/Booking/BookingManagementController';
+import { formatDateMedium, formatTimeShort } from '@/lib/datetime-format';
 import type { BookingDetail, PageProps } from '@/types';
 
 export default function BookingShow() {
     const { t } = useTrans();
     const { booking, flash } = usePage<PageProps & { booking: BookingDetail }>().props;
 
-    const date = new Date(booking.starts_at);
-    const endDate = new Date(booking.ends_at);
+    const tz = booking.business.timezone;
+    const providerLabel = booking.provider.is_active
+        ? booking.provider.name
+        : t(':name (deactivated)', { name: booking.provider.name });
 
     return (
         <GuestLayout title={t('Booking details')}>
@@ -35,16 +38,16 @@ export default function BookingShow() {
                         <span>{booking.service.name}</span>
 
                         <span className="text-muted-foreground">{t('With')}</span>
-                        <span>{booking.provider.name}</span>
+                        <span>{providerLabel}</span>
 
                         <span className="text-muted-foreground">{t('Date')}</span>
-                        <span>{date.toLocaleDateString()}</span>
+                        <span>{formatDateMedium(booking.starts_at, tz)}</span>
 
                         <span className="text-muted-foreground">{t('Time')}</span>
                         <span>
-                            {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {formatTimeShort(booking.starts_at, tz)}
                             {' - '}
-                            {endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {formatTimeShort(booking.ends_at, tz)}
                         </span>
 
                         <span className="text-muted-foreground">{t('Duration')}</span>

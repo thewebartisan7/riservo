@@ -1,6 +1,6 @@
 # Handoff
 
-**Session**: R-4B — Booking overlap race guard
+**Session**: R-5 — Provider lifecycle coherence (historical bookings) + R-6 — Customer-facing timezone rendering
 **Date**: 2026-04-16
 **Status**: Complete
 
@@ -8,166 +8,159 @@
 
 ## What Was Built
 
-R-4B closes the booking double-booking race identified in REVIEW-1 issue #3
-by installing a **Postgres-level invariant** that makes overlapping
-pending/confirmed bookings for the same provider impossible regardless of
-concurrency, write path, or future code changes. The existing application-
-level slot check is kept as the user-visible fast-fail; the exclusion
-constraint is the safety net for truly concurrent arrivals.
+R-5 and R-6 were bundled because they touch the same customer-facing
+controllers and pages and are both pure display-correctness fixes. The
+original R-5 concern ("deactivated providers still appear in NEW booking
+flows") was already fully fixed by D-061's shift to `SoftDeletes` on
+`Provider`; the R-5 investigation surfaced an adjacent latent 500 where
+display code would crash the moment an admin deactivated a provider with
+history. R-6 was a stale-TZ rendering bug on the customer-facing views.
 
-D-066 is the new architectural decision recorded in
+D-067 is the new architectural decision recorded in
 `docs/decisions/DECISIONS-BOOKING-AVAILABILITY.md`.
 
-### Schema invariant
+### Core fix (R-5): historical provider is safe to dereference
 
-Migration `database/migrations/2026_04_16_074718_add_overlap_guard_to_bookings_table.php`
-adds to the `bookings` table:
+`app/Models/Booking.php` — the `provider()` relation is overridden to
+resolve the related row regardless of `deleted_at`:
 
-- `buffer_before_minutes SMALLINT NOT NULL DEFAULT 0` — snapshot of the
-  service's `buffer_before` at booking time.
-- `buffer_after_minutes SMALLINT NOT NULL DEFAULT 0` — snapshot of the
-  service's `buffer_after` at booking time.
-- `effective_starts_at TIMESTAMP(0) GENERATED ALWAYS AS (…) STORED` —
-  computed from `starts_at - buffer_before_minutes`.
-- `effective_ends_at TIMESTAMP(0) GENERATED ALWAYS AS (…) STORED` —
-  computed from `ends_at + buffer_after_minutes`.
-- Constraint `bookings_no_provider_overlap`:
-
-    EXCLUDE USING GIST (
-      provider_id WITH =,
-      tsrange(effective_starts_at, effective_ends_at, '[)') WITH &&
-    ) WHERE (status IN ('pending', 'confirmed'))
-
-The generated columns use `make_interval(mins => ...::int)` rather than
-`(text || ' minutes')::interval` because the former is `IMMUTABLE` (required
-for `STORED` generated columns) while the latter is only `STABLE`.
-
-The constraint uses half-open interval semantics (`[)`) so abutting bookings
-with zero buffers do not collide — matching the application's
-`SlotGeneratorService::conflictsWithBookings()` semantics.
-
-Only `pending` and `confirmed` bookings participate in the GIST index,
-exactly mirroring D-031: cancelling a booking frees its slot without any
-application-level cleanup.
-
-### Controller transaction wrap
-
-Both booking write paths are now restructured as:
-
-```
-try {
-    $result = DB::transaction(function () use (...) {
-        // 1. Re-check slot via SlotGeneratorService (fast-fail)
-        // 2. Auto-assign provider if not selected
-        // 3. Upsert customer
-        // 4. Booking::create with buffer_*_minutes snapshot
-    });
-} catch (SlotNoLongerAvailableException) {
-    return /* 409 slot-no-longer-available */;
-} catch (NoProviderAvailableException) {
-    return /* 409 no-provider-available */;
-} catch (QueryException $e) {
-    if (($e->getPrevious()?->getCode() ?? $e->getCode()) === '23P01') {
-        return /* same 409 slot-no-longer-available */;
-    }
-    throw $e;
+```php
+/** @return BelongsTo<Provider, $this> */
+public function provider(): BelongsTo
+{
+    return $this->belongsTo(Provider::class)->withTrashed();
 }
 ```
 
-Two marker exceptions live in `app/Exceptions/Booking/`:
+This is the single asymmetry in the codebase. Everywhere else, the default
+`SoftDeletingScope` on `Provider` continues to exclude trashed providers:
+`SlotGeneratorService::getEligibleProviders`, `$service->providers()`,
+`$business->providers()`, `PublicBookingController::providers`,
+`PublicBookingController::store`, and `BelongsToCurrentBusiness`
+validation all inherit the scope unchanged. A booking whose provider has
+been soft-deleted now renders its original provider name on every display
+page instead of throwing a null-dereference 500.
 
-- `SlotNoLongerAvailableException` — raised from the fast-fail inside the
-  transaction closure.
-- `NoProviderAvailableException` — raised when auto-assign finds no
-  eligible provider.
+### Read-side payload plumbing (`is_active` + `timezone`)
 
-Notifications (`BookingConfirmedNotification`, `BookingReceivedNotification`)
-fire outside the transaction, after it commits successfully.
+Four display controllers were updated to expose
+`provider.is_active = ! $booking->provider->trashed()` so the UI can render
+a "(deactivated)" marker:
 
-Controllers touched:
-- `app/Http/Controllers/Booking/PublicBookingController.php` — returns JSON 409.
-- `app/Http/Controllers/Dashboard/BookingController.php` — returns redirect
-  with `->with('error', ...)`.
+- `app/Http/Controllers/Dashboard/CalendarController.php`
+- `app/Http/Controllers/Dashboard/BookingController.php::index`
+- `app/Http/Controllers/Dashboard/DashboardController.php::index`
+  (today's bookings)
+- `app/Http/Controllers/Dashboard/CustomerController.php::show`
+  (customer booking history)
+- `app/Http/Controllers/Booking/BookingManagementController.php::show`
+- `app/Http/Controllers/Customer/BookingController.php::index`
 
-### Buffer snapshot plumbing
+The last controller additionally gained a `business: { name, timezone }`
+entry on every booking in the `formatBooking` helper (R-6). Previously the
+customer's "My Bookings" view had no access to the business's timezone and
+therefore rendered UTC strings in the browser's locale.
 
-- `app/Models/Booking.php` — `buffer_before_minutes` and
-  `buffer_after_minutes` added to `#[Fillable]`.
-- `database/factories/BookingFactory.php` — default state sets both to 0; a
-  new `withServiceBuffers()` helper reads the linked service for tests that
-  need realistic buffer snapshots.
-- `database/seeders/BusinessSeeder.php` — every `Booking::create(...)` site
-  passes `buffer_before_minutes` / `buffer_after_minutes` from the service
-  being booked. The `Colore` service (`buffer_before=5, buffer_after=15`)
-  carries its real buffers into its seeded bookings.
+### Frontend — shared datetime helpers + deactivated marker
 
-The `SlotGeneratorService` public API is unchanged — the engine continues
-to read `service.buffer_before` / `service.buffer_after` at slot-generation
-time (live, not snapshotted). Snapshotting only applies to the bookings
-table, which is the right semantics: a booking is a contract for a specific
-occupied window; later edits to the service's buffers must not retroactively
-invalidate existing bookings.
+Customer-facing pages now consume the business timezone via the shared
+`resources/js/lib/datetime-format.ts` helpers instead of raw
+`new Date(...).toLocale*()`:
 
-### New test coverage
+- `resources/js/pages/bookings/show.tsx` — uses `formatDateMedium` /
+  `formatTimeShort` with `booking.business.timezone`.
+- `resources/js/pages/customer/bookings.tsx::BookingItem` — same.
 
-- `tests/Feature/Booking/BookingOverlapConstraintTest.php` (13 tests) —
-  persistence-level matrix: direct `Booking::create` calls asserting the
-  constraint fires on overlap, abutting + buffer, identical intervals,
-  pending-vs-confirmed interactions, UPDATE path (reactivating a cancelled
-  booking), and confirming the surfaced SQLSTATE is `23P01`. Non-blocking
-  statuses (`cancelled`, `completed`, `no_show`) do not participate.
-- `tests/Feature/Booking/BookingRaceSimulationTest.php` (3 tests) —
-  deterministic controller race. `SlotGeneratorService` is mocked to return
-  the same slot twice (simulating the "both fast-fails pass" window). First
-  POST succeeds; second hits the DB constraint, the controller catches
-  `23P01`, returns 409 (public) / redirect-with-error (dashboard). Covers
-  both the provider-selected and auto-assign paths.
-- `tests/Feature/Booking/BookingBufferGuardTest.php` (3 tests) — buffer-
-  interaction: HTTP request inside a buffer window returns 409; direct
-  `Booking::create` that crosses a buffer raises `23P01`; request exactly
-  at the buffer boundary succeeds.
+`formatDateMedium` in `datetime-format.ts` grew an optional `timezone`
+parameter to match the other helpers.
 
-An optional `pcntl_fork`-based real-concurrency test was considered and
-documented in the plan but not landed — the deterministic simulation plus
-the DB constraint are the authoritative proof. If it becomes useful later,
-re-add under `tests/Feature/Booking/BookingRealConcurrencyTest.php` with
-an `env('RUN_CONCURRENCY_TESTS')` gate.
+Both pages render the deactivated marker at every provider-name site via
+`t(':name (deactivated)', { name: provider.name })`. The dashboard got the
+same treatment in five places:
 
-### Test-factory hardening
+- `resources/js/pages/dashboard.tsx` (today's bookings table)
+- `resources/js/pages/dashboard/bookings.tsx` (full bookings list)
+- `resources/js/pages/dashboard/customer-show.tsx` (customer history)
+- `resources/js/components/dashboard/booking-detail-sheet.tsx`
+- `resources/js/components/calendar/calendar-event.tsx` (tight-popover)
 
-Two pre-existing tests were creating impossible state on the same provider
-that the new constraint correctly rejected:
+The new translation key `:name (deactivated)` is wired through
+`lang/en.json`.
 
-- `tests/Feature/Dashboard/DashboardHomeTest.php` — "admin sees business-wide
-  stats" created 3 confirmed bookings at the exact same 14:00–15:00 UTC slot.
-  Fixed: spread across 08:00 / 10:00 / 12:00 UTC.
-- `tests/Feature/Dashboard/DashboardBookingsTest.php` — "pagination works"
-  created 25 factory bookings on the same provider with the factory's
-  random `dateTimeBetween`; intermittently overlapped. Fixed: loop across
-  25 distinct days.
-- `tests/Feature/Dashboard/CustomerDirectoryTest.php` — "pagination works
-  for customers" had the same random-dateTimeBetween issue with 25
-  bookings on the same provider. Fixed in the same way.
+### TypeScript types updated
 
-In every case the constraint caught a legitimately broken test, not a new
-regression.
+`resources/js/types/index.d.ts`:
+
+- `BookingDetail.provider`, `BookingSummary.provider`,
+  `DashboardBooking.provider`, `TodayBooking.provider`, and
+  `CustomerBookingHistory.provider` all gained `is_active: boolean`.
+- `BookingSummary.business` gained `timezone: string` to support the R-6
+  fix on `customer/bookings.tsx`.
+
+### New test coverage (+9 tests)
+
+R-5 regression (trashed providers stay out of NEW booking flows — locks
+D-061's invariant against future regressions):
+
+- `tests/Feature/Services/SlotGeneratorServiceTest.php` —
+  `soft-deleted provider is excluded from eligible providers`.
+- `tests/Feature/Booking/ProvidersApiTest.php` —
+  `soft-deleted provider is not returned`.
+- `tests/Feature/Booking/BookingCreationTest.php` —
+  `soft-deleted provider_id is rejected on public store`. Asserts 422
+  with `provider_id` validation error (not 409 as the plan speculated —
+  the Form Request's inline closure rejects the ID before the 409 path
+  is reached).
+
+R-5 gap (display of HISTORICAL bookings with a trashed provider):
+
+- `tests/Feature/Dashboard/CalendarControllerTest.php` —
+  `calendar renders bookings for a deactivated provider with is_active=false`.
+- `tests/Feature/Dashboard/DashboardBookingsTest.php` —
+  `bookings list renders bookings for a deactivated provider with is_active=false`.
+- `tests/Feature/Booking/BookingManagementTest.php` —
+  `booking management page renders with deactivated provider`.
+- `tests/Feature/Customer/BookingsListTest.php` —
+  `customer bookings list renders with deactivated provider` (new file).
+
+R-6 contract (customer-facing pages receive `business.timezone`):
+
+- `tests/Feature/Booking/BookingManagementTest.php` —
+  `booking management page passes business.timezone through to the page`.
+- `tests/Feature/Customer/BookingsListTest.php` —
+  `customer bookings list passes business.timezone per booking`.
+
+### Incidental test-stability fix
+
+`tests/Feature/Dashboard/CustomerDirectoryTest.php` — "customer detail
+shows booking history" was using `Booking::factory()->dateTimeBetween(...)`
+with random intervals on the same provider. The GIST constraint from
+D-066 correctly flagged the occasional overlap as a bug in the test.
+Rewrote to deterministic `CarbonImmutable::parse('2026-05-01 09:00',
+'UTC')->addDays($i)`, matching the pattern used in the R-4B pagination
+fix (commit 67d7e16).
 
 ---
 
 ## Current Project State
 
-- **Backend**: Postgres 16 with `btree_gist`; the `bookings` table enforces
-  overlap as a schema invariant. No changes to `SlotGeneratorService`'s
-  public API. Both booking write paths (public + dashboard) run inside
-  `DB::transaction`.
-- **Frontend**: no changes.
+- **Backend**: `Booking::provider()` is the only relation that resolves a
+  trashed row. Every other provider query path keeps the default
+  `SoftDeletingScope`. Eight read-side payloads now expose
+  `provider.is_active`; two customer-facing payloads now carry
+  `business.timezone`.
+- **Frontend**: customer-facing and dashboard pages render provider names
+  with a "(deactivated)" marker for trashed providers, and customer-facing
+  date/time rendering now honours the business timezone via shared
+  helpers.
 - **Routes**: no changes.
-- **Tests**: full Pest suite green on Postgres — **452 passed, 1727
-  assertions**. +19 from the R-4A baseline of 433.
-- **Decisions**: D-066 appended to
+- **Tests**: full Pest suite green on Postgres — **461 passed, 1810
+  assertions**. +9 from the R-4B baseline of 452.
+- **Decisions**: D-067 appended to
   `docs/decisions/DECISIONS-BOOKING-AVAILABILITY.md`.
-- **Migrations**: one new migration `2026_04_16_074718_add_overlap_guard_to_bookings_table`.
-  `migrate:fresh --seed` runs clean.
+- **Migrations**: none.
+- **i18n**: one new key added to `lang/en.json` —
+  `":name (deactivated)"`.
 
 ---
 
@@ -176,62 +169,66 @@ regression.
 ```bash
 php artisan migrate:fresh --seed
 php artisan test --compact
+npm run build
 ```
 
-Inspect the constraint:
+Manual smoke:
 
-```sql
-SELECT conname, pg_get_constraintdef(oid)
-FROM pg_constraint
-WHERE conrelid = 'bookings'::regclass
-  AND conname = 'bookings_no_provider_overlap';
-```
-
-Expect the EXCLUDE USING gist definition on
-`(provider_id, tsrange(effective_starts_at, effective_ends_at, '[)'))`
-with the partial predicate `status IN ('pending', 'confirmed')`.
+- Soft-delete a provider (`Provider::find($id)->delete()` via tinker)
+  that has historical bookings.
+- Visit `/my-bookings` (as the customer), `/bookings/{token}` (public
+  cancellation page), `/dashboard` (today's bookings), `/dashboard/bookings`
+  (full list), `/dashboard/customers/{id}` (customer detail), and the
+  dashboard calendar. In each place the provider name renders with
+  "(deactivated)" appended; no 500s.
+- On `/my-bookings` and `/bookings/{token}`, temporarily set the business
+  timezone to something far from your browser's (e.g. `Asia/Tokyo`) and
+  verify the rendered date/time matches the business-local time, not the
+  browser-local time.
 
 ---
 
 ## What the Next Session Needs to Know
 
-R-4 (both A and B halves) is now complete. The roadmap-review checklist
-(`docs/reviews/ROADMAP-REVIEW.md`) moves on to R-5
-(deactivated collaborators still appear in booking flows), R-6 (timezone
-rendering on customer-facing pages), or other listed items — order per
-the developer's preference.
+R-5 is complete. R-6 is complete. R-4 (both halves) remains complete.
 
-When implementing new booking write sites (Google Calendar pull sync,
-imports, admin rescue tools), note:
+The roadmap-review checklist (`docs/reviews/ROADMAP-REVIEW.md`) moves on
+to **R-7 — provider-choice enforcement**. R-7 is intentionally scoped
+differently: it touches `PublicBookingController::store` and the
+multi-step booking flow (`resources/js/pages/booking/show.tsx`), and its
+concern is policy enforcement on POST plus React step-init — not display
+correctness. Bundling it into this session would have hurt reviewability.
 
-- The constraint applies uniformly. A new writer that forgets a
-  transaction still cannot produce overlapping bookings — the DB rejects
-  the write.
-- Any `QueryException` with SQLSTATE `23P01` from Postgres on a booking
-  write means the new row would overlap an existing pending/confirmed
-  booking for the same provider. Translate to a user-visible "slot no
-  longer available" message, matching the existing controller behaviour.
-- Buffer snapshots are required on every `Booking::create` call (both
-  columns default to 0, so omitting them is legal but is semantically
-  wrong when the service has non-zero buffers — the constraint will not
-  catch a buffer-period conflict if the snapshot is missing). Use
-  `BookingFactory::withServiceBuffers()` in tests.
+When adding new booking-related display code, note:
+
+- `$booking->provider` is always a row. Trashed providers are still
+  returned. Use `$booking->provider->trashed()` (or equivalent) to gate
+  any action-ish UI.
+- For NEW work (eligibility, availability, auto-assignment, validation),
+  continue to go through `Provider::query()`, `$service->providers()`,
+  `$business->providers()`, or `BelongsToCurrentBusiness(Provider::class)`.
+  These all keep the default scope and will continue to exclude trashed
+  providers.
+- Customer-facing display payloads should include `business.timezone` so
+  the frontend can format times correctly. Use the helpers in
+  `resources/js/lib/datetime-format.ts`; do not call
+  `new Date(...).toLocale*()` directly.
 
 ---
 
 ## Open Questions / Deferred Items
 
-- **Real-concurrency smoke test** — optional `pcntl_fork`-based test is
-  documented in the R-4B plan but not landed. The deterministic simulation
-  is authoritative; add only if a future incident argues for OS-level
-  proof.
-- **Availability-exception race** — an admin editing an availability
-  exception while a customer books the affected slot is a separate
-  user-flow concern, not a double-booking race. Out of scope; flag if
-  observed.
-- **Parallel test execution** (`paratest` with per-worker Postgres
-  databases) — unchanged from R-4A. Revisit only if the suite grows
-  painful.
+- **R-7 — provider-choice enforcement** — next in the remediation
+  roadmap.
+- **`docs/ARCHITECTURE-SUMMARY.md` stale terminology** — noted during
+  this session: several places still say "collaborator" where the code
+  has moved to "provider". Not blocking; clean up in a dedicated docs
+  pass.
+- **Real-concurrency smoke test** — carried over from R-4B; deterministic
+  simulation remains authoritative.
+- **Availability-exception race** — carried over from R-4B; out of scope.
+- **Parallel test execution** (`paratest`) — carried over from R-4A;
+  revisit only if the suite grows painful.
 - **Multi-business join flow + business-switcher UI (R-2B)** — carried
   over from earlier sessions; still deferred.
 - **Dashboard-level "unstaffed service" warning** — carried over from

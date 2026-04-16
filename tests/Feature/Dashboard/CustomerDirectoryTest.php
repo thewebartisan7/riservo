@@ -112,12 +112,17 @@ test('customer from another business not shown', function () {
 
 test('customer detail shows booking history', function () {
     $customer = Customer::factory()->create(['name' => 'Jane Doe']);
-    Booking::factory()->count(2)->create([
-        'business_id' => $this->business->id,
-        'provider_id' => $this->provider->id,
-        'service_id' => $this->service->id,
-        'customer_id' => $customer->id,
-    ]);
+    foreach (range(0, 1) as $i) {
+        $day = CarbonImmutable::parse('2026-05-01 09:00', 'UTC')->addDays($i);
+        Booking::factory()->create([
+            'business_id' => $this->business->id,
+            'provider_id' => $this->provider->id,
+            'service_id' => $this->service->id,
+            'customer_id' => $customer->id,
+            'starts_at' => $day,
+            'ends_at' => $day->addMinutes(30),
+        ]);
+    }
 
     $response = $this->actingAs($this->admin)->get("/dashboard/customers/{$customer->id}");
 

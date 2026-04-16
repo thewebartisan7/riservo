@@ -19,7 +19,7 @@ export interface BookingDetail {
     status: string;
     notes: string | null;
     service: { name: string; duration_minutes: number; price: number | null };
-    provider: { name: string };
+    provider: { name: string; is_active: boolean };
     business: { name: string; timezone: string; cancellation_window_hours: number };
     customer: { name: string };
     can_cancel: boolean;
@@ -32,8 +32,8 @@ export interface BookingSummary {
     ends_at: string;
     status: string;
     service: { name: string };
-    provider: { name: string };
-    business: { name: string };
+    provider: { name: string; is_active: boolean };
+    business: { name: string; timezone: string };
     can_cancel: boolean;
 }
 
@@ -84,7 +84,7 @@ export interface DashboardBooking {
     created_at: string;
     cancellation_token: string;
     service: { id: number; name: string; duration_minutes: number; price: number | null };
-    provider: { id: number; name: string; avatar_url: string | null };
+    provider: { id: number; name: string; avatar_url: string | null; is_active: boolean };
     customer: { id: number; name: string; email: string; phone: string | null };
 }
 
@@ -94,7 +94,7 @@ export interface TodayBooking {
     ends_at: string;
     status: string;
     service: { name: string; duration_minutes: number };
-    provider: { id: number; name: string };
+    provider: { id: number; name: string; is_active: boolean };
     customer: { name: string };
 }
 
@@ -128,7 +128,7 @@ export interface CustomerBookingHistory {
     status: string;
     source: string;
     service: { name: string; duration_minutes: number; price: number | null };
-    provider: { id: number; name: string };
+    provider: { id: number; name: string; is_active: boolean };
 }
 
 export interface FilterOption {

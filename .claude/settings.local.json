@@ -34,7 +34,11 @@
       "Bash(sort -t- -k2 -n)",
       "Bash(herd services:*)",
       "Bash(herd services:available)",
-      "Bash(psql --version)"
+      "Bash(psql --version)",
+      "Bash(grep -n \"softDelete\\\\|->delete\\(\\)\\\\|deleted_at\" /Users/damir/Projects/riservo-ch/database/seeders/*.php)",
+      "Bash(grep -l \"PublicBooking\\\\|StoreManualBooking\" /Users/damir/Projects/riservo-ch/tests/Feature/Booking/*.php)",
+      "Bash(grep -n \"provider_id\" /Users/damir/Projects/riservo-ch/database/migrations/*.php)",
+      "Bash(grep -l \"softDelete\\\\|trashed\\\\|deactivate\" /Users/damir/Projects/riservo-ch/tests/Feature/Dashboard/*.php)"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -62,7 +62,11 @@ class Booking extends Model
     /** @return BelongsTo<Provider, $this> */
     public function provider(): BelongsTo
     {
-        return $this->belongsTo(Provider::class);
+        // D-067: a booking's provider is a historical, immutable fact; resolve the row
+        // regardless of deleted_at so display/notification sites never crash. Eligibility
+        // for NEW work flows through Provider::query() / $service->providers() /
+        // $business->providers(), which keep the default SoftDeletingScope.
+        return $this->belongsTo(Provider::class)->withTrashed();
     }
 
     /** @return BelongsTo<Service, $this> */

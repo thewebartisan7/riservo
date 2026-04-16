@@ -191,5 +191,6 @@
     "Date: :date": "Date: :date",
     "Time: :time": "Time: :time",
     "View booking": "View booking",
-    "Thank you for your booking!": "Thank you for your booking!"
+    "Thank you for your booking!": "Thank you for your booking!",
+    ":name (deactivated)": ":name (deactivated)"
 }
