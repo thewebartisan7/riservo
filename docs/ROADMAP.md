@@ -11,7 +11,7 @@
 
 Starting point: fresh Laravel 13 installation (no starter kit) provided by the developer.
 
-- [x] Configure `.env` for local development (SQLite, mail, app settings)
+- [x] Configure `.env` for local development (Postgres, mail, app settings)
 - [x] Set up directory structure conventions (Services, DTOs, Enums, etc.)
 - [x] Configure `composer.json` with useful dev dependencies (Pint, Larastan, etc.)
 - [x] Set up Laravel Pint for code style
@@ -37,7 +37,7 @@ Starting point: fresh Laravel 13 installation (no starter kit) provided by the d
   - Business-level and collaborator-level availability rules and exceptions
   - 10 Bookings across all statuses (confirmed, pending, completed, cancelled, no_show, manual)
 - [x] Verify all relationships and factories work correctly (57 tests passing)
-- [x] Confirm SQLite compatibility for all migrations
+- [x] Confirm Postgres compatibility for all migrations
 
 ---
 
@@ -194,7 +194,7 @@ Full settings area for managing the business configuration.
 
 Transactional email system for all booking lifecycle events.
 
-- [x] Configure Laravel Mail with Hostpoint SMTP for MVP (credentials via .env — provider is swappable with no code changes)
+- [x] Configure Laravel Mail for MVP (credentials via .env — provider chosen at deploy time on Laravel Cloud; swappable with no code changes)
 - [x] Email templates in React Email or Blade (consistent branding):
   - Booking confirmed (to customer)
   - Booking confirmed (to collaborator)
@@ -294,8 +294,7 @@ Features explicitly out of scope for MVP, to be planned separately:
 - Public reviews and ratings
 - Owner vs Admin role distinction (separate permissions)
 - Vertical-specific extensions
-- S3 / Laravel Cloud file storage migration (when Hostpoint outgrown)
-- Migrate transactional email to Mailtrap Sending (or equivalent dedicated provider) when Hostpoint SMTP limits are outgrown
+- Migrate transactional email to Mailtrap Sending (or equivalent dedicated provider) when the Laravel Cloud-provisioned SMTP integration is outgrown
 
 ---
 

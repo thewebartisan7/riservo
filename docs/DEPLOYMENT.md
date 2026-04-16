@@ -1,58 +1,61 @@
 # Deployment Guide
 
-Server requirements and configuration for running riservo.ch in production.
+riservo.ch is deployed on **Laravel Cloud** — the first-party managed host for
+Laravel applications. This guide covers what Laravel Cloud provides, what the
+project needs configured there, and what the local development setup looks
+like.
 
 ---
 
-## Server Requirements
+## Platform
 
-- PHP 8.3+ with extensions: `mbstring`, `openssl`, `pdo`, `tokenizer`, `xml`, `ctype`, `json`, `bcmath`, `fileinfo`, `gd` (or `imagick`)
-- MariaDB 10.6+ (or MySQL 8.0+)
-- Node.js 20+ (for building frontend assets)
-- Composer 2.x
+- **Application runtime**: Laravel Cloud-managed PHP 8.3 with Composer
+  dependencies installed by the platform's build pipeline.
+- **Database**: Laravel Cloud-managed **Postgres 16** (see D-065).
+- **Queue workers**: Laravel Cloud-managed — no Supervisor, no manual process
+  supervision.
+- **Scheduler**: Laravel Cloud-managed — no server-level cron entry; the
+  platform runs `schedule:run` each minute.
+- **File storage**: Laravel Cloud-managed object storage, exposed through the
+  Laravel `Storage` facade with the `public` disk.
+- **Deployments**: triggered by pushes to the configured branch; the platform
+  builds, runs migrations, caches config/routes/views, and rolls the new
+  release.
 
 ---
 
 ## Environment Variables
 
-### Required `.env` keys for production
+Configured on the Laravel Cloud project, not in a committed `.env`.
 
 ```env
 APP_ENV=production
 APP_DEBUG=false
 APP_URL=https://riservo.ch
 
-DB_CONNECTION=mariadb
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_DATABASE=riservo
-DB_USERNAME=
-DB_PASSWORD=
+DB_CONNECTION=pgsql
+# DB_HOST / DB_PORT / DB_DATABASE / DB_USERNAME / DB_PASSWORD
+# are injected by Laravel Cloud from the managed Postgres instance.
 
 QUEUE_CONNECTION=database
 
-# Hostpoint SMTP
-MAIL_MAILER=smtp
-MAIL_HOST=asmtp.mail.hostpoint.ch
-MAIL_PORT=587
-MAIL_USERNAME=noreply@riservo.ch
-MAIL_PASSWORD=
-MAIL_ENCRYPTION=tls
+# Mail provider is chosen at deploy time.
+# Laravel Cloud offers Postmark / Mailgun / SES integrations; credentials
+# are injected via the selected integration's secrets.
+MAIL_MAILER=
 MAIL_FROM_ADDRESS=noreply@riservo.ch
 MAIL_FROM_NAME="riservo"
 ```
 
+Additional variables (Google OAuth for calendar sync, Stripe keys when Cashier
+is adopted, etc.) are added as each integration lands.
+
 ---
 
-## Scheduler (Cron)
+## Scheduler
 
-The Laravel scheduler must run every minute. Add this cron entry on the server:
-
-```cron
-* * * * * cd /path-to-project && php artisan schedule:run >> /dev/null 2>&1
-```
-
-### Scheduled commands
+The Laravel scheduler is executed by Laravel Cloud every minute. No cron
+configuration is required. Scheduled commands:
 
 | Command | Frequency | Description |
 |---------|-----------|-------------|
@@ -63,55 +66,21 @@ The Laravel scheduler must run every minute. Add this cron entry on the server:
 
 ## Queue Worker
 
-The application uses the `database` queue driver. A queue worker must be running to process queued jobs (email notifications).
+The application uses the `database` queue driver. Laravel Cloud runs the
+worker(s) for the project; scaling and restarts on deploy are handled by the
+platform. No Supervisor setup required.
 
-### Manual start (development / testing)
+For local development:
 
 ```bash
 php artisan queue:work --sleep=3 --tries=3 --timeout=90
 ```
 
-### Supervisor (production)
-
-Use Supervisor to keep the queue worker running and auto-restart on failure.
-
-**Install Supervisor:**
-```bash
-sudo apt-get install supervisor
-```
-
-**Configuration** (`/etc/supervisor/conf.d/riservo-worker.conf`):
-
-```ini
-[program:riservo-worker]
-process_name=%(program_name)s_%(process_num)02d
-command=php /path-to-project/artisan queue:work database --sleep=3 --tries=3 --timeout=90 --max-jobs=1000 --max-time=3600
-autostart=true
-autorestart=true
-stopasgroup=true
-killasgroup=true
-user=www-data
-numprocs=1
-redirect_stderr=true
-stdout_logfile=/path-to-project/storage/logs/worker.log
-stopwaitsecs=3600
-```
-
-**Start Supervisor:**
-```bash
-sudo supervisorctl reread
-sudo supervisorctl update
-sudo supervisorctl start riservo-worker:*
-```
-
-After deploying new code, restart the worker:
-```bash
-php artisan queue:restart
-```
-
 ---
 
-## Build Frontend Assets
+## Frontend Assets
+
+Laravel Cloud builds Vite assets as part of the deploy pipeline. Locally:
 
 ```bash
 npm ci
@@ -122,12 +91,29 @@ npm run build
 
 ## Post-Deploy Commands
 
-Run after each deployment:
+Laravel Cloud runs the standard cache warm-up sequence on each release. The
+equivalent sequence locally (e.g., after pulling a schema change):
 
 ```bash
-php artisan migrate --force
+php artisan migrate
 php artisan config:cache
 php artisan route:cache
 php artisan view:cache
 php artisan queue:restart
 ```
+
+---
+
+## Local Development
+
+- **PHP**: served by Laravel Herd at `https://riservo-ch.test`.
+- **Database**: Postgres 16 via DBngin at `127.0.0.1:5432`. The local database
+  is `riservo-ch`; the test database is `riservo_ch_testing` (used by
+  `phpunit.xml`). Copy `.env.example` to `.env` and fill the `DB_PASSWORD`
+  value for your local Postgres instance.
+- **Frontend**: `npm run dev` for HMR, or `npm run build` for a one-off bundle.
+- **Queues / scheduler**: run on demand (`queue:work`, `schedule:work`); neither
+  runs automatically in local dev.
+
+If a local migration or seeder fails with a `pgsql` driver error, verify that
+`pdo_pgsql` is enabled in the Herd-selected PHP runtime.

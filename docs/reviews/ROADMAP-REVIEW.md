@@ -115,10 +115,10 @@ Both the public booking flow and the manual dashboard booking flow perform a slo
 The agent must evaluate and propose the right combination of the following approaches in the plan:
 
 1. **Database transaction with locking**: wrap the availability re-check and the `Booking::create` in a transaction, using row-level locks (`SELECT FOR UPDATE` on existing bookings for the same collaborator + time window) to serialize concurrent writes.
-2. **Persistence-level conflict guard**: if the agent proposes a DB-level invariant, it must genuinely prevent **overlapping** confirmed/pending bookings for the same collaborator on MariaDB and SQLite. A plain unique constraint on `(collaborator_id, starts_at, ends_at)` is **not** sufficient because it only blocks identical rows, not interval overlap.
+2. **Persistence-level conflict guard**: if the agent proposes a DB-level invariant, it must genuinely prevent **overlapping** confirmed/pending bookings for the same collaborator. A plain unique constraint on `(collaborator_id, starts_at, ends_at)` is **not** sufficient because it only blocks identical rows, not interval overlap. Postgres `EXCLUDE USING GIST` with `btree_gist` is the canonical declarative invariant for this shape.
 3. **Application-level re-check as last resort**: the second availability check already in the code can serve as a fast-fail before hitting the DB constraint.
 
-The solution must work on both SQLite (dev) and MariaDB (prod). Note that SQLite does not support `SELECT FOR UPDATE` — the agent should account for this.
+The database engine is Postgres 16 across all environments (per D-065), so the guard can rely on Postgres-only features such as `SELECT FOR UPDATE` and `EXCLUDE USING GIST`.
 
 Add a concurrency-focused test (or integration test) that simulates two near-simultaneous booking attempts for the same slot and asserts only one succeeds.
 

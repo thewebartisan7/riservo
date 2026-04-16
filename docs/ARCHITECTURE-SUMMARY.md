@@ -7,7 +7,7 @@ This is the shortest current-state architecture overview for riservo.ch. Read th
 - Laravel 13 backend on PHP 8.3
 - Inertia v3 + React 19 + TypeScript frontend
 - Tailwind CSS v4 with local COSS UI primitives
-- SQLite for local development, MariaDB in production
+- Postgres 16 across all environments, managed on Laravel Cloud in production
 - Laravel Cashier on the `Business` model for SaaS billing
 
 ## Core Domain

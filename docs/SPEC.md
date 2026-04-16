@@ -72,7 +72,7 @@ The set of rules and exceptions that determine when a Collaborator (and therefor
 ### Tech Stack
 - **Backend**: Laravel 13 (PHP 8.3)
 - **Frontend**: Inertia.js + React + TypeScript
-- **Database**: MariaDB (production), SQLite (local development)
+- **Database**: Postgres 16 (all environments, managed on Laravel Cloud in production)
 - **Billing**: Laravel Cashier (Stripe) on the `Business` model
 - **Scheduling**: custom implementation using Laravel + Carbon (no third-party scheduling package in MVP)
 
@@ -476,8 +476,8 @@ CalendarIntegration
 
 ### File Storage
 - Laravel Storage with `local` driver in development
-- Production: Hostpoint server file storage via `public` disk initially
-- Architecture uses Laravel's Storage facade throughout — migration to S3-compatible storage (or Laravel Cloud) requires only a driver config change, no code changes
+- Production: Laravel Cloud's managed object storage via the `public` disk
+- Architecture uses Laravel's Storage facade throughout — the driver is swapped via config, no code changes required
 
 ### Rate Limiting
 - Public booking routes (`/{slug}`, slot availability API, booking creation) are protected with Laravel's built-in rate limiter

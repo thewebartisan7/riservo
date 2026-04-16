@@ -10,7 +10,7 @@ This file is the scoped instruction entry point for work in this directory subtr
 - **Backend**: Laravel 13 (PHP)
 - **Frontend**: Inertia.js + React + TypeScript
 - **UI Library**: COSS UI — Tailwind CSS, copy-paste component library (no npm package)
-- **Database**: SQLite (local dev), MariaDB (production)
+- **Database**: Postgres 16 (all environments, managed on Laravel Cloud in production)
 - **Billing**: Laravel Cashier (Stripe) on the `Business` model
 - **Auth**: Custom controllers — no Laravel Fortify, no Jetstream
 
@@ -88,4 +88,4 @@ Docs-only or workflow-only sessions may skip the HANDOFF update, but still move 
 - **Customer model**: always separate from `users` table — guests have `user_id = null`
 - **Booking source**: every booking has a `source` field (`riservo` | `google_calendar` | `manual`)
 - **Magic links**: implemented with `URL::temporarySignedRoute()`, one-time use, 15–30 min expiry
-- **File storage**: use Laravel's `Storage` facade — local in dev, Hostpoint disk in prod
+- **File storage**: use Laravel's `Storage` facade — local in dev, Laravel Cloud managed object storage in prod
