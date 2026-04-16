@@ -21,10 +21,11 @@ final class AuthHelper
      */
     public static function loginAs(mixed $page, User $user, string $password = 'password'): mixed
     {
-        return $page->visit('/login')
+        return visit('/login')
             ->type('email', $user->email)
             ->type('password', $password)
-            ->press('Sign in');
+            ->submit()
+            ->waitForEvent('load');
     }
 
     /**
@@ -43,7 +44,7 @@ final class AuthHelper
             ['user' => $user->id, 'token' => $token],
         );
 
-        return $page->visit($url);
+        return visit($url);
     }
 
     /**
