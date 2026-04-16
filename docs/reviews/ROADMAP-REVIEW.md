@@ -104,7 +104,8 @@ Several Form Requests validate collaborator IDs and service IDs with plain `exis
 ## R-4 — Booking Race Condition (High)
 
 **Source**: REVIEW-1.md issue #3  
-**Priority**: High — data integrity
+**Priority**: High — data integrity  
+**Status**: split into R-4A (database engine swap — **complete**, 2026-04-16) and R-4B (race guard — pending)
 
 ### Context
 
