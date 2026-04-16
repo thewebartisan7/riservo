@@ -18,3 +18,17 @@ This file captures unscheduled follow-up work, UX ideas, and deferred engineerin
 
 - The onboarding logo upload path still reflects the older standalone-request implementation described in D-042. When that area is touched again, evaluate migrating it to the current Inertia v3 `useHttp` pattern.
 - If `docs/design/ui.pen` stops being useful as a repo-local reference, move it out of the repository and update `docs/README.md` accordingly.
+
+## Embed & Share (R-9 carry-overs)
+
+- Popup widget i18n — load translations into `public/embed.js` (decide: per-script `data-locale`? server-rendered `/embed-{locale}.js`? `window.riservoLocale` global?). Today `iframe.title = 'Book appointment'` and the close button's `aria-label='Close'` are English-only.
+- Popup analytics events — `onOpen`, `onBooked`, `onClose` callbacks for host-page telemetry.
+- Custom theming for the popup overlay — CSS variables for container colors, border-radius, close-button style.
+- Multi-service picker embed — a "Book with us" trigger that opens the popup on the service picker rather than a single service flow.
+- CSP / `X-Frame-Options` hardening — cross-cutting, not embed-specific; the app currently sets neither.
+- Safari ITP session-cookie behaviour inside iframes — investigate once real traffic surfaces an issue (D-070 Risk 8.4).
+- Slug-alias history — old embed URLs should keep working when a business renames its slug or a service's slug (D-070 names the problem; does not solve it).
+- Browser test infrastructure — Pest Browser plugin or Playwright, sized as its own session. Would unlock automated modal-robustness coverage for R-9.
+- Deployed-snippet telemetry — instrument `embed.js` load to count "popup snippets in the wild," informing future contract changes.
+- Dashboard embed-settings copy UX polish — toggles, multi-service snippet view, inline copy-with-comments.
+- SRI hashes on the `<script>` tag — revisit if/when `embed.js` ever moves to a CDN rather than the app origin.

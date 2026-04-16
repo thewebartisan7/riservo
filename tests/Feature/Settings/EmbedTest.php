@@ -48,3 +48,37 @@ test('public booking page without embed param has embed false', function () {
         ->assertOk()
         ->assertInertia(fn ($page) => $page->where('embed', false));
 });
+
+test('embed.js ships as a non-empty vanilla JS IIFE', function () {
+    $path = public_path('embed.js');
+
+    expect(file_exists($path))->toBeTrue();
+    expect(filesize($path))->toBeGreaterThan(0);
+    expect(trim(file_get_contents($path)))->toStartWith('(function');
+});
+
+test('embed.js supports per-button service prefilter', function () {
+    $content = file_get_contents(public_path('embed.js'));
+
+    expect($content)
+        ->toContain('data-riservo-service')
+        ->toContain('data-slug');
+});
+
+test('embed.js references no external domains', function () {
+    $content = file_get_contents(public_path('embed.js'));
+
+    preg_match_all('#https?://[^\s"\'`]+#', $content, $matches);
+
+    expect($matches[0])->toBeEmpty();
+});
+
+test('embed settings page exposes appUrl prop as absolute URL', function () {
+    $this->actingAs($this->admin)
+        ->get('/dashboard/settings/embed')
+        ->assertOk()
+        ->assertInertia(fn ($page) => $page
+            ->component('dashboard/settings/embed')
+            ->where('appUrl', fn ($v) => is_string($v) && str_starts_with($v, 'http'))
+        );
+});

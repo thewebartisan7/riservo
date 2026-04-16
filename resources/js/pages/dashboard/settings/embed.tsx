@@ -39,7 +39,10 @@ export default function Embed({ slug, baseUrl, embedUrl, appUrl, services }: Pro
 
     const iframeUrl = previewService ? `${baseUrl}/${previewService}?embed=1` : embedUrl;
     const iframeSnippet = `<iframe src="${iframeUrl}" width="100%" height="700" frameborder="0"></iframe>`;
-    const popupSnippet = `<script src="${appUrl}/embed.js" data-slug="${slug}"></script>\n<button data-riservo-open>${t('Book Now')}</button>`;
+    const popupButton = previewService
+        ? `<button data-riservo-open data-riservo-service="${previewService}">${t('Book Now')}</button>`
+        : `<button data-riservo-open>${t('Book Now')}</button>`;
+    const popupSnippet = `<script src="${appUrl}/embed.js" data-slug="${slug}"></script>\n${popupButton}`;
     const displayUrl = baseUrl.replace(/^https?:\/\//, '');
 
     return (

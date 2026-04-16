@@ -267,16 +267,26 @@ A lightweight JS snippet that the business copies onto their site. When a trigge
 ```
 
 ### Service Pre-filter
-Both embed modes support pre-filtering to a specific service via URL param:
+Both embed modes support pre-filtering to a specific service via a path segment:
+
 ```
-?embed=1&service=taglio-capelli
+/{slug}/{service-slug}?embed=1
 ```
+
+For the popup embed, add `data-riservo-service="<service-slug>"` to the trigger element:
+
+```html
+<script src="https://riservo.ch/embed.js" data-slug="salone-mario"></script>
+<button data-riservo-open data-riservo-service="taglio-capelli">Book haircut</button>
+```
+
+Multiple buttons can share one script tag, each with its own service (or none).
 
 ### Dashboard Embed Settings
 The business dashboard includes an **Embed & Share** section with:
 - Copy buttons for iframe snippet and JS popup snippet
 - Live preview of the embedded form
-- Pre-filtered snippets per service
+- Pre-filtered snippets per service (path form, per D-070)
 
 ---
 
