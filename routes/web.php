@@ -16,6 +16,7 @@ use App\Http\Controllers\Dashboard\CalendarPendingActionController;
 use App\Http\Controllers\Dashboard\CustomerController as DashboardCustomerController;
 use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Dashboard\Settings\AccountController;
+use App\Http\Controllers\Dashboard\Settings\BillingController;
 use App\Http\Controllers\Dashboard\Settings\BookingSettingsController;
 use App\Http\Controllers\Dashboard\Settings\BusinessExceptionController;
 use App\Http\Controllers\Dashboard\Settings\CalendarIntegrationController;
@@ -27,6 +28,7 @@ use App\Http\Controllers\Dashboard\Settings\StaffController as SettingsStaffCont
 use App\Http\Controllers\Dashboard\Settings\WorkingHoursController;
 use App\Http\Controllers\OnboardingController;
 use App\Http\Controllers\Webhooks\GoogleCalendarWebhookController;
+use App\Http\Controllers\Webhooks\StripeWebhookController;
 use App\Http\Controllers\WelcomeController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -99,114 +101,130 @@ Route::middleware('auth')->group(function () {
 
     // Business dashboard (auth + verified + business role + onboarded)
     Route::middleware(['verified', 'role:admin,staff', 'onboarded'])->group(function () {
-        Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
-        Route::get('/dashboard/welcome', [WelcomeController::class, 'show'])->name('dashboard.welcome');
-
-        // Bookings
-        Route::get('/dashboard/bookings', [DashboardBookingController::class, 'index'])->name('dashboard.bookings');
-        Route::post('/dashboard/bookings', [DashboardBookingController::class, 'store'])->name('dashboard.bookings.store');
-        Route::patch('/dashboard/bookings/{booking}/status', [DashboardBookingController::class, 'updateStatus'])->name('dashboard.bookings.update-status');
-        Route::patch('/dashboard/bookings/{booking}/notes', [DashboardBookingController::class, 'updateNotes'])->name('dashboard.bookings.update-notes');
-
-        // Calendar
-        Route::get('/dashboard/calendar', [CalendarController::class, 'index'])->name('dashboard.calendar');
-
-        // Calendar sync — pending actions (shared admin+staff; owner-or-admin check
-        // enforced in controller per D-085 extension + D-088).
-        Route::post('/dashboard/calendar-pending-actions/{action}/resolve', [CalendarPendingActionController::class, 'resolve'])
-            ->name('dashboard.calendar-pending-actions.resolve');
-
-        // Dashboard API (JSON)
-        Route::get('/dashboard/api/available-dates', [DashboardBookingController::class, 'availableDates'])->name('dashboard.api.available-dates');
-        Route::get('/dashboard/api/slots', [DashboardBookingController::class, 'slots'])->name('dashboard.api.slots');
-
-        // Customers (admin only)
-        Route::middleware('role:admin')->group(function () {
-            Route::get('/dashboard/customers', [DashboardCustomerController::class, 'index'])->name('dashboard.customers');
-            Route::get('/dashboard/customers/{customer}', [DashboardCustomerController::class, 'show'])->name('dashboard.customers.show');
-            Route::get('/dashboard/api/customers/search', [DashboardCustomerController::class, 'search'])->name('dashboard.api.customers.search');
-        });
-
-        // Settings (admin only)
+        // Billing (admin-only) — OUTSIDE the billing.writable gate so a lapsed
+        // admin can always reach Subscribe / Portal / Cancel / Resume (D-090).
         Route::middleware('role:admin')->prefix('dashboard/settings')->group(function () {
-            // Profile
-            Route::get('/profile', [SettingsProfileController::class, 'edit'])->name('settings.profile');
-            Route::put('/profile', [SettingsProfileController::class, 'update'])->name('settings.profile.update');
-            Route::post('/profile/logo', [SettingsProfileController::class, 'uploadLogo'])->name('settings.profile.upload-logo');
-            Route::post('/profile/slug-check', [SettingsProfileController::class, 'checkSlug'])->name('settings.profile.slug-check');
-
-            // Booking settings
-            Route::get('/booking', [BookingSettingsController::class, 'edit'])->name('settings.booking');
-            Route::put('/booking', [BookingSettingsController::class, 'update'])->name('settings.booking.update');
-
-            // Working hours
-            Route::get('/hours', [WorkingHoursController::class, 'edit'])->name('settings.hours');
-            Route::put('/hours', [WorkingHoursController::class, 'update'])->name('settings.hours.update');
-
-            // Business exceptions
-            Route::get('/exceptions', [BusinessExceptionController::class, 'index'])->name('settings.exceptions');
-            Route::post('/exceptions', [BusinessExceptionController::class, 'store'])->name('settings.exceptions.store');
-            Route::put('/exceptions/{exception}', [BusinessExceptionController::class, 'update'])->name('settings.exceptions.update');
-            Route::delete('/exceptions/{exception}', [BusinessExceptionController::class, 'destroy'])->name('settings.exceptions.destroy');
-
-            // Services
-            Route::get('/services', [SettingsServiceController::class, 'index'])->name('settings.services');
-            Route::get('/services/create', [SettingsServiceController::class, 'create'])->name('settings.services.create');
-            Route::post('/services', [SettingsServiceController::class, 'store'])->name('settings.services.store');
-            Route::get('/services/{service}', [SettingsServiceController::class, 'edit'])->name('settings.services.edit');
-            Route::put('/services/{service}', [SettingsServiceController::class, 'update'])->name('settings.services.update');
-
-            // Staff (team membership + invitations)
-            Route::get('/staff', [SettingsStaffController::class, 'index'])->name('settings.staff');
-            Route::post('/staff/invite', [SettingsStaffController::class, 'invite'])->name('settings.staff.invite');
-            Route::post('/staff/invitations/{invitation}/resend', [SettingsStaffController::class, 'resendInvitation'])->name('settings.staff.resend-invitation');
-            Route::delete('/staff/invitations/{invitation}', [SettingsStaffController::class, 'cancelInvitation'])->name('settings.staff.cancel-invitation');
-            Route::get('/staff/{user}', [SettingsStaffController::class, 'show'])->name('settings.staff.show');
-            Route::post('/staff/{user}/avatar', [SettingsStaffController::class, 'uploadAvatar'])->name('settings.staff.upload-avatar');
-
-            // Providers (bookability: schedule, services, exceptions, activation)
-            Route::post('/providers/{provider}/toggle', [SettingsProviderController::class, 'toggle'])
-                ->withTrashed()
-                ->name('settings.providers.toggle');
-            Route::put('/providers/{provider}/schedule', [SettingsProviderController::class, 'updateSchedule'])->name('settings.providers.update-schedule');
-            Route::put('/providers/{provider}/services', [SettingsProviderController::class, 'syncServices'])->name('settings.providers.sync-services');
-            Route::post('/providers/{provider}/exceptions', [SettingsProviderController::class, 'storeException'])->name('settings.providers.store-exception');
-            Route::put('/providers/{provider}/exceptions/{exception}', [SettingsProviderController::class, 'updateException'])->name('settings.providers.update-exception');
-            Route::delete('/providers/{provider}/exceptions/{exception}', [SettingsProviderController::class, 'destroyException'])->name('settings.providers.destroy-exception');
-
-            // Embed & Share
-            Route::get('/embed', [EmbedController::class, 'edit'])->name('settings.embed');
-
-            // Account (admin as provider)
-            Route::get('/account', [AccountController::class, 'edit'])->name('settings.account');
-            Route::post('/account/toggle-provider', [AccountController::class, 'toggleProvider'])->name('settings.account.toggle-provider');
-            Route::put('/account/schedule', [AccountController::class, 'updateSchedule'])->name('settings.account.update-schedule');
-            Route::post('/account/exceptions', [AccountController::class, 'storeException'])->name('settings.account.store-exception');
-            Route::put('/account/exceptions/{exception}', [AccountController::class, 'updateException'])->name('settings.account.update-exception');
-            Route::delete('/account/exceptions/{exception}', [AccountController::class, 'destroyException'])->name('settings.account.destroy-exception');
-            Route::put('/account/services', [AccountController::class, 'updateServices'])->name('settings.account.update-services');
+            Route::get('/billing', [BillingController::class, 'show'])->name('settings.billing');
+            Route::post('/billing/subscribe', [BillingController::class, 'subscribe'])->name('settings.billing.subscribe');
+            Route::post('/billing/portal', [BillingController::class, 'portal'])->name('settings.billing.portal');
+            Route::post('/billing/cancel', [BillingController::class, 'cancel'])->name('settings.billing.cancel');
+            Route::post('/billing/resume', [BillingController::class, 'resume'])->name('settings.billing.resume');
         });
 
-        // Settings accessible to admin AND staff. The outer group (line above)
-        // already enforces `role:admin,staff`, so this inner group carries no
-        // additional middleware — declaring `role:admin,staff` again would
-        // read as if the inner group narrowed access when it does not (D-081).
-        Route::prefix('dashboard/settings')->group(function () {
-            Route::get('/calendar-integration', [CalendarIntegrationController::class, 'index'])
-                ->name('settings.calendar-integration');
-            Route::post('/calendar-integration/connect', [CalendarIntegrationController::class, 'connect'])
-                ->name('settings.calendar-integration.connect');
-            Route::get('/calendar-integration/callback', [CalendarIntegrationController::class, 'callback'])
-                ->name('settings.calendar-integration.callback');
-            Route::get('/calendar-integration/configure', [CalendarIntegrationController::class, 'configure'])
-                ->name('settings.calendar-integration.configure');
-            Route::post('/calendar-integration/configure', [CalendarIntegrationController::class, 'saveConfiguration'])
-                ->name('settings.calendar-integration.save-configuration');
-            Route::post('/calendar-integration/sync-now', [CalendarIntegrationController::class, 'syncNow'])
-                ->name('settings.calendar-integration.sync-now');
-            Route::delete('/calendar-integration', [CalendarIntegrationController::class, 'disconnect'])
-                ->name('settings.calendar-integration.disconnect');
-        });
+        // All other dashboard routes are gated by the billing.writable middleware.
+        // GET / HEAD / OPTIONS pass through unconditionally; non-safe verbs on a
+        // read-only business redirect to settings.billing with a flash error
+        // (D-090).
+        Route::middleware('billing.writable')->group(function () {
+            Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+            Route::get('/dashboard/welcome', [WelcomeController::class, 'show'])->name('dashboard.welcome');
+
+            // Bookings
+            Route::get('/dashboard/bookings', [DashboardBookingController::class, 'index'])->name('dashboard.bookings');
+            Route::post('/dashboard/bookings', [DashboardBookingController::class, 'store'])->name('dashboard.bookings.store');
+            Route::patch('/dashboard/bookings/{booking}/status', [DashboardBookingController::class, 'updateStatus'])->name('dashboard.bookings.update-status');
+            Route::patch('/dashboard/bookings/{booking}/notes', [DashboardBookingController::class, 'updateNotes'])->name('dashboard.bookings.update-notes');
+
+            // Calendar
+            Route::get('/dashboard/calendar', [CalendarController::class, 'index'])->name('dashboard.calendar');
+
+            // Calendar sync — pending actions (shared admin+staff; owner-or-admin check
+            // enforced in controller per D-085 extension + D-088).
+            Route::post('/dashboard/calendar-pending-actions/{action}/resolve', [CalendarPendingActionController::class, 'resolve'])
+                ->name('dashboard.calendar-pending-actions.resolve');
+
+            // Dashboard API (JSON)
+            Route::get('/dashboard/api/available-dates', [DashboardBookingController::class, 'availableDates'])->name('dashboard.api.available-dates');
+            Route::get('/dashboard/api/slots', [DashboardBookingController::class, 'slots'])->name('dashboard.api.slots');
+
+            // Customers (admin only)
+            Route::middleware('role:admin')->group(function () {
+                Route::get('/dashboard/customers', [DashboardCustomerController::class, 'index'])->name('dashboard.customers');
+                Route::get('/dashboard/customers/{customer}', [DashboardCustomerController::class, 'show'])->name('dashboard.customers.show');
+                Route::get('/dashboard/api/customers/search', [DashboardCustomerController::class, 'search'])->name('dashboard.api.customers.search');
+            });
+
+            // Settings (admin only)
+            Route::middleware('role:admin')->prefix('dashboard/settings')->group(function () {
+                // Profile
+                Route::get('/profile', [SettingsProfileController::class, 'edit'])->name('settings.profile');
+                Route::put('/profile', [SettingsProfileController::class, 'update'])->name('settings.profile.update');
+                Route::post('/profile/logo', [SettingsProfileController::class, 'uploadLogo'])->name('settings.profile.upload-logo');
+                Route::post('/profile/slug-check', [SettingsProfileController::class, 'checkSlug'])->name('settings.profile.slug-check');
+
+                // Booking settings
+                Route::get('/booking', [BookingSettingsController::class, 'edit'])->name('settings.booking');
+                Route::put('/booking', [BookingSettingsController::class, 'update'])->name('settings.booking.update');
+
+                // Working hours
+                Route::get('/hours', [WorkingHoursController::class, 'edit'])->name('settings.hours');
+                Route::put('/hours', [WorkingHoursController::class, 'update'])->name('settings.hours.update');
+
+                // Business exceptions
+                Route::get('/exceptions', [BusinessExceptionController::class, 'index'])->name('settings.exceptions');
+                Route::post('/exceptions', [BusinessExceptionController::class, 'store'])->name('settings.exceptions.store');
+                Route::put('/exceptions/{exception}', [BusinessExceptionController::class, 'update'])->name('settings.exceptions.update');
+                Route::delete('/exceptions/{exception}', [BusinessExceptionController::class, 'destroy'])->name('settings.exceptions.destroy');
+
+                // Services
+                Route::get('/services', [SettingsServiceController::class, 'index'])->name('settings.services');
+                Route::get('/services/create', [SettingsServiceController::class, 'create'])->name('settings.services.create');
+                Route::post('/services', [SettingsServiceController::class, 'store'])->name('settings.services.store');
+                Route::get('/services/{service}', [SettingsServiceController::class, 'edit'])->name('settings.services.edit');
+                Route::put('/services/{service}', [SettingsServiceController::class, 'update'])->name('settings.services.update');
+
+                // Staff (team membership + invitations)
+                Route::get('/staff', [SettingsStaffController::class, 'index'])->name('settings.staff');
+                Route::post('/staff/invite', [SettingsStaffController::class, 'invite'])->name('settings.staff.invite');
+                Route::post('/staff/invitations/{invitation}/resend', [SettingsStaffController::class, 'resendInvitation'])->name('settings.staff.resend-invitation');
+                Route::delete('/staff/invitations/{invitation}', [SettingsStaffController::class, 'cancelInvitation'])->name('settings.staff.cancel-invitation');
+                Route::get('/staff/{user}', [SettingsStaffController::class, 'show'])->name('settings.staff.show');
+                Route::post('/staff/{user}/avatar', [SettingsStaffController::class, 'uploadAvatar'])->name('settings.staff.upload-avatar');
+
+                // Providers (bookability: schedule, services, exceptions, activation)
+                Route::post('/providers/{provider}/toggle', [SettingsProviderController::class, 'toggle'])
+                    ->withTrashed()
+                    ->name('settings.providers.toggle');
+                Route::put('/providers/{provider}/schedule', [SettingsProviderController::class, 'updateSchedule'])->name('settings.providers.update-schedule');
+                Route::put('/providers/{provider}/services', [SettingsProviderController::class, 'syncServices'])->name('settings.providers.sync-services');
+                Route::post('/providers/{provider}/exceptions', [SettingsProviderController::class, 'storeException'])->name('settings.providers.store-exception');
+                Route::put('/providers/{provider}/exceptions/{exception}', [SettingsProviderController::class, 'updateException'])->name('settings.providers.update-exception');
+                Route::delete('/providers/{provider}/exceptions/{exception}', [SettingsProviderController::class, 'destroyException'])->name('settings.providers.destroy-exception');
+
+                // Embed & Share
+                Route::get('/embed', [EmbedController::class, 'edit'])->name('settings.embed');
+
+                // Account (admin as provider)
+                Route::get('/account', [AccountController::class, 'edit'])->name('settings.account');
+                Route::post('/account/toggle-provider', [AccountController::class, 'toggleProvider'])->name('settings.account.toggle-provider');
+                Route::put('/account/schedule', [AccountController::class, 'updateSchedule'])->name('settings.account.update-schedule');
+                Route::post('/account/exceptions', [AccountController::class, 'storeException'])->name('settings.account.store-exception');
+                Route::put('/account/exceptions/{exception}', [AccountController::class, 'updateException'])->name('settings.account.update-exception');
+                Route::delete('/account/exceptions/{exception}', [AccountController::class, 'destroyException'])->name('settings.account.destroy-exception');
+                Route::put('/account/services', [AccountController::class, 'updateServices'])->name('settings.account.update-services');
+            });
+
+            // Settings accessible to admin AND staff. The outer group (line above)
+            // already enforces `role:admin,staff`, so this inner group carries no
+            // additional middleware — declaring `role:admin,staff` again would
+            // read as if the inner group narrowed access when it does not (D-081).
+            Route::prefix('dashboard/settings')->group(function () {
+                Route::get('/calendar-integration', [CalendarIntegrationController::class, 'index'])
+                    ->name('settings.calendar-integration');
+                Route::post('/calendar-integration/connect', [CalendarIntegrationController::class, 'connect'])
+                    ->name('settings.calendar-integration.connect');
+                Route::get('/calendar-integration/callback', [CalendarIntegrationController::class, 'callback'])
+                    ->name('settings.calendar-integration.callback');
+                Route::get('/calendar-integration/configure', [CalendarIntegrationController::class, 'configure'])
+                    ->name('settings.calendar-integration.configure');
+                Route::post('/calendar-integration/configure', [CalendarIntegrationController::class, 'saveConfiguration'])
+                    ->name('settings.calendar-integration.save-configuration');
+                Route::post('/calendar-integration/sync-now', [CalendarIntegrationController::class, 'syncNow'])
+                    ->name('settings.calendar-integration.sync-now');
+                Route::delete('/calendar-integration', [CalendarIntegrationController::class, 'disconnect'])
+                    ->name('settings.calendar-integration.disconnect');
+            });
+        }); // end billing.writable group
     });
 
     // Customer area (auth + customer role)
@@ -220,6 +238,12 @@ Route::middleware('auth')->group(function () {
 // Channel id + token are validated inside the controller (D-086).
 Route::post('/webhooks/google-calendar', [GoogleCalendarWebhookController::class, 'store'])
     ->name('webhooks.google-calendar');
+
+// Stripe webhook. No auth, CSRF excluded in bootstrap/app.php. Signature
+// verified inside Cashier's WebhookController via cashier.webhook.secret;
+// our subclass adds cache-layer event-id idempotency (D-091, D-092).
+Route::post('/webhooks/stripe', [StripeWebhookController::class, 'handleWebhook'])
+    ->name('webhooks.stripe');
 
 // Guest booking management (no auth, via cancellation token)
 Route::get('/bookings/{token}', [BookingManagementController::class, 'show'])->name('bookings.show');

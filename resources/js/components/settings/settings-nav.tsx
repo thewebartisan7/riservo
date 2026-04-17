@@ -35,6 +35,7 @@ const adminGroups: NavGroup[] = [
         items: [
             { label: 'Profile', href: '/dashboard/settings/profile' },
             { label: 'Booking', href: '/dashboard/settings/booking' },
+            { label: 'Billing', href: '/dashboard/settings/billing' },
         ],
     },
     {

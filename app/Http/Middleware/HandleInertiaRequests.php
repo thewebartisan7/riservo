@@ -151,7 +151,7 @@ class HandleInertiaRequests extends Middleware
     }
 
     /**
-     * @return array{id: int, name: string, slug: string}|null
+     * @return array{id: int, name: string, slug: string, subscription: array{status: string, trial_ends_at: string|null, current_period_ends_at: string|null}}|null
      */
     private function resolveBusiness(Request $request): ?array
     {
@@ -165,10 +165,16 @@ class HandleInertiaRequests extends Middleware
             return null;
         }
 
+        // Eager-load subscriptions so subscriptionStateForPayload() (D-089 §4.9)
+        // collapses two queries (`subscriptions()->exists()` +
+        // `subscription('default')`) into one relation-load.
+        $business->loadMissing('subscriptions');
+
         return [
             'id' => $business->id,
             'name' => $business->name,
             'slug' => $business->slug,
+            'subscription' => $business->subscriptionStateForPayload(),
         ];
     }
 

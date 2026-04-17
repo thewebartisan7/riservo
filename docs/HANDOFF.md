@@ -1,171 +1,164 @@
 # Handoff
 
-**Session**: MVPC-2 — Google Calendar Sync (Bidirectional) (Session 2 of `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`)
-**Date**: 2026-04-17 (code) / 2026-04-17 (round-2 review fixes)
-**Status**: Code complete; Feature + Unit suite **582 passed / 2471 assertions** (post-MVPC-1 baseline 535, +47). Pint clean. `npm run build` green. Wayfinder regenerated. Plan archived to `docs/archive/plans/PLAN-MVPC-2-CALENDAR-SYNC.md`.
+**Session**: MVPC-3 — Subscription Billing (Cashier) (Session 3 of `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`)
+**Date**: 2026-04-17
+**Status**: Code complete + three review rounds applied; Feature + Unit suite **638 passed / 2640 assertions** (post-MVPC-2 baseline 582, +56 cases). Pint clean. `npm run build` green. Wayfinder regenerated. Plan archived to `docs/archive/plans/PLAN-MVPC-3-CASHIER-BILLING.md`.
 
 > Full-suite Browser/E2E run is the developer's session-close check (`tests/Browser` takes 2+ minutes). The iteration loop used `php artisan test tests/Feature tests/Unit --compact` throughout.
 
 ---
 
-## Review round 2 — five state-management fixes applied
+## Post-review fixes (two rounds, six bugs total, all fixed + tested)
 
-After the initial MVPC-2 landing, reviewer flagged five correctness bugs around multi-calendar state management. All five were real and are fixed + tested in this revision.
+Two review rounds surfaced six bugs in total. All addressed in this revision:
+
+**Round 1** — runtime + state-management:
 
 | # | Bug | Fix |
 |---|---|---|
-| P1 | `sync_token` stored on `calendar_integrations`; replaying calendar A's token against calendar B triggers 410 and drops changes between runs for any multi-calendar setup | Moved `sync_token` to `calendar_watches` (per-row). `GoogleCalendarProvider::syncIncremental` + `PullCalendarEventsJob` read/write per watch. Integration-level column retained but no longer written. |
-| P2a | Push job only stored Google event id; a later `Change settings` reconfigure re-targeted update/delete pushes to the new destination, orphaning events in the original calendar | Added `bookings.external_event_calendar_id`; create writes it; update/delete in both the job and `GoogleCalendarProvider::updateEvent` target the booking's stored origin (fallback to current destination only for pre-fix legacy rows). |
-| P2b | `cancel_external` resolver swallowed provider failures but still marked the action resolved — staff could not retry, external event kept blocking availability | Resolver returns a three-state outcome (`resolved` / `failed` / `invalid`). Provider failure → action stays `pending`, user sees an error flash. 404/410 inside `GoogleCalendarProvider::deleteEvent` are still absorbed as "event already gone". |
-| P2c | `saveConfiguration` only upserted the config; `StartCalendarSyncJob` only created missing watches. Unchecking a calendar left its channel alive in Google, importing events from calendars the user no longer selected | `StartCalendarSyncJob` now reconciles the desired set against existing watches: stopWatch + row delete for removed calendars, startWatch + initial pull for added calendars, leave unchanged calendars alone. stopWatch failures are swallowed but the row is still deleted. |
-| P2d | Repinning an integration to a different business silently reused the old business's watches, per-watch sync tokens, and orphaned the old pending actions out of view of both tenants | `saveConfiguration` detects a `business_id` change and tears down integration-scoped state before the repin: stop all watches in Google (best-effort), delete all `calendar_watches` rows, delete all `calendar_pending_actions`, clear timing/error timestamps. OAuth tokens are preserved. `StartCalendarSyncJob` then builds fresh watches under the new business. |
+| P1 | `BillingController::subscribe` and `hasStripeKeys` only rejected `null` Stripe config; `.env.example` ships blank values which `env()` returns as `''` (empty string), so an unconfigured install would call `newSubscription(..., '')->checkout()` and explode at Stripe instead of redirecting with a friendly flash. `has_stripe_keys` similarly reported "configured" on a fresh install. | Switched both checks to `blank()` / `filled()`. New tests: `subscribe rejects blank string price ids` and `billing page reports has_stripe_keys=false when env values are blank strings`. |
+| P1 | `StripeWebhookController` cached the event id BEFORE delegating to Cashier. A 5xx or thrown exception inside Cashier's handler would still mark the event processed, permanently dropping any subscription update Stripe later retried. | Cache writes moved to AFTER `parent::handleWebhook()` returns, gated on a 2xx status. Throws / non-2xx leave the cache untouched so Stripe's retry can recover. New test: `webhook does NOT mark the event id processed when the handler throws`. |
+| P2 | `Business::subscriptionStateForPayload()` called `->toISOString()` on `trial_ends_at` but the column had no cast, so any non-null trial date would crash every authenticated Inertia request with "Call to a member function toISOString() on string". | Added `'trial_ends_at' => 'datetime'` to `Business::casts()`. New test: `subscriptionStateForPayload serialises trial_ends_at when set`. |
+| P2 | `BillingController::subscribe` had no server-side guard against duplicate subscriptions — the billing page hides the plan picker once a subscription exists, but the POST route was still reachable, so an admin could spawn a second Stripe subscription for the same business. | Added `if (! $business->onTrial() && state !== 'read_only') { redirect with error }` before the price lookup. New tests: blocks active, blocks canceling-in-grace; allows read_only (so a lapsed business can resubscribe). |
 
-New migration: `2026_04_17_100004_add_per_watch_sync_token_and_booking_source_calendar.php` (adds `calendar_watches.sync_token` and `bookings.external_event_calendar_id`).
+**Round 2** — routing + missing-credentials guards:
 
-Decision records extended:
-- **D-083** — now covers the origin-calendar persistence on the booking.
-- **D-085** — now covers repin-time teardown semantics (P2d).
-- **D-086** — now covers the per-watch sync token + reconfigure teardown.
-- **D-087** — adds failure semantics for `cancel_external`.
+| # | Bug | Fix |
+|---|---|---|
+| P2 | `Cashier::ignoreRoutes()` removed BOTH the default `/stripe/webhook` AND the `cashier.payment` confirmation page. The patch only added `/webhooks/stripe` back; SCA/3DS `IncompletePayment` flows and `ConfirmPayment` notifications redirect to `route('cashier.payment')`, which would have thrown `RouteNotFoundException` for any customer hitting an off-session payment confirmation. | Re-registered the payment route explicitly in `AppServiceProvider::boot()` at the original path `/stripe/payment/{id}` with the original `cashier.payment` name. Webhook stays at `/webhooks/stripe` (D-091); only the payment-confirmation surface is restored. New test: `cashier.payment route is registered after Cashier::ignoreRoutes()`. |
+| P2 | `BillingController::subscribe` checked `blank($priceId)` but `portal`, `cancel`, and `resume` did not check `cashier.secret` at all. With `STRIPE_SECRET=` (the default in `.env.example`), those handlers would call the Stripe SDK and surface `\Stripe\Exception\AuthenticationException` instead of the same friendly redirect the page already shows. | Added `guardStripeSecret()` — checks `cashier.secret` only. Called at the top of all four mutating actions. The guard is **deliberately narrower** than `hasStripeKeys()` because portal / cancel / resume operate on the business's existing Stripe customer + subscription, NOT on any price id — locking them out when a price id is blanked mid-rotation would regress operational recovery for existing subscribers. New tests: each of `subscribe`, `portal`, `cancel`, `resume` short-circuits with a flash when `STRIPE_SECRET` is blank; `portal` and `cancel` additionally prove they still work with blank price ids as long as the secret is set. |
 
-Test delta: +8 cases (47 calendar tests total, up from 39).
-- `PullCalendarEventsJobTest` — two existing sync-token tests updated to read the watch row; one new test for per-calendar token independence.
-- `PushBookingToCalendarJobTest` — one new test: reconfigure + delete targets the original calendar.
-- `CalendarPendingActionResolutionTest` — one new test: provider failure keeps `cancel_external` pending.
-- `StartCalendarSyncJobTest` (new file) — three tests: distinct-set watch creation, stale-calendar teardown, stopWatch-failure resilience.
-- `CalendarIntegrationConfigureTest` — two new tests: repin tears down old state; same-business save preserves watches + sync tokens + pending actions.
+Test delta from the two review rounds: +14 cases total (56 billing tests, up from 42 at the initial close).
 
 ---
 
 ## What Was Built
 
-MVPC-2 delivers the full bidirectional Google Calendar sync behind a `CalendarProvider` interface. MVPC-1 stood up the OAuth round-trip in isolation; MVPC-2 owns everything above it — the configure step, the push/pull pipelines, the pending-actions UX, webhook renewal, the schema relaxations that let external events land as proper Booking rows, and the notification-suppression audit across every dispatch site.
+MVPC-3 installs Laravel Cashier on the `Business` model and delivers the full subscription surface: indefinite trial at signup with no card, Stripe Checkout subscription flow for monthly + annual plans, Stripe Customer Portal for self-service, cancel-at-period-end semantics, and a read-only dashboard transition once a subscription fully ends. Webhooks are signature-validated and idempotent. Stripe Tax handles Swiss VAT automatically. The shared `auth.business.subscription` Inertia prop drives the dashboard banner and the billing page UI.
 
-Plan: `docs/archive/plans/PLAN-MVPC-2-CALENDAR-SYNC.md`. Seven new decisions:
+Plan: `docs/archive/plans/PLAN-MVPC-3-CASHIER-BILLING.md`. Seven new decisions:
 
-- **D-082** — `CalendarProvider` interface + `CalendarProviderFactory` singleton placement.
-- **D-083** — Single `PushBookingToCalendarJob(int $bookingId, string $action)` design.
-- **D-084** — External-event visuals (neutral `EXTERNAL_EVENT_COLOR` + lucide `CalendarDays` icon) + dedicated `bookings.external_html_link` column (review-revised, not `internal_notes` overload).
-- **D-085** — `calendar_integrations.business_id` pins integration to one business.
-- **D-086** — `calendar_watches` sub-table for per-calendar webhook registrations.
-- **D-087** — "Keep riservo booking (ignore external)" replaces the ambiguous "Keep both"; `cancel_riservo_booking` re-dispatches `PullCalendarEventsJob` for the source calendar.
-- **D-088** — Notification suppression lives at dispatch sites via `Booking::shouldSuppressCustomerNotifications()`; pending-action visibility + resolution restricted to owner-of-integration OR admin.
+- **D-089** — Indefinite trial = "no `subscriptions` row exists". `Business::onTrial()` reads `subscriptions->isEmpty()`. No sentinel dates, no extra column, no registration side-effect. `past_due` write-allowed during Stripe's dunning envelope (~7d–3w).
+- **D-090** — Read-only enforcement via `EnsureBusinessCanWrite` middleware (alias `billing.writable`). Mutating verbs only; safe methods pass through. Billing routes, webhooks, and public booking live outside the gate.
+- **D-091** — Stripe webhook endpoint at `/webhooks/stripe`. `Cashier::ignoreRoutes()` suppresses the default. Aligns with `/webhooks/google-calendar` convention.
+- **D-092** — Webhook idempotency via cache-layer event-id dedup (24h TTL).
+- **D-093** — Pricing CHF 29/month, CHF 290/year. Price IDs in `config/billing.php` (env-driven). Display amounts kept in lockstep.
+- **D-094** — Stripe Tax via `Cashier::calculateTaxes()`. Swiss VAT computed and collected by Stripe; zero in-app VAT logic.
+- **D-095** — Stripe SDK mocked in tests via `app()->bind(StripeClient::class, fn () => $mock)`. Container-binding seam works because `Cashier::stripe()` resolves through `app(StripeClient::class, ...)`. `Cashier::fake()` and `Cashier::useStripeClient()` do not exist in v16.
+
+### Cashier package version
+
+The plan said v15. Cashier v15 requires `illuminate/console ^10.0|^11.0|^12.0`; this project runs Laravel 13. Installed `laravel/cashier:^16.0` (resolved to **v16.5.1**). All assumptions in the plan hold for v16: container-binding seam (D-095) is unchanged, `subscriptions` migration carries `UNIQUE(stripe_id) + INDEX(user_id, stripe_status)` and no `UNIQUE(user_id, type)`, customer + subscription + checkout APIs are identical to v15.
 
 ### Database
 
-Five new migrations (all additive / reverse-safe):
+Five new migrations applied, named to fit the project's `2026_04_17_NNNNNN_*` convention:
 
-- `2026_04_17_100000_make_booking_customer_and_service_nullable_add_external_fields.php` — `bookings.customer_id` → nullable, `bookings.service_id` → nullable, add `bookings.external_title`, add `bookings.external_html_link`.
-- `2026_04_17_100001_extend_calendar_integrations_for_sync.php` — adds `business_id` (FK, cascadeOnDelete, D-085), `destination_calendar_id`, `conflict_calendar_ids` (JSON), `sync_token` (no longer written after round-2; see 100004), `webhook_resource_id`, `webhook_channel_token`, `last_synced_at`, `last_pushed_at`, `sync_error`, `sync_error_at`, `push_error`, `push_error_at`. MVPC-1 columns (`webhook_channel_id`, `webhook_expiry`) remain but are unused — kept per D-086 to avoid schema churn.
-- `2026_04_17_100002_create_calendar_watches_table.php` — `(id, integration_id, calendar_id, channel_id unique, resource_id, channel_token, expires_at, timestamps)` + indexes on `(integration_id, calendar_id)` and `expires_at`.
-- `2026_04_17_100003_create_calendar_pending_actions_table.php` — `(id, business_id, integration_id, booking_id nullable, type, payload JSON, status, resolved_by_user_id, resolution_note, resolved_at, timestamps)` + indexes on `(business_id, status)` and `(integration_id, status)`.
-- `2026_04_17_100004_add_per_watch_sync_token_and_booking_source_calendar.php` (round 2) — adds `calendar_watches.sync_token` (per-watch cursor — D-086 revised) and `bookings.external_event_calendar_id` (push-time origin calendar — D-083 revised).
+- `2026_04_17_100005_add_customer_columns_to_businesses_table.php` — adds `stripe_id` (indexed), `pm_type`, `pm_last_four`, `trial_ends_at` to `businesses`. Cashier's published migration targets `users` by default; manually rewritten to target `businesses`.
+- `2026_04_17_100006_create_subscriptions_table.php` — Cashier default, FK column renamed `user_id` → `business_id` to match `Business::getForeignKey()`. Cashier resolves the relation through that method automatically; no model override needed.
+- `2026_04_17_100007_create_subscription_items_table.php` — Cashier default, no schema change.
+- `2026_04_17_100008_add_meter_id_to_subscription_items_table.php` — Cashier default for usage-based billing meters. Unused in MVP; left as-is for forward compatibility.
+- `2026_04_17_100009_add_meter_event_name_to_subscription_items_table.php` — same.
 
-### Provider abstraction
+### Backend
 
-- `app/Services/Calendar/CalendarProvider.php` — interface with eight methods.
-- `app/Services/Calendar/GoogleCalendarProvider.php` — Google SDK adapter; maps to/from typed DTOs; translates `410 Gone` to `SyncTokenExpiredException`.
-- `app/Services/Calendar/GoogleClientFactory.php` — builds `Google\Client` per integration with `setTokenCallback` that persists rotated access tokens back to the row (D-080 / D-082 consequence).
-- `app/Services/Calendar/CalendarProviderFactory.php` — singleton resolver, bound in `AppServiceProvider::register()`.
-- DTOs: `CalendarSummary`, `WatchResult`, `ExternalEvent`, `SyncResult` under `app/Services/Calendar/DTOs/`.
-- Exceptions: `SyncTokenExpiredException`, `UnsupportedCalendarProviderException`.
+- `App\Http\Controllers\Dashboard\Settings\BillingController` — `show / subscribe / portal / cancel / resume`. All five actions read `tenant()->business()` and guard against missing-subscription / no-stripe-customer states with friendly flashes.
+- `App\Http\Controllers\Webhooks\StripeWebhookController extends Laravel\Cashier\Http\Controllers\WebhookController` — overrides `handleWebhook` to add cache-layer event-id idempotency before delegating.
+- `App\Http\Middleware\EnsureBusinessCanWrite` — passes `isMethodSafe()` requests through; on mutating verbs, redirects to `settings.billing` with an error flash when `! $business->canWrite()`. Aliased `billing.writable` in `bootstrap/app.php`.
+- `App\Http\Requests\Billing\SubscribeRequest` — validates `plan ∈ ['monthly', 'annual']`.
+- `App\Models\Business` — `Billable` trait + four Cashier columns added to `#[Fillable]` + new helpers `onTrial()`, `subscriptionState()`, `canWrite()`, `subscriptionStateForPayload()`.
+- `App\Providers\AppServiceProvider` — `Cashier::ignoreRoutes()` in `register()`; `Cashier::useCustomerModel(Business::class)` + `Cashier::calculateTaxes()` in `boot()`.
+- `App\Http\Middleware\HandleInertiaRequests` — `resolveBusiness()` eager-loads `subscriptions` and includes `subscription` in the payload (D-089 §4.9).
+- `bootstrap/app.php` — registers the `billing.writable` alias and adds `webhooks/stripe` to the CSRF-exempt list.
 
-### Queued jobs
+### Routes
 
-Under `app/Jobs/Calendar/`:
+Restructured `routes/web.php` to wrap the dashboard group:
 
-- `PushBookingToCalendarJob(int $bookingId, string $action)` — action ∈ create|update|delete. `tries=3`, `backoff=[60,300,900]`, `afterCommit()`. Gated at dispatch by `Booking::shouldPushToCalendar()`.
-- `PullCalendarEventsJob(int $integrationId, string $calendarId)` — `tries=5`, `backoff=[60,120,300,600,1200]`, `afterCommit()`. 410 → clear sync token + forward-only retry. 23P01 (GIST exclusion) → rollback + `external_booking_conflict` pending action with `conflict_booking_ids[]` in payload.
-- `StartCalendarSyncJob(int $integrationId)` — called from configure finalisation; starts a watch per distinct calendar, dispatches an initial pull each.
+```php
+Route::middleware(['verified', 'role:admin,staff', 'onboarded'])->group(function () {
+    // Billing — admin-only, OUTSIDE the gate.
+    Route::middleware('role:admin')->prefix('dashboard/settings')->group(function () {
+        Route::get('/billing', [BillingController::class, 'show'])->name('settings.billing');
+        Route::post('/billing/subscribe', [BillingController::class, 'subscribe'])->name('settings.billing.subscribe');
+        Route::post('/billing/portal', [BillingController::class, 'portal'])->name('settings.billing.portal');
+        Route::post('/billing/cancel', [BillingController::class, 'cancel'])->name('settings.billing.cancel');
+        Route::post('/billing/resume', [BillingController::class, 'resume'])->name('settings.billing.resume');
+    });
 
-### HTTP
+    // All other dashboard routes — gated.
+    Route::middleware('billing.writable')->group(function () {
+        // ... existing dashboard routes ...
+    });
+});
 
-- `POST /webhooks/google-calendar` → `App\Http\Controllers\Webhooks\GoogleCalendarWebhookController@store` (no auth; CSRF-excluded in `bootstrap/app.php`). Validates `X-Goog-Channel-Id` + `X-Goog-Channel-Token` (constant-time `hash_equals`). Dispatches `PullCalendarEventsJob` and returns 200.
-- Six routes added to the shared settings group (reusing D-081 shape):
-  - `GET /dashboard/settings/calendar-integration/configure` → `configure`
-  - `POST /dashboard/settings/calendar-integration/configure` → `saveConfiguration`
-  - `POST /dashboard/settings/calendar-integration/sync-now` → `syncNow`
-- `POST /dashboard/calendar-pending-actions/{action}/resolve` → `Dashboard\CalendarPendingActionController@resolve` (owner-or-admin auth per D-088).
+// Top-level webhook (CSRF-exempt).
+Route::post('/webhooks/stripe', [StripeWebhookController::class, 'handleWebhook'])->name('webhooks.stripe');
+```
 
-### Dispatch sites wired
+### Config
 
-`PushBookingToCalendarJob` dispatched from:
-
-- `Booking/PublicBookingController::store` (action=`create` for confirmed bookings).
-- `Dashboard/BookingController::store` (manual booking, action=`create`).
-- `Dashboard/BookingController::updateStatus` (action=`delete` for cancelled, action=`update` for confirmed/completed/no_show).
-- `Customer/BookingController::cancel` (action=`delete`).
-- `Booking/BookingManagementController::cancel` (action=`delete`).
-
-Every dispatch gated by `Booking::shouldPushToCalendar()` — skips `source = google_calendar` AND unconfigured integrations.
-
-### Notification suppression (D-088)
-
-Every customer and staff notification dispatch site guards with `if (! $booking->shouldSuppressCustomerNotifications())`. `SendBookingReminders::handle()` additionally excludes `source = google_calendar` at query time. No Notification class was modified — the policy lives entirely at dispatch.
+- `config/billing.php` — new file. `prices.{monthly,annual}` from env; `display.{monthly,annual}.{amount,currency,interval}` for UI labels (intentional duplicate of Stripe prices, kept in lockstep).
+- `config/cashier.php` — published, no edits.
+- `.env.example` — six new keys: `STRIPE_KEY`, `STRIPE_SECRET`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_ANNUAL`, `CASHIER_CURRENCY=chf`.
 
 ### Frontend
 
-- `resources/js/pages/dashboard/settings/calendar-integration.tsx` — rewritten. Connected state shows destination + conflict calendars + last synced + pending-actions badge + Sync now + Change settings + muted pinned-business notice when the viewer's tenant differs from `integration.business_id` (Q7 revised: no "Disconnect to reconfigure" CTA).
-- `resources/js/pages/dashboard/settings/calendar-integration-configure.tsx` — new page. Dropdown for destination calendar with a "Create a dedicated new calendar" toggle; multi-select for conflict calendars with primary pre-selected.
-- `resources/js/components/dashboard/calendar-pending-actions-section.tsx` — new component rendered inline at the top of `/dashboard`. Per-row action buttons posted as Inertia `<Form>`s via the Wayfinder-generated resolve route.
-- `resources/js/pages/dashboard.tsx` — wires `CalendarPendingActionsSection`, handles nullable customer/service in the today's-schedule table with an external-event fallback.
-- `resources/js/components/dashboard/booking-detail-sheet.tsx` — external-event variant hides the customer/service blocks, adds an "Open in Google Calendar" external link, read-only (no status-transition buttons for external events).
-- `resources/js/components/calendar/{day,week,month}-view.tsx` + `calendar-event.tsx` — branch on `booking.external` for `EXTERNAL_EVENT_COLOR` palette and null-safe labels.
-- `resources/js/components/settings/settings-nav.tsx` — Calendar Integration nav item renders a badge pulled from `calendarPendingActionsCount` shared Inertia prop.
-- `resources/js/lib/calendar-colors.ts` — new `EXTERNAL_EVENT_COLOR` neutral palette.
-- `resources/js/types/index.d.ts` — `DashboardBooking.external/external_title/external_html_link` flags, nullable customer/service, `TodayBooking` external flag, `CalendarPendingAction` shape, `PageProps.calendarPendingActionsCount`.
+- `resources/js/pages/dashboard/settings/billing.tsx` — new page. Renders one of five states (trial / active / past_due / canceling / read_only) with the appropriate CTA stack: monthly + annual subscribe buttons (trial / read_only), portal + cancel (active / past_due), portal + resume (canceling).
+- `resources/js/components/settings/settings-nav.tsx` — added "Billing" admin item under the "Business" group.
+- `resources/js/layouts/authenticated-layout.tsx` — extended the existing banner area with a subscription-state banner (warning for past_due and canceling, error for read_only). Banner links to `/dashboard/settings/billing` for admins; staff sees the warning text but no CTA. The existing D-078 unbookable-services banner is unchanged.
+- `resources/js/types/index.d.ts` — new `SubscriptionState` interface; `Business.subscription: SubscriptionState`.
 
 ### Shared Inertia props
 
-`HandleInertiaRequests::share` now publishes `calendarPendingActionsCount` (viewer-scoped per D-085 extension: admins see business-wide count; staff see only actions owned by their own integration).
-
-### Scheduler
-
-`routes/console.php` now schedules `calendar:renew-watches` daily at 03:00 UTC. The command (`app/Console/Commands/RenewCalendarWatches.php`) refreshes any `calendar_watches` row expiring within 24h: stopWatch (best-effort, swallows 404) then startWatch, updating the row in place.
+`auth.business.subscription` shape:
+```ts
+{
+  status: 'trial' | 'active' | 'past_due' | 'canceled' | 'read_only',
+  trial_ends_at: string | null,
+  current_period_ends_at: string | null,
+}
+```
+Resolved server-side via `Business::subscriptionStateForPayload()`. `loadMissing('subscriptions')` is called once in `HandleInertiaRequests::resolveBusiness()` so the helpers read from the eager-loaded collection (one query, not two).
 
 ### Tests
 
-New Pest test files under `tests/Feature/Calendar/`:
+New test directory `tests/Feature/Billing/`:
 
-- `PushBookingToCalendarJobTest.php` — 5 cases: create persists external_calendar_id; delete calls deleteEvent; skip for google_calendar source; skip for unconfigured integration; failed() writes push_error.
-- `PullCalendarEventsJobTest.php` — 7 cases: foreign event upsert (null customer + service); first-match-by-email; 23P01 → pending action (with conflict_booking_ids); riservo-deleted-in-google → pending action (no auto-cancel); cancelled foreign event → booking cancelled; 410 → forward-only re-sync; failed() writes sync_error.
-- `GoogleCalendarWebhookControllerTest.php` — 5 cases: valid → 200 + job; missing channel → 400; unknown channel → 404; wrong token → 400; CSRF-exempt.
-- `CalendarIntegrationConfigureTest.php` — 6 cases: callback redirects to configure; configure renders with calendars; save dispatches StartCalendarSyncJob; create-new-calendar flow; sync-now dispatches per watch; disconnect calls stopWatch + deletes.
-- `CalendarPendingActionResolutionTest.php` — 9 cases covering all five resolution choices across both types + the owner-or-admin + tenant-scoping matrix. Asserts `cancel_riservo_booking` re-dispatches `PullCalendarEventsJob` (D-087 revised).
-- `RenewCalendarWatchesCommandTest.php` — 3 cases: refresh imminent expiries; leave distant expiries alone; swallow stopWatch failures.
-- `NotificationSuppressionTest.php` — 3 cases: helper returns correct value; updateStatus→cancelled on google_calendar dispatches zero notifications; reminder command query-excludes google_calendar.
-- `SlotGenerationWithExternalBookingTest.php` — 1 case: external booking with null service blocks its window without crashing.
+- `BusinessSubscriptionStateTest.php` — 7 cases. Pure model. Exercises `onTrial / canWrite / subscriptionState / subscriptionStateForPayload` across trial / active / past_due / canceled-grace / read_only states.
+- `BillingControllerTest.php` — 11 cases. Uses `tests/Support/Billing/FakeStripeClient` (D-095 helper). Covers admin-vs-staff access, subscribe → checkout redirect, portal redirect (with and without `stripe_id`), cancel + resume happy/error paths, plan validation.
+- `WebhookTest.php` — 6 cases. POSTs canonical Stripe event payloads to `/webhooks/stripe`. Covers `customer.subscription.{created,updated,deleted}`, idempotency dedup (cache-key probe), the "throw inside the parent handler does NOT cache the event id" contract (post-review fix), and signature-verify rejection on a known-bad signature returns HTTP 403 (Cashier's `VerifyWebhookSignature` throws `AccessDeniedHttpException`).
+- `ReadOnlyEnforcementTest.php` — 19 cases. HTTP layer: dataset walks 12 mutating dashboard routes (without model bindings — see deviation #6) and asserts each redirects to `/dashboard/settings/billing` for a read-only admin. Plus six explicit carve-out cases: read pages remain reachable, billing routes remain reachable, subscribe is allowed (gate doesn't apply), webhook is reachable, public booking page is reachable, an active business is not gated. **Structural layer**: one route-introspection test walks `Route::getRoutes()` and asserts every mutating dashboard route is wrapped by `billing.writable` (with explicit one-line carve-outs for billing routes only). Together the two layers prove both that the middleware behaves correctly when invoked AND that it's wired to every route it should be wired to.
 
-Shared: `tests/Support/Calendar/FakeCalendarProvider.php` — programmable CalendarProvider double used across every Calendar test file.
+Shared: `tests/Support/Billing/FakeStripeClient.php` — programmable Stripe client double bound via `app()->bind(StripeClient::class, fn () => $client)`. Mirrors MVPC-2's `FakeCalendarProvider` pattern. Methods: `mockCheckoutSession`, `mockBillingPortalSession`, `mockSubscriptionUpdate`, `mockCustomerCreate`, `mockCustomerUpdate`. Returns real `Stripe\Checkout\Session::constructFrom(...)` / `Stripe\BillingPortal\Session::constructFrom(...)` so Cashier's type-checked Checkout constructor accepts them.
 
-Pre-existing test contract evolution: `tests/Feature/Settings/CalendarIntegrationTest.php` — the callback-success redirect target changed from `settings.calendar-integration` to `settings.calendar-integration.configure` (deliberate; the callback no longer finalises — the configure step does). One line of assertion change, one comment explaining why.
+Pre-existing test contract evolution: `tests/Feature/Settings/SettingsAuthorizationTest.php` — Billing added to both the staff-forbidden matrix and the admin-allowed matrix.
 
 ---
 
 ## Current Project State
 
 - **Backend**:
-  - `app/Services/Calendar/` — interface, Google implementation, factory, DTOs, exceptions.
-  - `app/Jobs/Calendar/` — three queued jobs.
-  - `app/Http/Controllers/Webhooks/GoogleCalendarWebhookController.php`.
-  - `app/Http/Controllers/Dashboard/CalendarPendingActionController.php`.
-  - `app/Console/Commands/RenewCalendarWatches.php`.
-  - `app/Models/PendingAction.php`, `app/Models/CalendarWatch.php` (new).
-  - `app/Enums/PendingActionType.php`, `app/Enums/PendingActionStatus.php` (new).
-  - `CalendarIntegration`, `Booking` extended with new fillables/casts/helpers.
-- **Database**: four new migrations applied. `calendar_watches` and `calendar_pending_actions` tables created. `bookings` relaxed. `calendar_integrations` extended.
-- **Frontend**: one new page (configure), one new dashboard section, external-event variants across detail sheet + calendar views + bookings list; settings nav pending-actions badge.
-- **Config / env**: no new env vars. `GOOGLE_CLIENT_ID`/`_SECRET`/`_REDIRECT_URI` were already present from MVPC-1.
-- **Tests**: Feature + Unit **574 passed / 2438 assertions**. Browser suite 249 untouched by this session (developer runs it at close).
-- **Decisions**: D-082 through D-088 recorded. No existing decision superseded.
-- **Dependencies**: no changes.
+  - `App\Models\Business` — `Billable` trait, Cashier columns in fillable, four product-semantic helpers.
+  - `App\Http\Controllers\Dashboard\Settings\BillingController` — five actions.
+  - `App\Http\Controllers\Webhooks\StripeWebhookController` — extends Cashier, adds dedup.
+  - `App\Http\Middleware\EnsureBusinessCanWrite` — `billing.writable` alias.
+  - `App\Http\Requests\Billing\SubscribeRequest`.
+  - `App\Providers\AppServiceProvider` — Cashier wiring.
+  - `App\Http\Middleware\HandleInertiaRequests` — subscription prop + eager-load.
+- **Database**: five new migrations applied. `businesses` extended with Cashier customer columns; `subscriptions` + `subscription_items` (with meter columns) created.
+- **Frontend**: one new page (billing), one new banner spec on the auth layout, one new nav item, types extended.
+- **Config / env**: `config/billing.php` new; `.env.example` extended with six Stripe keys.
+- **Tests**: Feature + Unit **638 passed / 2640 assertions** (three review rounds added +14 cases over the initial 624 — see "Post-review fixes" below). Browser suite 249 untouched.
+- **Decisions**: D-089 through D-095 recorded in `docs/decisions/DECISIONS-FOUNDATIONS.md`. No existing decision superseded.
+- **Dependencies**: `laravel/cashier:^16.0` (resolved v16.5.1) added; `stripe/stripe-php:^17`, `moneyphp/money:^4`, `symfony/polyfill-intl-icu` pulled transitively.
 
 ---
 
 ## How to Verify Locally
 
 ```bash
-php artisan test tests/Feature tests/Unit --compact     # 574 passed (iteration loop)
+php artisan test tests/Feature tests/Unit --compact     # 638 passed (iteration loop)
 php artisan test --compact                              # full suite incl. Browser (run by developer at close)
 vendor/bin/pint --dirty --format agent                  # {"result":"pass"}
 php artisan wayfinder:generate                          # idempotent
@@ -175,58 +168,61 @@ npm run build                                           # green, ~1.3s
 Targeted:
 
 ```bash
-php artisan test tests/Feature/Calendar --compact       # 39 Calendar-specific cases
-php artisan route:list --path=webhooks                  # POST /webhooks/google-calendar
-php artisan route:list --path=calendar-integration
-php artisan route:list --path=calendar-pending-actions
+php artisan test tests/Feature/Billing --compact        # 56 billing-specific cases
+php artisan route:list --path=billing                   # 5 routes under settings.billing*
+php artisan route:list --path=webhooks                  # 2 routes (google-calendar, stripe)
 ```
 
-Manual smoke (requires real Google OAuth creds + a tunnel):
+Manual smoke (requires real Stripe test credentials):
 
-1. Configure `GOOGLE_CLIENT_ID`/`SECRET`/`REDIRECT_URI` in `.env` and in Google Cloud Console (exact-match redirect URI, domain-verified for webhook).
-2. Tunnel: `ngrok http 80` or Herd Share; register both the redirect URI and the webhook URL.
-3. `php artisan queue:work` in a side terminal.
-4. Dashboard → Settings → Calendar Integration → Connect → configure destination + conflict calendars → Save.
-5. Create a dashboard manual booking. Within ~10s, the event should appear in your Google calendar.
-6. Cancel that booking. Within ~10s, the Google event should be deleted.
-7. Create a Google event directly (on a conflict calendar). Within ~10s of the webhook arriving, it should appear on `/dashboard` with the neutral external-event tone.
-8. Delete a riservo-originated event in Google. A pending action should appear on `/dashboard` with "Cancel booking and notify customer" and "Keep booking and dismiss".
-9. Click Disconnect → the row deletes, stopWatch is called per watched calendar (best-effort), UI returns to not-connected.
+1. Configure all six `STRIPE_*` / `CASHIER_CURRENCY` env vars per `docs/DEPLOYMENT.md §Billing`.
+2. Create a Product + two Prices in Stripe test-mode, copy IDs into `STRIPE_PRICE_MONTHLY` / `STRIPE_PRICE_ANNUAL`.
+3. Enable Stripe Tax in the dashboard, set the origin address.
+4. Register a webhook endpoint pointing to your local tunnel (`https://<tunnel>/webhooks/stripe`) for the five Stripe events listed in DEPLOYMENT.
+5. Register a business locally → onboard → Settings → Billing. Trial state visible.
+6. Click Subscribe → Monthly. Stripe Checkout opens. `4242 4242 4242 4242`, future expiry, any CVC. Complete.
+7. Returns to `/dashboard/settings/billing?checkout=success`. Active state visible.
+8. Click Cancel. Modal → confirm. Canceling state visible with end date.
+9. Click Resume. Active state restored.
+10. Use Stripe CLI: `stripe trigger customer.subscription.deleted` with the subscription id. Dashboard transitions to read-only. Try to create a manual booking → redirected to billing with error flash. Subscribe again → restored.
 
 ---
 
 ## What the Next Session Needs to Know
 
-Next up: **Session 3 — Subscription Billing (Cashier)** in `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`. Session 3 installs Laravel Cashier on the `Business` model, one paid tier (monthly + annual), indefinite trial, billing portal, webhook handler, cancel-at-period-end semantics, read-only transition on lapse.
+Next up: **Session 4 — Provider Self-Service Settings** in `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`. Session 4 opens the settings area to staff-with-Provider-row for Account and Availability self-management.
 
-### Conventions MVPC-2 established that future work must not break
+### Conventions MVPC-3 established that future work must not break
 
-- **D-082 — the CalendarProvider interface is the only surface above the SDK.** Session 5's reschedule endpoint must call `PushBookingToCalendarJob::dispatch($booking->id, 'update')` with the same `shouldPushToCalendar()` gate. Do not bypass the interface.
-- **D-083 — one job, one action argument.** Adding a fourth action (e.g., "reassign provider") is a match-arm, not a new job.
-- **D-084 — `external_html_link` is the dedicated htmlLink column.** `internal_notes` stays admin-notes-only regardless of source.
-- **D-085 — `CalendarIntegration.business_id` is set once at configure time.** A user with multiple business memberships has one integration; it syncs to one business. Multi-business sync is an explicit post-MVP follow-up (R-2B carry-over).
-- **D-086 — `calendar_watches` rows are the only place channel_id → calendar_id mapping lives.** The webhook controller queries by `channel_id`; no JSON lookup.
-- **D-087 — the conflict resolver's `cancel_riservo_booking` choice is the one place that re-dispatches a pull.** Do not delete that dispatch — without it the external event only appears on the next webhook.
-- **D-088 — `Booking::shouldSuppressCustomerNotifications()` is the single source of truth.** Any new Booking-related Notification dispatch site (Session 5's reschedule notification included) MUST call this guard.
-- **Session 5's reschedule notification** — locked decision #16 already says suppress for `source = google_calendar`. The guard + the push dispatch are both `shouldSuppress…` + `shouldPush…` one-liners.
+- **D-089 — `Business::onTrial()` is the canonical "indefinite trial" predicate.** It reads `$this->subscriptions->isEmpty()`. Any future code that asks "is this business on trial?" must call this method, not Cashier's `onGenericTrial()` (which reads `trial_ends_at` and is wrong for our model).
+- **D-090 — `EnsureBusinessCanWrite` (`billing.writable`) is the only HTTP gate for billing state.** New mutating dashboard routes inherit it automatically because they live inside the gated group. Any new route OUTSIDE the gate (e.g. a future webhook for a different integration) must justify its position in the route file. Server-side automation runs unconditionally — middleware is HTTP-only by design.
+- **D-091 — All third-party webhooks live under `/webhooks/*`.** The `Cashier::ignoreRoutes()` call must stay in `AppServiceProvider::register()` for the Stripe webhook to remain at `/webhooks/stripe` instead of Cashier's default `/stripe/webhook`.
+- **D-092 — Webhook idempotency is enforced at the boundary.** Any new Stripe-side handler added to `StripeWebhookController` (e.g. a custom `invoice.payment_succeeded` listener) is automatically deduped because `handleWebhook()` runs the cache check before the handler dispatch.
+- **D-093 — Pricing flips through env vars + `config/billing.php` display labels in lockstep.** No price strings hardcoded in controllers, frontend, or tests.
+- **D-094 — `Cashier::calculateTaxes()` stays on.** Removing it would make every Cashier-generated invoice VAT-naked.
+- **D-095 — Stripe SDK mocking goes through `app()->bind(StripeClient::class, ...)`.** Any new test that exercises a Stripe path must use `FakeStripeClient` (or extend it). Hand-rolled HTTP mocks are not the supported pattern. If you ever feel the urge to call `\Stripe\Stripe::*` statically, route it through `Cashier::stripe()` so the test seam holds.
+- **`Business` is the billable model.** Cashier's `Cashier::useCustomerModel(Business::class)` is in `AppServiceProvider::boot()`. Removing it would break every Cashier query.
+- **`subscriptions.business_id` is the correct FK column.** Cashier resolves it through `Business::getForeignKey()`; no model override needed. The plan noted this explicitly because the published Cashier migration ships `user_id` and we renamed it.
 
-### MVPC-2 hand-off notes
+### MVPC-3 hand-off notes
 
-- The MVPC-1 `webhook_channel_id` / `webhook_expiry` columns on `calendar_integrations` are unused and kept intentionally (D-086 rationale). Do not drop unless a future cleanup session is approved separately.
-- The integration-level `calendar_integrations.sync_token` column is also unused post round-2; the authoritative cursor lives on `calendar_watches.sync_token`. Same zero-churn rationale — kept for a future cleanup.
-- Pending-action count is scoped per viewer. Tests cover both admin and staff-owner matrices.
-- Bookings pushed to Google carry their origin calendar on `bookings.external_event_calendar_id`. Any future session that resets or migrates booking rows must preserve this — otherwise update/delete pushes will target the current destination (wrong calendar for historical bookings).
+- Cashier was upgraded from the planned v15 to v16 because v15 doesn't support Laravel 13. All architectural assumptions hold.
+- Cashier publishes 5 migrations (customer columns + subscriptions + subscription_items + 2 meter columns for usage-based billing). The two meter migrations are unused in MVP but kept to avoid future churn if usage-based billing is ever needed (post-MVP).
+- The `SubstituteBindings` middleware runs after `billing.writable` for routes with `{model}` placeholders. The dataset test in `ReadOnlyEnforcementTest` covers only routes without bindings — adding routes with bindings to the dataset would yield 404 instead of the intended 302 (the gate fires before bindings, but Laravel's behaviour is to short-circuit on missing-model 404). Not a bug; just a test shape consideration.
+- Stripe Tax requires the customer billing address to be set. Cashier handles this on Checkout — the customer enters it inline. We don't need to collect billing addresses inside riservo.
+- `subscriptionStateForPayload()` runs on every authenticated Inertia request. Verified to be a single query thanks to `loadMissing('subscriptions')` in the resolver. If a future change introduces a second N+1 path here, treat it as a regression.
 
 ---
 
 ## Open Questions / Deferred Items
 
-No new carry-overs from MVPC-2 beyond the ones called out above.
+New from MVPC-3:
+- **Tighten billing freeload envelope** — `past_due` write-allowed envelope of ~7d–3w (Stripe dunning policy). Tracked in `docs/BACKLOG.md` as a post-launch refinement gated on abuse telemetry.
 
-Earlier carry-overs remain unchanged from the post-MVPC-1 list:
-- Tenancy (R-19 carry-overs): R-2B business-switcher UI; admin-driven member deactivation + re-invite flow; "leave business" self-serve UX.
+Earlier carry-overs unchanged from MVPC-2 hand-off:
+- Tenancy (R-19 carry-overs): R-2B business-switcher UI; admin-driven member deactivation + re-invite; "leave business" self-serve.
 - R-16 frontend code splitting (deferred).
-- R-17 carry-overs: admin email/push notification when a service crosses into unbookable post-launch; richer "provider is on vacation" UX; per-user banner dismiss / ack history.
+- R-17 carry-overs: admin email/push notification on bookability flip; richer "vacation" UX; banner ack history.
 - R-9 / R-8 manual QA.
 - Orphan-logo cleanup.
 - Profile + onboarding logo upload deduplication.

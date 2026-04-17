@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\EnsureBusinessCanWrite;
 use App\Http\Middleware\EnsureOnboardingComplete;
 use App\Http\Middleware\EnsureUserHasRole;
 use App\Http\Middleware\HandleInertiaRequests;
@@ -20,16 +21,20 @@ return Application::configure(basePath: dirname(__DIR__))
             HandleInertiaRequests::class,
         ]);
 
-        // Google Calendar push-notification webhook cannot carry a CSRF token.
-        // Authenticity is enforced by X-Goog-Channel-Id + X-Goog-Channel-Token
-        // inside GoogleCalendarWebhookController (D-086).
+        // Third-party webhooks cannot carry a CSRF token.
+        //   - Google Calendar push: authenticity via X-Goog-Channel-Id +
+        //     X-Goog-Channel-Token inside GoogleCalendarWebhookController (D-086).
+        //   - Stripe: signature verification via Cashier's
+        //     VerifyWebhookSignature middleware on the route (D-091).
         $middleware->preventRequestForgery(except: [
             'webhooks/google-calendar',
+            'webhooks/stripe',
         ]);
 
         $middleware->alias([
             'role' => EnsureUserHasRole::class,
             'onboarded' => EnsureOnboardingComplete::class,
+            'billing.writable' => EnsureBusinessCanWrite::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

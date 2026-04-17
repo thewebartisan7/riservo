@@ -14,12 +14,17 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
+use Laravel\Cashier\Billable;
 
 /**
  * @property PaymentMode $payment_mode
  * @property ConfirmationMode $confirmation_mode
  * @property AssignmentStrategy $assignment_strategy
  * @property Carbon|null $onboarding_completed_at
+ * @property string|null $stripe_id
+ * @property string|null $pm_type
+ * @property string|null $pm_last_four
+ * @property Carbon|null $trial_ends_at
  */
 #[Fillable([
     'name',
@@ -38,11 +43,17 @@ use Illuminate\Support\Facades\Storage;
     'reminder_hours',
     'onboarding_step',
     'onboarding_completed_at',
+    // Cashier-managed columns. Required in fillable so webhook handlers and
+    // Cashier's customer/subscription updates can mass-assign them silently.
+    'stripe_id',
+    'pm_type',
+    'pm_last_four',
+    'trial_ends_at',
 ])]
 class Business extends Model
 {
     /** @use HasFactory<BusinessFactory> */
-    use HasFactory;
+    use Billable, HasFactory;
 
     protected function casts(): array
     {
@@ -53,6 +64,11 @@ class Business extends Model
             'assignment_strategy' => AssignmentStrategy::class,
             'reminder_hours' => 'array',
             'onboarding_completed_at' => 'datetime',
+            // Cashier-managed timestamp. Cashier's own predicates
+            // (onGenericTrial, hasExpiredGenericTrial, …) call ->isFuture()
+            // / ->isPast() on this column and our subscriptionStateForPayload()
+            // serialises it as ISO; both require a Carbon instance.
+            'trial_ends_at' => 'datetime',
         ];
     }
 
@@ -181,5 +197,77 @@ class Business extends Model
         }
 
         $data['logo'] = null;
+    }
+
+    /**
+     * Indefinite trial: a business is on trial for as long as it has never
+     * created any subscription record (D-089). Reads the eager-loaded
+     * `subscriptions` relation when present (HandleInertiaRequests warms it)
+     * to avoid an extra query on the hot Inertia path.
+     */
+    public function onTrial($name = 'default', $price = null): bool
+    {
+        return $this->subscriptions->isEmpty();
+    }
+
+    /**
+     * Product-semantic state. One of:
+     *   - 'trial'       — no subscription has ever been created
+     *   - 'active'      — current subscription is healthy
+     *   - 'past_due'    — Stripe is dunning a failing card; access still allowed
+     *   - 'canceled'    — cancel_at_period_end set, still inside the paid period
+     *   - 'read_only'   — subscription has fully ended
+     */
+    public function subscriptionState(): string
+    {
+        if ($this->onTrial()) {
+            return 'trial';
+        }
+
+        $sub = $this->subscription();
+
+        if ($sub === null || $sub->ended()) {
+            return 'read_only';
+        }
+
+        if ($sub->pastDue()) {
+            return 'past_due';
+        }
+
+        if ($sub->canceled() && $sub->onGracePeriod()) {
+            return 'canceled';
+        }
+
+        return 'active';
+    }
+
+    /**
+     * True for every state except `read_only`. Used by EnsureBusinessCanWrite
+     * (D-090) to gate mutating dashboard verbs.
+     */
+    public function canWrite(): bool
+    {
+        return $this->subscriptionState() !== 'read_only';
+    }
+
+    /**
+     * Shaped payload for the `auth.business.subscription` shared Inertia prop
+     * (D-089 §4.9). Trial businesses report `trial_ends_at = null` because the
+     * trial is indefinite; `current_period_ends_at` reports the active
+     * subscription's `ends_at` (set during the cancel-grace window) or the
+     * Stripe-side period end via the items relation when active.
+     *
+     * @return array{status: string, trial_ends_at: string|null, current_period_ends_at: string|null}
+     */
+    public function subscriptionStateForPayload(): array
+    {
+        $status = $this->subscriptionState();
+        $sub = $status === 'trial' ? null : $this->subscription();
+
+        return [
+            'status' => $status,
+            'trial_ends_at' => $this->trial_ends_at?->toISOString(),
+            'current_period_ends_at' => $sub?->ends_at?->toISOString(),
+        ];
     }
 }

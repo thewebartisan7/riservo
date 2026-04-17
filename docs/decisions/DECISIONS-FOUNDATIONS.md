@@ -184,3 +184,97 @@ This file contains live cross-cutting architectural decisions about platform def
   - *Per-feature freedom* — leave both helpers in use, document
     which to use when. Adds rule-following overhead for a one-line
     convention; no upside.
+
+---
+
+### D-089 — Indefinite trial represented as "no subscription row exists"
+
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Locked roadmap decision #10 in `docs/roadmaps/ROADMAP-MVP-COMPLETION.md` requires indefinite trial with no card at signup. Cashier's default `onGenericTrial()` reads `trial_ends_at` and returns false for null — that's the wrong shape for "trial forever". Three options were evaluated (null + convention, far-future sentinel, boolean column).
+- **Decision**: A product-semantic helper `Business::onTrial(): bool` returns `true` iff no `subscriptions` row exists. `trial_ends_at` stays null and unused in MVP. `Business::subscriptionState()` and `Business::canWrite()` derive the dashboard-facing state from Cashier's standard predicates (`onGracePeriod`, `pastDue`, `ended`, `canceled`). No observer, no factory change, no RegisterController hook: a brand-new business naturally has zero subscriptions and is therefore on indefinite trial without any side-effect at registration.
+- **Consequences**:
+  - No sentinel magic dates — `trial_ends_at` is interpreted by Cashier as a Stripe-side timestamp only, never as a riservo trial signal.
+  - No extra column. Same information is derivable from `$business->subscriptions()->exists()`, already a Cashier-native query.
+  - Future trial-length-cap policy is a one-line addition in RegisterController (`$business->trial_ends_at = now()->addDays(N)`) plus a one-line update in `onTrial()`. No migration.
+  - `onGenericTrial()` (Cashier) remains on the model via the trait but is not consulted by product code.
+  - **Freeload envelope for `past_due` (write-allowed)**: `past_due` is treated as a recoverable state — a salon whose card fails gets Stripe's default dunning window (~7 days / 4 retries; account-configurable up to ~3 weeks) before Stripe flips them to `canceled` and our webhook transitions them to `read_only`. Worst case: a salon with a permanently invalid card keeps creating bookings for ~3 weeks before the dashboard locks. This envelope is acceptable for MVP — the alternative (gating `past_due` writes) locks out salons mid-payment-retry and causes legitimate customer-facing incidents. A future "past_due for more than N days → read_only" refinement is tracked in `docs/BACKLOG.md` as "Tighten billing freeload envelope".
+
+---
+
+### D-090 — Read-only enforcement via mutating-verb middleware on a dashboard inner group
+
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Locked roadmap decision #12 requires that access becomes read-only after the cancellation period ends; the enforcement strategy was decided at plan time. Three options evaluated (middleware, policy, centralised controller `canWrite()` check).
+- **Decision**: `App\Http\Middleware\EnsureBusinessCanWrite` (alias `billing.writable`) applied to a new inner group inside the dashboard group at `routes/web.php`. Passes through safe HTTP methods (GET/HEAD/OPTIONS) unconditionally. On any other method, if `! $business->canWrite()`, redirect to `settings.billing` with an error flash. Billing routes (`settings.billing*`), webhook routes, public booking routes, and authentication routes live OUTSIDE the gate. Public booking stays reachable for read-only businesses — product trade-off: lapsed salons don't surprise their customers mid-booking-flow.
+- **Consequences**:
+  - One middleware class closes every dashboard write path. Adding a new dashboard mutating route in the future automatically inherits the gate.
+  - Dataset-driven test (`tests/Feature/Billing/ReadOnlyEnforcementTest.php`) walks the gated route list, proving every mutating endpoint redirects and every read endpoint stays open.
+  - Carve-outs are explicit and reviewed: billing routes, `/webhooks/*`, public booking, authentication, customer area.
+  - Server-side automation (queued jobs, scheduled commands, webhook handlers) continues running on a read-only business — the gate is HTTP-only. Documented in `docs/DEPLOYMENT.md §Billing` so operators aren't surprised when a lapsed business's queue stays active for already-created bookings (e.g. `AutoCompleteBookings` continues, `SendBookingReminders` continues, `calendar:renew-watches` continues, `PullCalendarEventsJob` continues).
+
+---
+
+### D-091 — Stripe webhook endpoint at `/webhooks/stripe`, Cashier auto-routing suppressed
+
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Cashier's default webhook path is `/stripe/webhook` (or `/cashier/webhook` via config). The existing third-party webhook in this codebase is `/webhooks/google-calendar` (MVPC-2). Two options: keep Cashier's default or align to `/webhooks/*`.
+- **Decision**: `Cashier::ignoreRoutes()` is called in `AppServiceProvider::register()` to suppress Cashier's auto-registration. We register `/webhooks/stripe` explicitly via `App\Http\Controllers\Webhooks\StripeWebhookController` (a thin subclass of Cashier's `WebhookController`).
+- **Consequences**: All third-party webhooks live under one prefix. Stripe Dashboard endpoint URL matches the project convention. Trivial code cost (two lines).
+
+---
+
+### D-092 — Stripe webhook idempotency via cache-layer event-id dedup
+
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Stripe retries webhook deliveries with the same event id. Cashier does not dedupe; its default `WebhookController` processes every invocation. Most Cashier handlers are DB-idempotent (e.g. `customer.subscription.updated` updates the existing subscription row), but `invoice.payment_succeeded` could double-count future analytics. Best closed at the boundary.
+- **Decision**: `StripeWebhookController::handleWebhook` reads `cache()->has("stripe:event:{$eventId}")`, returns `200` early if present, otherwise sets the cache key (24h TTL — longer than Stripe's retry envelope) and delegates to `parent::handleWebhook()`. Cache driver is `database` in prod (durable) and `array` in tests.
+- **Consequences**: Every Stripe event id is processed exactly once within a 24h window. No new table. Dedup is testable via `Cache::has(...)` assertions in `WebhookTest`.
+
+---
+
+### D-093 — Pricing: CHF 29/month, CHF 290/year; price IDs via config/env
+
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Locked roadmap decision #9 deferred the exact numbers to session-plan time.
+- **Decision**: Single paid tier, two prices — CHF 29/month and CHF 290/year (~17% discount, equivalent to two months free). Stripe price IDs stored in `config/billing.php` reading from `STRIPE_PRICE_MONTHLY` and `STRIPE_PRICE_ANNUAL`. Currency set via `CASHIER_CURRENCY=chf`.
+- **Consequences**: Prices are tunable without code changes by editing the Stripe products + flipping env vars. The display-only labels in `config/billing.php` `display.{monthly,annual}.amount` are intentional duplicates of the Stripe prices — the developer flips them in lockstep when the underlying price changes. No downstream code branches on price.
+
+---
+
+### D-094 — Stripe Tax for Swiss VAT, enabled via `Cashier::calculateTaxes()`
+
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Swiss VAT is 8.1%. MVP needs VAT-clean pricing from day one. Two options: implement VAT ourselves, or defer to Stripe Tax.
+- **Decision**: `Cashier::calculateTaxes()` in `AppServiceProvider::boot()`. Customer enters address at Checkout; Stripe computes and collects VAT automatically on every Cashier-generated subscription and invoice. Stripe Tax must be enabled in the Stripe account (test and live).
+- **Consequences**: Zero in-app VAT logic. The Swiss business's invoice shows the correct VAT line. Customers outside CH (unlikely in MVP) are taxed per Stripe's nexus rules. Pre-launch checklist gains "enable Stripe Tax in live account" — captured in `docs/DEPLOYMENT.md §Billing`.
+
+---
+
+### D-095 — Stripe SDK is mocked in tests via container binding of `\Stripe\StripeClient`
+
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Cashier v16's controller-path Stripe calls (`$business->newSubscription(...)->checkout(...)`, `$business->redirectToBillingPortal(...)`, `$subscription->cancel()`, `$subscription->resume()`) go through the Stripe PHP SDK, which uses its own cURL transport — Laravel's `Http::fake()` does **not** intercept them. Source-level inspection of `laravel/cashier@16.5.x` confirmed `Cashier::fake()` and `Cashier::useStripeClient()` do **not** exist as public APIs. Cashier's own test suite uses real Stripe test keys, which we reject (env dependency, latency, flakiness, real Stripe test artefacts in CI).
+- **Decision**: Mock the Stripe SDK via Laravel's container. `Cashier::stripe()` resolves `\Stripe\StripeClient` through `app(StripeClient::class, ['config' => $config])`. Because `app()->instance(...)` is bypassed when the resolver passes parameters, we use `app()->bind(StripeClient::class, fn () => $mock)` — closure resolution ignores the parameters and returns the mock every time. Property chains (`$stripe->checkout->sessions->create(...)`) are mocked by setting each level as a property on the top-level mock with a further Mockery mock attached, then `shouldReceive('create')` on the leaf. A shared `tests/Support/Billing/FakeStripeClient.php` builder encapsulates the wiring behind a fluent interface (mirroring MVPC-2's `FakeCalendarProvider` pattern).
+- **Consequences**:
+  - Zero real-Stripe calls in the test suite. No Stripe env dependency for CI.
+  - Drift (Cashier changing which Stripe endpoint a method hits) surfaces as a Mockery "method not expected" failure, not a silent pass.
+  - Webhook tests bypass the SDK entirely and POST canonical event shapes to `/webhooks/stripe`. The `config(['cashier.webhook.secret' => null])` helper skips signature verification for the matrix; a dedicated signature-verify test covers the production path.
+  - Business-model unit tests (`BusinessSubscriptionStateTest`) exercise `onTrial()` / `canWrite()` / `subscriptionState()` against factory-built `subscriptions` rows directly — no Stripe involvement.
+- **Rejected alternatives**:
+  - *Real Stripe test keys* — matches Cashier's own test strategy but introduces env dependency, network latency, and real-artefact cleanup.
+  - *`Http::fake()`* — doesn't intercept Stripe's cURL transport; would either hit real Stripe or fail with connection errors.
+  - *`stripe-mock` side-container in CI* — heavier setup than the container-mock approach for the same fidelity at the test boundary.
+
+---
+
+### Cashier deviations recorded for the developer
+
+- **Cashier version**: plan said `^15.0`. Cashier v15.x requires Laravel ≤ 12 (`illuminate/console ^10.0|^11.0|^12.0`). This project runs Laravel 13, so v16 is the minimum compatible version. Installed `laravel/cashier:^16.0` (resolved to `v16.5.1`). The container-binding seam (D-095), the absence of a `UNIQUE(user_id, type)` constraint on `subscriptions` (verified in source), and the published migration shape are unchanged between v15 and v16.
+- **`subscriptions.user_id` → `subscriptions.business_id`**: Cashier's published migration ships a `user_id` column. With `Business` as the billable, Cashier's relation resolver (`$this->getForeignKey()` in `Billable::subscriptions()`) returns `business_id`. We renamed the column in our copy of the migration so the schema is honest about what it points at. No model override needed; Cashier picks the column up automatically.

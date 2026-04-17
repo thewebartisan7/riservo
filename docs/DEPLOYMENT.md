@@ -178,3 +178,105 @@ A queue worker must run in production for any calendar activity to reach Google
 `calendar:renew-watches` runs daily at 03:00 UTC. Google caps watch channels at
 ~30 days; the command refreshes any channel expiring within the next 24 hours
 (stops the old channel, starts a new one, updates `calendar_watches`).
+
+---
+
+## Billing (Stripe)
+
+Subscription billing on the `Business` model via `laravel/cashier:^16` (D-007,
+D-089..D-095). Stripe test mode for MVP; live mode is pre-launch activity.
+
+### Stripe account setup (test mode)
+
+1. Create a Stripe account at https://dashboard.stripe.com (or use an existing
+   one). Stay in **Test mode** for MVP.
+2. Create one Product named **"riservo Plan"** with two recurring prices:
+   - `CHF 29.00 / month` — copy the price ID into `STRIPE_PRICE_MONTHLY`.
+   - `CHF 290.00 / year` — copy the price ID into `STRIPE_PRICE_ANNUAL`.
+   Both prices ride on the same product.
+3. **Enable Stripe Tax** in the dashboard (Tax → Settings). Set the origin
+   address (riservo.ch business address). Stripe will compute Swiss VAT
+   automatically on every invoice. No riservo-side VAT logic is required
+   (D-094).
+4. Register a webhook endpoint at the URL `https://<your-domain>/webhooks/stripe`
+   (or a tunnel like `https://<random>.ngrok.app/webhooks/stripe` for local
+   dev). Subscribe to at least these events:
+   - `customer.subscription.created`
+   - `customer.subscription.updated`
+   - `customer.subscription.deleted`
+   - `invoice.payment_succeeded`
+   - `invoice.payment_failed`
+   Copy the signing secret into `STRIPE_WEBHOOK_SECRET`.
+5. Copy the publishable key (`pk_test_…`) into `STRIPE_KEY` and the secret key
+   (`sk_test_…`) into `STRIPE_SECRET`.
+
+### Environment variables
+
+```
+STRIPE_KEY=pk_test_...
+STRIPE_SECRET=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PRICE_MONTHLY=price_...
+STRIPE_PRICE_ANNUAL=price_...
+CASHIER_CURRENCY=chf
+```
+
+`config/billing.php` reads `STRIPE_PRICE_*`. `config/cashier.php` reads
+`STRIPE_*` and `CASHIER_*`. Display amounts in `config/billing.php`
+(`display.{monthly,annual}.amount`) are intentional duplicates of the Stripe
+prices — keep them in lockstep.
+
+### Webhook endpoint
+
+`POST /webhooks/stripe` is the only Stripe-facing endpoint. CSRF is excluded in
+`bootstrap/app.php`. Cashier's `VerifyWebhookSignature` middleware validates the
+`Stripe-Signature` header against `STRIPE_WEBHOOK_SECRET` automatically (set the
+secret to a non-empty value to enable verification).
+
+The handler is `App\Http\Controllers\Webhooks\StripeWebhookController`, a
+subclass of Cashier's `WebhookController` that adds cache-layer event-id
+deduplication (D-092). Stripe retries with the same event id are short-
+circuited within a 24-hour window. Cache driver in production is `database`
+(durable across deploys).
+
+### Read-only behaviour after cancellation
+
+Subscription state transitions:
+
+- `trial` — no `subscriptions` row exists. Indefinite trial. Full dashboard
+  access.
+- `active` — subscription is healthy. Full access.
+- `past_due` — Stripe is dunning a failing card. **Write-allowed** (D-089's
+  freeload envelope) — the salon retains access during the ~7-day default
+  retry window. If retries exhaust, Stripe fires
+  `customer.subscription.deleted` and the business transitions to `read_only`.
+- `canceled` — `cancel_at_period_end=true` is set, still inside the paid
+  period (`onGracePeriod()`). Full access until period end.
+- `read_only` — subscription has fully ended (`ended()` true). Dashboard is
+  read-only: `GET` requests work, every mutating verb redirects to
+  `/dashboard/settings/billing` with a flash error. Admin can re-subscribe
+  from there. Banner across every dashboard page surfaces the state.
+
+The `EnsureBusinessCanWrite` middleware (alias `billing.writable`) closes
+every dashboard mutation. **It does NOT gate**:
+
+- Public booking (`/{slug}`) — guests can still book existing services on a
+  lapsed business so existing customers aren't surprised.
+- Webhook endpoints (`/webhooks/stripe`, `/webhooks/google-calendar`) —
+  required for Stripe → resubscribe transitions and inbound calendar events.
+- Authentication, invitation, onboarding routes — outside the dashboard
+  group.
+- Customer area `/my-bookings` — separate role middleware.
+- Server-side automation: `AutoCompleteBookings`, `SendBookingReminders`,
+  `calendar:renew-watches`, `PullCalendarEventsJob`, `PushBookingToCalendarJob`
+  continue to run on lapsed businesses for already-created bookings. The
+  business paid for the period those bookings live in; their customers and
+  connected Google calendars must continue to reflect the true booking
+  lifecycle.
+
+### Pre-launch — switch to live keys
+
+Documented separately in the pre-launch checklist (`docs/SPEC.md §15` — Stripe
+go-live). Switching is a flip of the env vars from `*_test_*` to live keys plus
+re-creating the live-mode product + prices + webhook endpoint. The application
+code does not change.

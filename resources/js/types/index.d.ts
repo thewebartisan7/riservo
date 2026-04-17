@@ -5,10 +5,17 @@ export interface User {
     avatar: string | null;
 }
 
+export interface SubscriptionState {
+    status: 'trial' | 'active' | 'past_due' | 'canceled' | 'read_only';
+    trial_ends_at: string | null;
+    current_period_ends_at: string | null;
+}
+
 export interface Business {
     id: number;
     name: string;
     slug: string;
+    subscription: SubscriptionState;
 }
 
 export interface BookingDetail {

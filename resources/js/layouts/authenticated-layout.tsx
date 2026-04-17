@@ -28,7 +28,8 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Display } from '@/components/ui/display';
 import { useTrans } from '@/hooks/use-trans';
 import { getInitials } from '@/lib/booking-format';
-import { services as settingsServices } from '@/routes/settings';
+import { billing as settingsBilling, services as settingsServices } from '@/routes/settings';
+import type { SubscriptionState } from '@/types';
 import {
     AlertTriangleIcon,
     CalendarDaysIcon,
@@ -69,6 +70,8 @@ export default function AuthenticatedLayout({
     const currentPath = window.location.pathname;
     const hasPageHeader = Boolean(eyebrow || heading || description || actions);
     const unbookableServices = bookability?.unbookableServices ?? [];
+    const subscription: SubscriptionState | null = auth.business?.subscription ?? null;
+    const subscriptionBanner = resolveSubscriptionBanner(subscription, isAdmin, t);
 
     const navItems: { label: string; href: string; active: boolean; icon: LucideIcon }[] = [
         { label: t('Dashboard'), href: dashboardIndex.url(), active: currentPath === '/dashboard', icon: HomeIcon },
@@ -187,6 +190,40 @@ export default function AuthenticatedLayout({
                                 : 'flex-1'
                         }
                     >
+                        {subscriptionBanner && (
+                            <div
+                                className={
+                                    fullBleed
+                                        ? 'border-b border-border/60 px-5 pb-3 pt-3 sm:px-8'
+                                        : 'mx-auto w-full max-w-6xl px-5 pt-5 sm:px-8 sm:pt-8'
+                                }
+                                data-testid={subscriptionBanner.testId}
+                            >
+                                <Alert variant={subscriptionBanner.variant}>
+                                    <AlertTriangleIcon aria-hidden="true" />
+                                    <AlertTitle>{subscriptionBanner.title}</AlertTitle>
+                                    <AlertDescription>
+                                        <p>{subscriptionBanner.description}</p>
+                                    </AlertDescription>
+                                    {subscriptionBanner.action && (
+                                        <AlertAction>
+                                            <Link
+                                                href={settingsBilling().url}
+                                                className={
+                                                    subscriptionBanner.variant === 'error'
+                                                        ? 'inline-flex items-center text-xs font-medium uppercase tracking-[0.22em] text-destructive underline-offset-4 hover:underline'
+                                                        : 'inline-flex items-center text-xs font-medium uppercase tracking-[0.22em] text-warning underline-offset-4 hover:underline'
+                                                }
+                                            >
+                                                {subscriptionBanner.action === 'resubscribe'
+                                                    ? t('Resubscribe')
+                                                    : t('Manage')}
+                                            </Link>
+                                        </AlertAction>
+                                    )}
+                                </Alert>
+                            </div>
+                        )}
                         {unbookableServices.length > 0 && (
                             <div
                                 className={
@@ -267,4 +304,57 @@ export default function AuthenticatedLayout({
             </SidebarProvider>
         </>
     );
+}
+
+type BannerSpec = {
+    variant: 'warning' | 'error';
+    title: string;
+    description: string;
+    action: 'manage' | 'resubscribe' | null;
+    testId: string;
+};
+
+function resolveSubscriptionBanner(
+    subscription: SubscriptionState | null,
+    isAdmin: boolean,
+    t: (s: string) => string,
+): BannerSpec | null {
+    if (subscription === null) {
+        return null;
+    }
+
+    switch (subscription.status) {
+        case 'past_due':
+            return {
+                variant: 'warning',
+                title: t('Your last payment failed'),
+                description: t(
+                    'Stripe is retrying. Update your payment method to avoid losing access.',
+                ),
+                action: isAdmin ? 'manage' : null,
+                testId: 'subscription-past-due-banner',
+            };
+        case 'canceled':
+            return {
+                variant: 'warning',
+                title: t('Your subscription is set to cancel'),
+                description: t(
+                    'You still have access until the end of the current billing period. Resume any time before then.',
+                ),
+                action: isAdmin ? 'manage' : null,
+                testId: 'subscription-canceled-banner',
+            };
+        case 'read_only':
+            return {
+                variant: 'error',
+                title: t('Your subscription has ended'),
+                description: t(
+                    'The dashboard is read-only until you resubscribe. Existing bookings remain visible to your customers.',
+                ),
+                action: isAdmin ? 'resubscribe' : null,
+                testId: 'subscription-read-only-banner',
+            };
+        default:
+            return null;
+    }
 }

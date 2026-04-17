@@ -178,19 +178,21 @@ Full bidirectional sync: riservo bookings push to the user's chosen Google calen
 
 Stripe Cashier on the `Business` model with one paid tier (monthly + annual), indefinite trial, billing portal in the dashboard.
 
-- [ ] Install Cashier; configure on the `Business` model (per locked decision #9; trait, migrations, casts, billable contract)
-- [ ] Define one product in Stripe (test mode) with two prices (monthly + annual); store price IDs in `config/billing.php` reading from env
-- [ ] Trial setup: new businesses are placed on indefinite trial automatically at registration; **no card collected at signup** (per locked decision #10)
-- [ ] Billing portal page in the dashboard (admin-only) with sections: current plan + trial status, "Subscribe" CTA, manage payment method (Cashier's `redirectToBillingPortal`), download invoices (Cashier PDF), cancel subscription
-- [ ] Stripe Checkout flow for new subscriptions; success and cancel URLs back to the billing page
-- [ ] Webhook handler for: `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed`
-- [ ] Subscription state surfaced as Inertia shared prop (`auth.business.subscription`) so the UI can show "trial / active / past_due / canceled / read-only"
-- [ ] Cancellation semantics: `cancel_at_period_end` (per locked decision #12); on period end, dashboard transitions to read-only with a "Resubscribe" CTA — exact enforcement layer (middleware? policy?) decided at plan time
-- [ ] No hard plan limits in MVP (per locked decision #11) — do not add staff/booking caps
-- [ ] Feature tests against Stripe test mode (mocked via Cashier's `Stripe::fake()` where possible) — full subscribe flow, webhook signature validation, plan-state transitions, billing portal redirect, invoice listing, cancel-at-period-end behaviour
-- [ ] Update `docs/DEPLOYMENT.md` with: Stripe webhook endpoint URL, secret rotation procedure, switch from test to live keys (deferred to pre-launch), env var inventory
-- [ ] Add new shared decision: subscription state model and the read-only enforcement strategy
-- [ ] Pint clean, full Pest suite green, `npm run build` clean
+- [x] Install Cashier; configure on the `Business` model (per locked decision #9; trait, migrations, casts, billable contract)
+- [x] Define one product in Stripe (test mode) with two prices (monthly + annual); store price IDs in `config/billing.php` reading from env
+- [x] Trial setup: new businesses are placed on indefinite trial automatically at registration; **no card collected at signup** (per locked decision #10)
+- [x] Billing portal page in the dashboard (admin-only) with sections: current plan + trial status, "Subscribe" CTA, manage payment method (Cashier's `redirectToBillingPortal`), download invoices (Cashier PDF), cancel subscription
+- [x] Stripe Checkout flow for new subscriptions; success and cancel URLs back to the billing page
+- [x] Webhook handler for: `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed`
+- [x] Subscription state surfaced as Inertia shared prop (`auth.business.subscription`) so the UI can show "trial / active / past_due / canceled / read-only"
+- [x] Cancellation semantics: `cancel_at_period_end` (per locked decision #12); on period end, dashboard transitions to read-only with a "Resubscribe" CTA — exact enforcement layer (middleware? policy?) decided at plan time
+- [x] No hard plan limits in MVP (per locked decision #11) — do not add staff/booking caps
+- [x] Feature tests against Stripe test mode (mocked via Cashier's `Stripe::fake()` where possible) — full subscribe flow, webhook signature validation, plan-state transitions, billing portal redirect, invoice listing, cancel-at-period-end behaviour
+- [x] Update `docs/DEPLOYMENT.md` with: Stripe webhook endpoint URL, secret rotation procedure, switch from test to live keys (deferred to pre-launch), env var inventory
+- [x] Add new shared decision: subscription state model and the read-only enforcement strategy
+- [x] Pint clean, full Pest suite green, `npm run build` clean
+
+**Session 3 closed 2026-04-17.** D-089 through D-095 recorded in `docs/decisions/DECISIONS-FOUNDATIONS.md`. Cashier resolved to v16 (v15 is incompatible with Laravel 13). Feature + Unit suite at **638 passed / 2640 assertions** (+56 cases vs MVPC-2 baseline 582; includes fourteen cases added across three review rounds — see HANDOFF "Post-review fixes" for the seven bugs addressed).
 
 ---
 

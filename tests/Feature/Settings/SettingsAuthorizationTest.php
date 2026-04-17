@@ -23,6 +23,7 @@ test('staff cannot access any admin-only settings page', function () {
         '/dashboard/settings/staff',
         '/dashboard/settings/embed',
         '/dashboard/settings/account',
+        '/dashboard/settings/billing',
     ];
 
     foreach ($routes as $route) {
@@ -53,6 +54,7 @@ test('admin can access all settings pages', function () {
         '/dashboard/settings/staff',
         '/dashboard/settings/embed',
         '/dashboard/settings/account',
+        '/dashboard/settings/billing',
         '/dashboard/settings/calendar-integration',
     ];
 
