@@ -335,23 +335,23 @@ class BookingController extends Controller
 
         try {
             DB::transaction(function () use (
-                $business, $service, $booking, $startsAtLocal, $startsAtUtc, $endsAtUtc,
+                $business, $service, $booking, $startsAtLocal, $startsAtUtc, $endsAtUtc, $durationMinutes,
             ) {
-                $dateLocal = $startsAtLocal->startOfDay();
-
-                $slots = $this->slotGenerator->getAvailableSlots(
+                // Validate the *requested* window, not a service-duration
+                // slot. A resize (duration_minutes != service.duration_minutes)
+                // still has to fit inside the provider's availability window
+                // and avoid other bookings. canFitBooking() takes the actual
+                // duration and does both checks.
+                $fits = $this->slotGenerator->canFitBooking(
                     $business,
                     $service,
-                    $dateLocal,
                     $booking->provider,
+                    $startsAtLocal,
+                    $durationMinutes,
                     excluding: $booking,
                 );
 
-                $slotAvailable = collect($slots)->contains(
-                    fn (CarbonImmutable $slot) => $slot->eq($startsAtLocal),
-                );
-
-                if (! $slotAvailable) {
+                if (! $fits) {
                     abort(response()->json([
                         'message' => __('That slot is not available. Pick another time.'),
                     ], 422));
@@ -363,10 +363,14 @@ class BookingController extends Controller
                 ])->save();
             });
         } catch (QueryException $e) {
+            // GIST (D-065/D-066) is the race-safe backstop. Inertia reserves
+            // 409 for asset-version / external-redirect semantics, which
+            // confuses useHttp clients — translate the race to 422 matching
+            // the pre-check's response path. UX surfaces one kind of error.
             if (($e->getPrevious()?->getCode() ?? $e->getCode()) === '23P01') {
                 return response()->json([
                     'message' => __('This slot was just taken. Pick another time.'),
-                ], 409);
+                ], 422);
             }
             throw $e;
         }

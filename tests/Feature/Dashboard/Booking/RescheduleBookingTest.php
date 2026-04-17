@@ -221,6 +221,45 @@ test('reschedule of a source google_calendar booking is refused with 422', funct
     $response->assertJsonPath('message', 'External calendar events cannot be rescheduled from riservo.');
 });
 
+test('resize that extends past the provider working window is refused', function () {
+    // Provider availability ends at 18:00 Wednesday. Service default duration
+    // is 60. A resize to 17:30 start + 90-minute duration would run to 19:00
+    // — past the window. Must be refused, not silently accepted.
+    $newStart = CarbonImmutable::parse('2026-04-15 17:30', 'Europe/Zurich');
+
+    $response = $this->actingAs($this->admin)
+        ->patchJson("/dashboard/bookings/{$this->booking->id}/reschedule", [
+            'starts_at' => $newStart->utc()->toIso8601String(),
+            'duration_minutes' => 90,
+        ]);
+
+    $response->assertStatus(422);
+    expect($response->json('message'))->toContain('not available');
+
+    // Original booking unchanged.
+    expect($this->booking->fresh()->starts_at->format('Y-m-d H:i'))
+        ->toBe('2026-04-15 08:00');
+});
+
+test('resize inside the provider window and under the service slot-interval is accepted', function () {
+    // Same provider, window 09:00 – 18:00. Resize to 10:00 start + 90 min
+    // fits (ends at 11:30) — no conflicts, inside window.
+    Notification::fake();
+    Queue::fake();
+
+    $newStart = CarbonImmutable::parse('2026-04-15 10:00', 'Europe/Zurich');
+
+    $response = $this->actingAs($this->admin)
+        ->patchJson("/dashboard/bookings/{$this->booking->id}/reschedule", [
+            'starts_at' => $newStart->utc()->toIso8601String(),
+            'duration_minutes' => 90,
+        ]);
+
+    $response->assertOk();
+    $this->booking->refresh();
+    expect($this->booking->ends_at->format('H:i'))->toBe('09:30'); // 11:30 Zurich → 09:30 UTC
+});
+
 test('reschedule that does not snap to slot interval is refused', function () {
     // slot_interval_minutes = 30; try 10:17, which is not on the grid.
     $newStart = CarbonImmutable::parse('2026-04-15 14:17', 'Europe/Zurich');
@@ -268,7 +307,7 @@ test('reschedule straddling two days is refused', function () {
     expect($response->json('message'))->toContain('straddle two days');
 });
 
-test('GIST race: if a conflicting booking lands between the availability check and the UPDATE, the endpoint returns 409', function () {
+test('GIST race: if a conflicting booking lands between the availability check and the UPDATE, the endpoint returns 422', function () {
     // Manufacture the race by inserting the conflicting booking inside the
     // transaction — the availability check has passed at that point but the
     // UPDATE has not fired. Use the `DB::afterCommit` hook sequencing or a
@@ -298,10 +337,12 @@ test('GIST race: if a conflicting booking lands between the availability check a
     $response = $this->actingAs($this->admin)
         ->patchJson("/dashboard/bookings/{$this->booking->id}/reschedule", reschedulePayload($newStart));
 
-    // Either the in-transaction race lands on GIST (409) or the pre-check
-    // sees the injected row and refuses (422). Both outcomes are correct
-    // backstop behaviour; we assert the booking did NOT move.
-    expect($response->status())->toBeIn([409, 422]);
+    // Whether the race lands on the pre-check (app-side) or the GIST
+    // exclusion at UPDATE time (db-side), both are translated to 422 — one
+    // honest error shape for the client (Inertia reserves 409 for
+    // asset-version / external-redirect semantics, so the race-backstop
+    // reuses the app-side's status code).
+    expect($response->status())->toBe(422);
     $this->booking->refresh();
     expect($this->booking->starts_at->format('Y-m-d H:i'))->toBe('2026-04-15 08:00'); // original UTC
 });

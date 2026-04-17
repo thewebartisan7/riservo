@@ -43,6 +43,13 @@ export function useReschedule(): {
 
             try {
                 const result = await new Promise<RescheduleResult>((resolve) => {
+                    let settled = false;
+                    const settle = (value: RescheduleResult) => {
+                        if (settled) return;
+                        settled = true;
+                        resolve(value);
+                    };
+
                     http.patch(
                         rescheduleAction.url({ booking: bookingId }),
                         {
@@ -52,17 +59,42 @@ export function useReschedule(): {
                         {
                             onSuccess: (resp: unknown) => {
                                 const data = resp as { booking: DashboardBooking };
-                                resolve({ success: true, booking: data.booking });
+                                settle({ success: true, booking: data.booking });
                             },
+                            // 422 lands here with the controller's JSON
+                            // `message` mapped to a single-field errors object.
                             onError: (errors: Record<string, string>) => {
-                                // 422 / 409 responses surface here with the
-                                // controller's JSON `message` field mapped to
-                                // a single-field errors object by useHttp.
                                 const msg =
                                     (errors as unknown as { message?: string }).message ??
                                     Object.values(errors)[0] ??
                                     'Reschedule failed.';
-                                resolve({ success: false, message: msg });
+                                settle({ success: false, message: msg });
+                            },
+                            // Non-422 4xx/5xx (403, 500, and — if the
+                            // controller's error path ever returns one — a
+                            // stray 409) route here in Inertia v3. Returning
+                            // `false` keeps Inertia from navigating to an
+                            // error page so the calendar stays mounted.
+                            onHttpException: (response: Response | { status: number; data?: unknown }) => {
+                                const status = (response as { status: number }).status;
+                                const body = (response as { data?: unknown }).data;
+                                const msg =
+                                    (body as { message?: string } | undefined)?.message ??
+                                    (status === 403
+                                        ? 'You cannot reschedule this booking.'
+                                        : status >= 500
+                                            ? 'Something went wrong. Please try again.'
+                                            : 'Reschedule failed.');
+                                settle({ success: false, message: msg });
+                                return false;
+                            },
+                            // Connection drop / offline. Resolve so the UI
+                            // reverts rather than hanging.
+                            onNetworkError: () => {
+                                settle({
+                                    success: false,
+                                    message: 'Network error. Please check your connection and try again.',
+                                });
                             },
                         },
                     );

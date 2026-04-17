@@ -43,6 +43,64 @@ class SlotGeneratorService
     }
 
     /**
+     * Can the provider perform `$service` starting at `$startsAt` for exactly
+     * `$durationMinutes`?
+     *
+     * Distinct from getAvailableSlots() — which enumerates slot starts using
+     * `$service->duration_minutes` — this checks a specific window whose
+     * duration may differ (the reschedule / resize path may lengthen or
+     * shorten a booking past the service default). The occupied interval is
+     * `[$startsAt - buffer_before, $startsAt + $durationMinutes + buffer_after]`,
+     * consistent with D-066's effective-interval model.
+     *
+     * Returns `true` iff the occupied interval fits entirely inside one of
+     * the provider's availability windows on that date AND no
+     * pending/confirmed booking (excluding `$excluding`, if set) overlaps it.
+     */
+    public function canFitBooking(
+        Business $business,
+        Service $service,
+        Provider $provider,
+        CarbonImmutable $startsAt,
+        int $durationMinutes,
+        ?Booking $excluding = null,
+    ): bool {
+        $windows = $this->availabilityService->getAvailableWindows(
+            $business,
+            $provider,
+            $startsAt->startOfDay(),
+        );
+        if (empty($windows)) {
+            return false;
+        }
+
+        $bufferBefore = $service->buffer_before;
+        $bufferAfter = $service->buffer_after;
+        $occupiedStart = $startsAt->subMinutes($bufferBefore);
+        $occupiedEnd = $startsAt->addMinutes($durationMinutes + $bufferAfter);
+
+        $fitsAnyWindow = false;
+        foreach ($windows as $window) {
+            if ($occupiedStart->gte($window->start) && $occupiedEnd->lte($window->end)) {
+                $fitsAnyWindow = true;
+                break;
+            }
+        }
+        if (! $fitsAnyWindow) {
+            return false;
+        }
+
+        $bookings = $this->getBlockingBookings(
+            $business,
+            $provider,
+            $startsAt->startOfDay(),
+            $excluding,
+        );
+
+        return ! $this->conflictsWithBookings($occupiedStart, $occupiedEnd, $bookings);
+    }
+
+    /**
      * Assign the best provider for a given slot using the business strategy.
      */
     public function assignProvider(

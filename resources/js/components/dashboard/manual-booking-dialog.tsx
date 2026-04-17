@@ -178,7 +178,6 @@ export default function ManualBookingDialog({
 
     useEffect(() => {
         if (!selectedDate || !selectedService) return;
-        setSelectedTime(null);
         const dateStr = selectedDate.toLocaleDateString('sv');
         const params: Record<string, string> = {
             service_id: String(selectedService.id),
@@ -191,6 +190,16 @@ export default function ManualBookingDialog({
             onSuccess: (resp: unknown) => {
                 const data = resp as AvailableSlotsResponse;
                 setAvailableSlots(data.slots);
+                // Preserve the currently-selected time (typically seeded by
+                // click-to-create, or picked by the user on a previous step)
+                // only if the server confirms it is actually available for
+                // this date + service + provider combination. If not, clear
+                // it so the user picks a real slot. This keeps the
+                // click-to-create seed honoured across the service / provider
+                // steps and still rejects stale selections after a switch.
+                setSelectedTime((current) =>
+                    current && data.slots.includes(current) ? current : null,
+                );
             },
         });
     }, [selectedDate, selectedService, selectedProvider]);

@@ -82,12 +82,25 @@ export default function CalendarPage() {
 
     // Keyboard navigation — ←/→ moves the view by one unit; `t` jumps to
     // today. Skipped when an input / textarea / select / contenteditable is
-    // focused so typing inside the manual-booking dialog never hijacks.
+    // focused, OR when focus is inside an open overlay (dialog, popover,
+    // menu, listbox) or a grid widget (the Jump-to-date picker uses
+    // role="grid"). Without these guards, arrow keys inside the date picker
+    // would both move the focus ring inside the grid AND navigate the
+    // dashboard view — double-action, date-picker unusable.
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
             const target = e.target as HTMLElement | null;
             if (
-                target?.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]')
+                target?.closest(
+                    'input, textarea, select, [contenteditable="true"], [role="textbox"]',
+                )
+            ) {
+                return;
+            }
+            if (
+                target?.closest(
+                    '[role="dialog"], [role="menu"], [role="listbox"], [role="grid"], [role="application"]',
+                )
             ) {
                 return;
             }
