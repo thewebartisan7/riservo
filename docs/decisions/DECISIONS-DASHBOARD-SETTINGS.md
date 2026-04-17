@@ -143,3 +143,73 @@ This file contains live decisions about onboarding, settings architecture, embed
   - Temporary unavailability states remain invisible to misconfiguration UIs: a vacation block or a full week doesn't trigger the banner and doesn't hide the service.
   - The four callers move together — adding a fifth consumer is a documented one-liner. Diverging consumers are caught by the integration-level consistency test (`tests/Feature/Bookability/ScopeConsistencyTest.php`).
 - **Supersedes**: none. Extends D-061 (soft-delete semantics for providers) and D-062 (launch gate requires a provider) without replacing either — D-062's "at least one eligible provider per active service" still holds; D-078 sharpens "eligible".
+
+---
+
+### D-096 — Account/Availability route split for provider self-service
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Extends**: D-081 (settings shared/admin sub-group split), D-062 (admin opted-in as own provider).
+- **Context**: Pre-MVPC-4, `Dashboard\Settings\AccountController` was misnamed — every action it owned (`edit`, `toggleProvider`, `updateSchedule`, `storeException`, `updateException`, `destroyException`, `updateServices`) was about admin-as-own-provider availability, not about identity. The MVP-completion roadmap (Session 4 + locked decision #8) opens Account and Availability to staff. The misnaming meant building a real Account page on top of `AccountController` would either run two controllers fighting over the same name and route prefix, or refactor in place. Refactoring also resolves the structural smell.
+- **Decision**:
+  1. **Refactor `AccountController` in place.** It now manages profile (name, email), password, avatar (D-098 + D-097 + D-042 lineage), plus the kept admin-only `toggleProvider`. The schedule / exception / services bodies move to a new `Dashboard\Settings\AvailabilityController`. The schedule-rebuild helpers extract to `App\Services\ProviderScheduleService` so both `AccountController.toggleProvider` (seeds a new provider's schedule from business hours) and `AvailabilityController.updateSchedule` consume one implementation.
+  2. **Route placement** under the `dashboard/settings` prefix:
+     - **Shared sub-group** (admin + staff per D-081): `GET /account`, `PUT /account/profile`, `PUT /account/password`, `POST /account/avatar`, `DELETE /account/avatar`, `GET /availability`, `PUT /availability/schedule`, `POST /availability/exceptions`, `PUT /availability/exceptions/{exception}`, `DELETE /availability/exceptions/{exception}`.
+     - **Admin-only sub-group**: `POST /account/toggle-provider` (admin chooses to be a bookable provider — D-062), `PUT /availability/services` (admin owns which services a provider performs; staff sees services read-only on the Availability page).
+  3. **Self-scoped semantics.** Both controllers derive the active provider from `auth()->user() + tenant()->business()`. They never accept a `provider_id` from the request. `AvailabilityController` aborts 404 when the actor has no active Provider row. Form requests (`UpdateProviderScheduleRequest`, `StoreProviderExceptionRequest`, `UpdateProviderExceptionRequest`, `UpdateProviderServicesRequest`) relax `authorize()` to `return true` — auth is enforced by route middleware, and both `ProviderController` (admin managing others) and `AvailabilityController` (self) reuse the same validation rules.
+  4. **Avatar self-endpoint is new, not a reuse of `StaffController.uploadAvatar`.** StaffController's endpoint takes `{user}` in the URL (admin acting on anyone). Self-upload needs no `{user}` binding; the actor is always `auth()->user()`. New endpoints reuse the validation rule shape (`File::image()->max(2048)->types([...])`) and the JSON `{ path, url }` response from D-042. Avatar removal is `DELETE /dashboard/settings/account/avatar`.
+  5. **D-079 lockout still works** without new middleware. `BusinessMember` uses SoftDeletes with the SoftDeletingScope; `ResolveTenantContext::resolveMembership` queries `BusinessMember::query()` (scoped). A soft-deleted member resolves to no tenant → `EnsureUserHasRole` aborts 403 on every settings route, including the new ones. Locked by `SettingsAuthorizationTest::soft-deleted staff member cannot reach any settings page`.
+- **Consequences**:
+  - `AccountController.edit` returns a profile/password/avatar payload. The legacy schedule/exception/services keys are gone — any consumer that reads them now reads from `AvailabilityController.show` instead.
+  - Staff-with-Provider get a real availability surface. Staff-without-Provider see Account but Availability is hidden in the nav (D-099) and 404s if accessed directly.
+  - The `account.update-schedule`, `account.{store,update,destroy}-exception`, `account.update-services` route names are deleted; all callers now use the `availability.*` names.
+  - Both `ProviderController` (admin-managing-others) and `AvailabilityController` (self) share one set of FormRequests and one schedule service. No parallel validation; no parallel persistence logic.
+
+---
+
+### D-097 — Email change commits immediately, nulls verified_at, dispatches re-verification
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Cross-references**: DECISIONS-AUTH.md D-038 (verified middleware required for dashboard).
+- **Context**: The MVPC-4 Account page lets users change their own email. Two semantics were available: (a) commit the new email immediately + null `email_verified_at` + dispatch a verification notification, or (b) shadow staging — keep the old email active and store the pending email in a new column until verification. Option (b) forces every login, magic-link, and password-reset path to branch on staging state.
+- **Decision**:
+  1. **Commit immediately.** `AccountController::updateProfile` writes the new email, sets `email_verified_at = null` if changed, and calls `$user->sendEmailVerificationNotification()` (Laravel core's standard `MustVerifyEmail` flow — already used by `RegisterController::store`).
+  2. **No shadow staging.** No new column, no two-state semantics. Single state matches Laravel's default and reuses the existing `verification.notice` page.
+  3. **Notification dispatch is queued, not after-response.** `VerifyEmail` from Laravel core implements `ShouldQueue`. We do not wrap it in `dispatch(...)->afterResponse()` (that's the D-075 carve-out for magic-link / invitation interactivity). Email-change is closer to registration — let it queue.
+  4. **Typo recovery via a new auth-only endpoint.** A user who typo'd their new email is locked behind `verified` middleware and cannot reach `settings.account` to fix it. New `POST /email/change` route lives in the `auth` middleware group (NOT `verified`), backed by `EmailVerificationController::changeEmail` and a slim `ChangeEmailRequest`. The `verification.notice` Inertia page renders an inline "Wrong email? Change it." form that POSTs to this endpoint. Route is throttled `6,1` to mirror the existing `verification.send` rate limit.
+- **Consequences**:
+  - `users.email_verified_at` is null between commit and click-the-link. The user keeps their session but `verified`-gated routes redirect to `verification.notice` until they re-verify. Customer auth is not affected (D-038 — customers don't require verified email).
+  - The OLD email is gone from `users.email` immediately. It no longer routes magic links, password resets, or notifications. A typo can be recovered through the new `verification.change-email` form before logout, OR by the user logging out and asking an admin to update them via the database (no admin UI for that today; backlog if it happens often).
+  - The `verification.change-email` endpoint introduces a new auth-only mutation outside the dashboard group; it does NOT inherit `billing.writable`. Justified: subscription state is irrelevant to email-typo recovery, and the route can only be reached when the user is already locked behind `verified` middleware (not actively using the dashboard).
+
+---
+
+### D-098 — Password update branches on null vs non-null `password` column
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Magic-link-only users have `users.password = null` (the column is nullable per the original users-table migration; `MagicLinkController::verify` does not set a password on first sign-in). They need a way to set a first password without supplying a "current password" they don't have. Once set, subsequent changes must require the current password to prevent a session-hijacker from rotating credentials silently.
+- **Decision**:
+  1. **One controller method, branching FormRequest.** `AccountController::updatePassword` accepts `UpdateAccountPasswordRequest`. The FormRequest's `rules()` reads `$this->user()->password === null` (server-side state, not a request flag) to decide:
+     - `password === null`: rules are `password` (required + confirmed + `Password::defaults()`); no `current_password`.
+     - `password !== null`: rules add `current_password` (required + Laravel's `current_password` validator, which uses `Hash::check` against the authenticated user's hash).
+  2. **Client side is stateless about it.** The Account page reads a new `hasPassword: bool` Inertia prop (returned by `AccountController::edit`) to render the right form (toggle the `current_password` field, switch button label between "Set password" and "Change password"). Lying about `hasPassword` from the client cannot bypass the validator — the FormRequest re-reads server state.
+  3. **Flash message switches on prior state.** `__('Password set.')` for the null → set transition; `__('Password changed.')` for the change. Read in the controller from the pre-update value.
+- **Consequences**:
+  - Magic-link-only users have a frictionless first-password path. They keep magic-link auth as well (the password is additive, not exclusive).
+  - Once a password exists, the standard "current password required" gate applies.
+  - No new column, no flag, no migration. The branch is derived from existing schema state.
+
+---
+
+### D-099 — `auth.has_active_provider` shared Inertia prop drives Availability nav visibility
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Settings → Availability is a shared admin+staff page, but only meaningful when the actor has an active Provider row in the current business. The nav must hide it for users who have no provider row to manage; the page itself must defend with a 404 if reached directly. Both surfaces need a single source of truth on whether the actor has an active provider row.
+- **Decision**:
+  1. **Shared Inertia prop** `auth.has_active_provider: boolean` resolved lazily in `HandleInertiaRequests::share()`. Computed as `Provider::where('business_id', tenant()->businessId())->where('user_id', $user->id)->exists()` (the model auto-applies the SoftDeletingScope, so a trashed provider returns false). Returns false when no tenant or no user.
+  2. **Settings nav** (`resources/js/components/settings/settings-nav.tsx`) reads the prop and filters out items marked `requiresActiveProvider: true` when it's false. Both admin and staff nav apply the same filter — admins who have not opted in as their own provider also do not see the Availability item until they toggle it on.
+  3. **Page-level defense.** `AvailabilityController::show` aborts 404 when the actor has no active Provider row. No new middleware alias; the controller-level `abort(404)` is sufficient because the only entry point is the nav (which hides the link). Direct URL navigation by a user without a provider row 404s — the same shape as any non-existent settings page.
+- **Consequences**:
+  - The Availability nav item appears the moment an admin flips "Bookable provider" on (D-062), because the next Inertia visit re-resolves `has_active_provider` from server state.
+  - A staff user invited as a provider sees Availability immediately on first sign-in.
+  - A staff user whose admin has toggled them off (soft-deleted Provider row) loses the Availability item — but their schedule and exceptions are preserved in the database for restoration (D-061).

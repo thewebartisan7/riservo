@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use App\Enums\BusinessMemberRole;
 use App\Enums\PendingActionStatus;
 use App\Models\PendingAction;
+use App\Models\Provider;
 use App\Models\Service;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
@@ -48,6 +49,7 @@ class HandleInertiaRequests extends Middleware
                 'role' => fn () => $this->resolveRole($request),
                 'business' => fn () => $this->resolveBusiness($request),
                 'email_verified' => fn () => $request->user()?->hasVerifiedEmail() ?? false,
+                'has_active_provider' => fn () => $this->resolveHasActiveProvider($request),
             ],
             'flash' => [
                 'success' => $request->session()->get('success'),
@@ -127,6 +129,30 @@ class HandleInertiaRequests extends Middleware
                 ->values()
                 ->all(),
         ];
+    }
+
+    /**
+     * True when the actor has a non-soft-deleted Provider row in the current
+     * tenant business. Drives Availability nav visibility for both admin and
+     * staff (D-099). Returns false outside an authenticated tenant context.
+     */
+    private function resolveHasActiveProvider(Request $request): bool
+    {
+        $user = $request->user();
+
+        if (! $user) {
+            return false;
+        }
+
+        $tenant = tenant();
+
+        if (! $tenant->has()) {
+            return false;
+        }
+
+        return Provider::where('business_id', $tenant->businessId())
+            ->where('user_id', $user->id)
+            ->exists();
     }
 
     private function resolveRole(Request $request): ?string

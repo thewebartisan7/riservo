@@ -16,6 +16,7 @@ use App\Http\Controllers\Dashboard\CalendarPendingActionController;
 use App\Http\Controllers\Dashboard\CustomerController as DashboardCustomerController;
 use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Dashboard\Settings\AccountController;
+use App\Http\Controllers\Dashboard\Settings\AvailabilityController;
 use App\Http\Controllers\Dashboard\Settings\BillingController;
 use App\Http\Controllers\Dashboard\Settings\BookingSettingsController;
 use App\Http\Controllers\Dashboard\Settings\BusinessExceptionController;
@@ -82,6 +83,13 @@ Route::middleware('auth')->group(function () {
     Route::post('/email/verification-notification', [EmailVerificationController::class, 'resend'])
         ->middleware('throttle:6,1')
         ->name('verification.send');
+
+    // Typo-recovery from the verification.notice page (D-097). Auth-only,
+    // not verified-required — the whole point is to reach this when locked
+    // behind a wrong address that no longer routes mail.
+    Route::post('/email/change', [EmailVerificationController::class, 'changeEmail'])
+        ->middleware('throttle:6,1')
+        ->name('verification.change-email');
 
     // Onboarding wizard (auth + verified + admin only, no onboarded middleware)
     Route::middleware(['verified', 'role:admin'])->group(function () {
@@ -194,14 +202,16 @@ Route::middleware('auth')->group(function () {
                 // Embed & Share
                 Route::get('/embed', [EmbedController::class, 'edit'])->name('settings.embed');
 
-                // Account (admin as provider)
-                Route::get('/account', [AccountController::class, 'edit'])->name('settings.account');
+                // Account — admin-only carve-out: "be your own first provider"
+                // toggle (D-062). The Account GET + profile/password/avatar
+                // mutations live in the shared sub-group below (D-096).
                 Route::post('/account/toggle-provider', [AccountController::class, 'toggleProvider'])->name('settings.account.toggle-provider');
-                Route::put('/account/schedule', [AccountController::class, 'updateSchedule'])->name('settings.account.update-schedule');
-                Route::post('/account/exceptions', [AccountController::class, 'storeException'])->name('settings.account.store-exception');
-                Route::put('/account/exceptions/{exception}', [AccountController::class, 'updateException'])->name('settings.account.update-exception');
-                Route::delete('/account/exceptions/{exception}', [AccountController::class, 'destroyException'])->name('settings.account.destroy-exception');
-                Route::put('/account/services', [AccountController::class, 'updateServices'])->name('settings.account.update-services');
+
+                // Availability — admin-only carve-out: which services the
+                // (admin-as-self-provider) performs. Staff sees services
+                // read-only on the Availability page; admin still owns the
+                // commercial decision (D-096).
+                Route::put('/availability/services', [AvailabilityController::class, 'updateServices'])->name('settings.availability.update-services');
             });
 
             // Settings accessible to admin AND staff. The outer group (line above)
@@ -223,6 +233,23 @@ Route::middleware('auth')->group(function () {
                     ->name('settings.calendar-integration.sync-now');
                 Route::delete('/calendar-integration', [CalendarIntegrationController::class, 'disconnect'])
                     ->name('settings.calendar-integration.disconnect');
+
+                // Account — profile, password, avatar (D-096). Toggle-provider
+                // sits in the admin-only group above.
+                Route::get('/account', [AccountController::class, 'edit'])->name('settings.account');
+                Route::put('/account/profile', [AccountController::class, 'updateProfile'])->name('settings.account.update-profile');
+                Route::put('/account/password', [AccountController::class, 'updatePassword'])->name('settings.account.update-password');
+                Route::post('/account/avatar', [AccountController::class, 'uploadAvatar'])->name('settings.account.upload-avatar');
+                Route::delete('/account/avatar', [AccountController::class, 'removeAvatar'])->name('settings.account.remove-avatar');
+
+                // Availability — schedule + exceptions for any user with an
+                // active Provider row in the current business. Services edit is
+                // admin-only and lives in the admin sub-group above (D-096).
+                Route::get('/availability', [AvailabilityController::class, 'show'])->name('settings.availability');
+                Route::put('/availability/schedule', [AvailabilityController::class, 'updateSchedule'])->name('settings.availability.update-schedule');
+                Route::post('/availability/exceptions', [AvailabilityController::class, 'storeException'])->name('settings.availability.store-exception');
+                Route::put('/availability/exceptions/{exception}', [AvailabilityController::class, 'updateException'])->name('settings.availability.update-exception');
+                Route::delete('/availability/exceptions/{exception}', [AvailabilityController::class, 'destroyException'])->name('settings.availability.destroy-exception');
             });
         }); // end billing.writable group
     });

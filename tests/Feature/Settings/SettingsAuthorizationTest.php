@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Business;
+use App\Models\BusinessMember;
 use App\Models\User;
 
 beforeEach(function () {
@@ -22,7 +23,6 @@ test('staff cannot access any admin-only settings page', function () {
         '/dashboard/settings/services',
         '/dashboard/settings/staff',
         '/dashboard/settings/embed',
-        '/dashboard/settings/account',
         '/dashboard/settings/billing',
     ];
 
@@ -37,6 +37,53 @@ test('staff can access shared settings pages', function () {
     $this->actingAs($this->staff)
         ->get('/dashboard/settings/calendar-integration')
         ->assertOk();
+
+    $this->actingAs($this->staff)
+        ->get('/dashboard/settings/account')
+        ->assertOk();
+});
+
+test('staff with an active provider row can access availability', function () {
+    attachProvider($this->business, $this->staff);
+
+    $this->actingAs($this->staff)
+        ->get('/dashboard/settings/availability')
+        ->assertOk();
+});
+
+test('staff without an active provider row gets 404 on availability', function () {
+    $this->actingAs($this->staff)
+        ->get('/dashboard/settings/availability')
+        ->assertNotFound();
+});
+
+test('staff cannot toggle provider on themselves', function () {
+    $this->actingAs($this->staff)
+        ->post('/dashboard/settings/account/toggle-provider')
+        ->assertForbidden();
+});
+
+test('staff with provider row cannot edit which services they perform', function () {
+    attachProvider($this->business, $this->staff);
+
+    $this->actingAs($this->staff)
+        ->put('/dashboard/settings/availability/services', ['service_ids' => []])
+        ->assertForbidden();
+});
+
+test('soft-deleted staff member cannot reach any settings page', function () {
+    BusinessMember::where('business_id', $this->business->id)
+        ->where('user_id', $this->staff->id)
+        ->first()
+        ->delete();
+
+    $this->actingAs($this->staff)
+        ->get('/dashboard/settings/account')
+        ->assertForbidden();
+
+    $this->actingAs($this->staff)
+        ->get('/dashboard/settings/calendar-integration')
+        ->assertForbidden();
 });
 
 test('unauthenticated users are redirected to login', function () {
@@ -45,6 +92,8 @@ test('unauthenticated users are redirected to login', function () {
 });
 
 test('admin can access all settings pages', function () {
+    attachProvider($this->business, $this->admin);
+
     $routes = [
         '/dashboard/settings/profile',
         '/dashboard/settings/booking',
@@ -54,6 +103,7 @@ test('admin can access all settings pages', function () {
         '/dashboard/settings/staff',
         '/dashboard/settings/embed',
         '/dashboard/settings/account',
+        '/dashboard/settings/availability',
         '/dashboard/settings/billing',
         '/dashboard/settings/calendar-integration',
     ];

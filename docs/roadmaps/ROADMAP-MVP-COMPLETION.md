@@ -203,35 +203,37 @@ Stripe Cashier on the `Business` model with one paid tier (monthly + annual), in
 Open the settings area to providers (staff with a Provider row) for two self-managed surfaces: their own account and their own availability. Today both are admin-only and force admins to manage every provider's schedule on their behalf.
 
 ### Role split (extends Session 1's split)
-- [ ] Audit current settings routes and document admin-only vs admin+staff in the session plan before any code change (the split must be explicit and reviewable)
-- [ ] `settings-layout.tsx` derives nav visibility from role, not hardcoded lists; admin nav is the union (existing items + Account + Availability + Calendar Integration)
-- [ ] Admin-only settings routes remain guarded; new shared routes added under the same `role:admin,staff` group used in Session 1
-- [ ] Staff users without an active Provider row see Account + Calendar Integration, but **not** Availability (nothing to manage)
-- [ ] Deactivated staff (soft-deleted `business_members` row) cannot reach any settings page — verify the existing `is_active` middleware applies, add it if missing
+- [x] Audit current settings routes and document admin-only vs admin+staff in the session plan before any code change (the split must be explicit and reviewable)
+- [x] `settings-layout.tsx` derives nav visibility from role, not hardcoded lists; admin nav is the union (existing items + Account + Availability + Calendar Integration)
+- [x] Admin-only settings routes remain guarded; new shared routes added under the same `role:admin,staff` group used in Session 1
+- [x] Staff users without an active Provider row see Account + Calendar Integration, but **not** Availability (nothing to manage)
+- [x] Deactivated staff (soft-deleted `business_members` row) cannot reach any settings page — `ResolveTenantContext`'s `BusinessMember::query()` already auto-applies the SoftDeletingScope, so no new middleware needed; locked by `SettingsAuthorizationTest`
 
 ### Account page
-- [ ] Route `GET /dashboard/settings/account` rendering `Dashboard/settings/account.tsx` (admin + staff)
-- [ ] Sections: profile (name, email — re-verification flow on email change, consistent with existing `verification.notice`), password (require current password, OR set first password if user is magic-link-only, OR change), avatar (upload + remove)
-- [ ] Avatar upload reuses the immediate-upload endpoint pattern from D-042
-- [ ] Controller `Dashboard\Settings\AccountController` with `show`, `updateProfile`, `updatePassword`, `uploadAvatar`, `removeAvatar`
-- [ ] Feature tests: admin can update own profile; staff can update own profile; staff cannot update another user; password update rejects wrong current password; magic-link-only user can set first password without current; avatar upload + remove work
+- [x] Route `GET /dashboard/settings/account` rendering `dashboard/settings/account.tsx` (admin + staff)
+- [x] Sections: profile (name, email — re-verification flow on email change, consistent with existing `verification.notice`), password (require current password, OR set first password if user is magic-link-only, OR change), avatar (upload + remove)
+- [x] Avatar upload reuses the immediate-upload endpoint pattern from D-042 (new self-scoped endpoint, validation rules + JSON shape mirrored from `StaffController.uploadAvatar`)
+- [x] Controller `Dashboard\Settings\AccountController` with `edit`, `updateProfile`, `updatePassword`, `uploadAvatar`, `removeAvatar`, plus admin-only `toggleProvider`
+- [x] Feature tests: admin can update own profile; staff can update own profile; password update rejects wrong current password; magic-link-only user can set first password without current; avatar upload + remove work; email-change nulls verified_at + dispatches `VerifyEmail`
 
 ### Availability page
-- [ ] Route `GET /dashboard/settings/availability` rendering `Dashboard/settings/availability.tsx` (admin + staff with active Provider row)
-- [ ] Always scoped to `auth()->user()` within the current business — never accepts a `provider_id` from the request
-- [ ] Sections: weekly schedule editor (reuse the admin-side `provider-schedule-form`, scoped to the current user — extract as a shared component if not already shared), exceptions (add / edit / delete), service attachments (read-only display; admin still manages which services a provider performs)
-- [ ] Controller `Dashboard\Settings\AvailabilityController` with `show`, `updateSchedule`, `storeException`, `updateException`, `destroyException`
-- [ ] Reuse existing form requests and `AvailabilityService` calls — no parallel logic
-- [ ] Feature tests: provider can update own schedule; provider can CRUD own exceptions; provider cannot edit another provider's data via this route; admin opted-in as their own provider edits their own data through this page (not all providers)
+- [x] Route `GET /dashboard/settings/availability` rendering `dashboard/settings/availability.tsx` (admin + staff with active Provider row)
+- [x] Always scoped to `auth()->user()` within the current business — never accepts a `provider_id` from the request
+- [x] Sections: weekly schedule editor (reuses existing `WeekScheduleEditor`), exceptions (add / edit / delete via existing `ExceptionDialog`), service attachments (read-only display for staff, editable for admin-as-self-provider)
+- [x] Controller `Dashboard\Settings\AvailabilityController` with `show`, `updateSchedule`, `storeException`, `updateException`, `destroyException`, `updateServices` (admin-only)
+- [x] Reuse existing form requests (`UpdateProviderScheduleRequest`, `StoreProviderExceptionRequest`, `UpdateProviderExceptionRequest`, `UpdateProviderServicesRequest`) with `authorize()` relaxed to `return true` and route middleware as the gate; schedule helpers extracted to `App\Services\ProviderScheduleService` and shared with `AccountController.toggleProvider`
+- [x] Feature tests: provider can update own schedule; provider can CRUD own exceptions; provider cannot edit another provider's data via this route; admin opted-in as their own provider edits their own data through this page (not all providers); staff cannot edit services they perform; cross-business isolation locked
 
 ### Out of scope (do not refactor)
-- [ ] Do not touch admin-only settings controllers
-- [ ] Do not expose business-level settings to staff
-- [ ] Do not change which services a provider performs from the staff side (admin-only)
+- [x] Did not touch admin-only `StaffController`, `ProviderController`, `BillingController`
+- [x] Did not expose business-level settings to staff
+- [x] Did not change which services a provider performs from the staff side (admin-only)
 
 ### Tests + ops
-- [ ] Pint clean, full Pest suite green, `npm run build` clean
-- [ ] Update `docs/HANDOFF.md`; record any new decision (e.g., the explicit settings access matrix) under `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md`
+- [x] Pint clean, Feature + Unit suite **669 passed / 2758 assertions** (+31 vs MVPC-3 baseline 638), `npm run build` clean, Wayfinder regenerated
+- [x] Update `docs/HANDOFF.md`; record D-096..D-099 under `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md` with cross-reference in DECISIONS-AUTH.md (D-097)
+
+**Session 4 closed 2026-04-17.** D-096 through D-099 recorded in `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md`. Feature + Unit suite at **669 passed / 2758 assertions** (+31 cases vs MVPC-3 baseline 638).
 
 ---
 

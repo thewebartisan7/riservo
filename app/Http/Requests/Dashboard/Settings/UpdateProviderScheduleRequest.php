@@ -2,14 +2,22 @@
 
 namespace App\Http\Requests\Dashboard\Settings;
 
-use App\Enums\BusinessMemberRole;
 use Illuminate\Foundation\Http\FormRequest;
 
+/**
+ * Validates a 7-day schedule payload for a provider.
+ *
+ * Authorization is enforced by route middleware: ProviderController routes sit
+ * under the admin-only sub-group; AvailabilityController routes sit under the
+ * shared admin+staff sub-group. Both controllers re-derive the active provider
+ * from auth()->user() + tenant()->business() so a misconfigured route cannot
+ * write to another person's data (D-096).
+ */
 class UpdateProviderScheduleRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return tenant()->role() === BusinessMemberRole::Admin;
+        return true;
     }
 
     /**

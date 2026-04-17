@@ -221,6 +221,7 @@ export interface PageProps {
         role: 'admin' | 'staff' | 'customer' | null;
         business: Business | null;
         email_verified: boolean;
+        has_active_provider: boolean;
     };
     flash: {
         success: string | null;

@@ -73,6 +73,7 @@ This file contains live decisions about auth boundaries, roles, invitations, ver
 - **Context**: Business owners register with email + password. The question was whether email verification should be required before accessing the dashboard or just encouraged.
 - **Decision**: Email verification is required. The `verified` middleware is applied to all dashboard routes. Unverified users are redirected to a "verify your email" page with a resend button. Collaborators who accept an invite are automatically marked as verified (they proved email ownership by clicking the invite link). Customers authenticated via magic link are also auto-verified. Customer routes (`/my-bookings`) do not require email verification.
 - **Consequences**: Prevents fake signups from accessing business features. Adds a verification step to the registration flow but is standard SaaS practice.
+- **Extension (D-097, MVPC-4)**: When an authenticated user changes their email via Settings → Account, `email_verified_at` is nulled and the standard `VerifyEmail` notification dispatched. The user is then locked behind `verification.notice` until they click the new link. A new auth-only `POST /email/change` endpoint (NOT inside the `verified` group) provides typo-recovery from the verification.notice page itself. See DECISIONS-DASHBOARD-SETTINGS.md D-097 for the full rationale.
 
 ---
 

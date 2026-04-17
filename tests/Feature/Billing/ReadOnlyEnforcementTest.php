@@ -37,6 +37,13 @@ dataset('mutating routes', [
     'service store' => ['POST', '/dashboard/settings/services'],
     'staff invite' => ['POST', '/dashboard/settings/staff/invite'],
     'account toggle provider' => ['POST', '/dashboard/settings/account/toggle-provider'],
+    'account profile update' => ['PUT', '/dashboard/settings/account/profile'],
+    'account password update' => ['PUT', '/dashboard/settings/account/password'],
+    'account avatar upload' => ['POST', '/dashboard/settings/account/avatar'],
+    'account avatar remove' => ['DELETE', '/dashboard/settings/account/avatar'],
+    'availability schedule update' => ['PUT', '/dashboard/settings/availability/schedule'],
+    'availability exception store' => ['POST', '/dashboard/settings/availability/exceptions'],
+    'availability services update' => ['PUT', '/dashboard/settings/availability/services'],
     'calendar-integration connect' => ['POST', '/dashboard/settings/calendar-integration/connect'],
     'calendar-integration sync-now' => ['POST', '/dashboard/settings/calendar-integration/sync-now'],
     'calendar-integration disconnect' => ['DELETE', '/dashboard/settings/calendar-integration'],
@@ -52,6 +59,16 @@ test('read-only business cannot mutate via the dashboard', function (string $ver
 
 test('read-only business can still read dashboard pages', function () {
     foreach (['/dashboard', '/dashboard/bookings', '/dashboard/calendar', '/dashboard/customers'] as $path) {
+        $this->actingAs($this->admin)
+            ->get($path)
+            ->assertOk();
+    }
+});
+
+test('read-only business can still read account and availability', function () {
+    attachProvider($this->business, $this->admin);
+
+    foreach (['/dashboard/settings/account', '/dashboard/settings/availability'] as $path) {
         $this->actingAs($this->admin)
             ->get($path)
             ->assertOk();

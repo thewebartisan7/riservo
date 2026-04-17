@@ -2,16 +2,22 @@
 
 namespace App\Http\Requests\Dashboard\Settings;
 
-use App\Enums\BusinessMemberRole;
 use App\Enums\ExceptionType;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
+/**
+ * Validates an availability exception update payload.
+ *
+ * Authorization is enforced by route middleware: ProviderController routes sit
+ * under the admin-only sub-group; AvailabilityController routes sit under the
+ * shared admin+staff sub-group (D-096).
+ */
 class UpdateProviderExceptionRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return tenant()->role() === BusinessMemberRole::Admin;
+        return true;
     }
 
     /**
