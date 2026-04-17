@@ -270,6 +270,11 @@ export default function Account({
                                 <p className="text-xs text-muted-foreground">
                                     {t('JPG, PNG, or WebP · up to 2 MB')}
                                 </p>
+                                {avatarHttp.errors.avatar && (
+                                    <p className="text-xs text-primary" role="alert">
+                                        {avatarHttp.errors.avatar}
+                                    </p>
+                                )}
                             </div>
                         </CardPanel>
                     </Card>

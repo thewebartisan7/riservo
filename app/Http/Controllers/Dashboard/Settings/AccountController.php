@@ -72,8 +72,15 @@ class AccountController extends Controller
         if ($emailChanged) {
             $user->sendEmailVerificationNotification();
 
-            return redirect()->route('settings.account')->with(
-                'success',
+            // Redirect straight to verification.notice rather than back to
+            // settings.account: the GET /account would be intercepted by the
+            // `verified` middleware and redirected to verification.notice
+            // anyway, but the flash data would be consumed by that
+            // intermediate request and the user would land on the notice page
+            // with no feedback. The status copy is rendered by the notice
+            // page's existing `status` prop (auth/verify-email.tsx).
+            return redirect()->route('verification.notice')->with(
+                'status',
                 __('Profile updated. We sent a verification link to :email.', ['email' => $user->email]),
             );
         }

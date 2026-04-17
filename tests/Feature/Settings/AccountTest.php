@@ -87,7 +87,7 @@ test('staff can update their own profile', function () {
     expect($this->staff->fresh()->name)->toBe('Staff Renamed');
 });
 
-test('email change nulls verified_at and dispatches verification notification', function () {
+test('email change nulls verified_at, dispatches verification, and redirects to the verification notice with status flash', function () {
     Notification::fake();
 
     $this->actingAs($this->admin)
@@ -95,14 +95,37 @@ test('email change nulls verified_at and dispatches verification notification', 
             'name' => $this->admin->name,
             'email' => 'new-address@example.com',
         ])
-        ->assertRedirect('/dashboard/settings/account')
-        ->assertSessionHas('success');
+        // Redirect target is verification.notice (NOT settings.account) so the
+        // status flash survives the verified-middleware bounce that the GET
+        // /account would otherwise trigger after email_verified_at is nulled.
+        ->assertRedirect('/email/verify')
+        ->assertSessionHas('status');
 
     $fresh = $this->admin->fresh();
     expect($fresh->email)->toBe('new-address@example.com');
     expect($fresh->email_verified_at)->toBeNull();
 
     Notification::assertSentTo($fresh, VerifyEmail::class);
+});
+
+test('verification.notice surfaces the post-email-change status flash to the page', function () {
+    Notification::fake();
+
+    $this->actingAs($this->admin)
+        ->put('/dashboard/settings/account/profile', [
+            'name' => $this->admin->name,
+            'email' => 'fresh@example.com',
+        ]);
+
+    // Follow the redirect: the notice page must read the status flash and
+    // expose it via the Inertia `status` prop so the user sees confirmation.
+    $this->actingAs($this->admin->fresh())
+        ->get('/email/verify')
+        ->assertOk()
+        ->assertInertia(fn ($page) => $page
+            ->component('auth/verify-email')
+            ->where('status', __('Profile updated. We sent a verification link to :email.', ['email' => 'fresh@example.com']))
+        );
 });
 
 test('saving profile without changing email does NOT re-verify', function () {
@@ -247,6 +270,20 @@ test('avatar upload validates image type', function () {
     $this->actingAs($this->admin)
         ->post('/dashboard/settings/account/avatar', ['avatar' => $bad])
         ->assertSessionHasErrors('avatar');
+});
+
+test('avatar upload validation error is returned in a shape useHttp surfaces to the form', function () {
+    Storage::fake('public');
+
+    $bad = UploadedFile::fake()->create('not-an-image.txt', 10, 'text/plain');
+
+    // useHttp consumes Inertia's standard validation error envelope. Posting
+    // as JSON (XHR) confirms the error payload key matches the field name the
+    // new self-service avatar UI displays (avatarHttp.errors.avatar).
+    $this->actingAs($this->admin)
+        ->postJson('/dashboard/settings/account/avatar', ['avatar' => $bad])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('avatar');
 });
 
 test('avatar remove deletes file and nulls user.avatar', function () {
