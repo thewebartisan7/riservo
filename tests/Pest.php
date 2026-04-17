@@ -26,9 +26,7 @@ pest()->extend(TestCase::class)
     ->use(RefreshDatabase::class)
     ->in('Browser');
 
-if (shouldBootBrowserTesting()) {
-    pest()->browser()->timeout(10000);
-}
+pest()->browser()->timeout(10000);
 
 /*
 |--------------------------------------------------------------------------
@@ -59,26 +57,6 @@ expect()->extend('toBeOne', function () {
 function something()
 {
     // ..
-}
-
-function shouldBootBrowserTesting(): bool
-{
-    $arguments = $_SERVER['argv'] ?? [];
-    $command = implode(' ', array_map('strval', $arguments));
-
-    if ($command === '') {
-        return false;
-    }
-
-    if (str_contains($command, '--testsuite=Browser') || str_contains($command, '--testsuite Browser')) {
-        return true;
-    }
-
-    if (preg_match('/\btests\/Browser\b/', $command) === 1) {
-        return true;
-    }
-
-    return false;
 }
 
 function attachStaff(Business $business, User $user): void
