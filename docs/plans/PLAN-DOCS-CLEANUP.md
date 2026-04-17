@@ -1,5 +1,7 @@
 # PLAN-DOCS-CLEANUP
 
+TODO this file can be archived or deleted as it's already done.
+
 ## Goal
 
 Clean up the `docs/` structure and normalize agent instruction files so Codex and Claude receive equivalent scoped guidance with lower long-term maintenance overhead.
