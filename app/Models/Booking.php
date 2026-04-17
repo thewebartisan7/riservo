@@ -32,6 +32,9 @@ use Illuminate\Support\Carbon;
     'status',
     'source',
     'external_calendar_id',
+    'external_event_calendar_id',
+    'external_title',
+    'external_html_link',
     'payment_status',
     'notes',
     'internal_notes',
@@ -85,5 +88,50 @@ class Booking extends Model
     public function reminders(): HasMany
     {
         return $this->hasMany(BookingReminder::class);
+    }
+
+    /**
+     * Whether this booking should push to the provider's external calendar.
+     *
+     * Gates every dispatch of PushBookingToCalendarJob (D-083): the provider
+     * has a configured integration, and the booking is not itself a pulled
+     * Google event (we never round-trip inbound events back out).
+     */
+    public function shouldPushToCalendar(): bool
+    {
+        if ($this->source === BookingSource::GoogleCalendar) {
+            return false;
+        }
+
+        $user = $this->provider?->user;
+        $integration = $user?->calendarIntegration;
+
+        return $integration !== null && $integration->isConfigured();
+    }
+
+    /**
+     * Whether customer-facing notifications must be suppressed for this booking.
+     *
+     * Locked decision #7: bookings with source = google_calendar do not trigger
+     * customer notifications. Guards live at every dispatch site; Notification
+     * classes stay unchanged (D-088).
+     */
+    public function shouldSuppressCustomerNotifications(): bool
+    {
+        return $this->source === BookingSource::GoogleCalendar;
+    }
+
+    /**
+     * Display label for this booking's service.
+     *
+     * External bookings have no service — fall back to the event summary or a
+     * generic "External event" label so serialisers can avoid null dereference
+     * on $booking->service->name.
+     */
+    public function serviceLabel(): string
+    {
+        return $this->service?->name
+            ?? $this->external_title
+            ?? __('External event');
     }
 }

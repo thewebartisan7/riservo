@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\BookingSource;
 use App\Enums\BookingStatus;
 use App\Models\Booking;
 use App\Models\BookingReminder;
@@ -38,6 +39,9 @@ class SendBookingReminders extends Command
         $horizonEnd = $now->addHours((int) $allReminderHours->max() + 1);
 
         $candidates = Booking::where('status', BookingStatus::Confirmed)
+            // External (Google Calendar) events never get reminders — locked decision
+            // #7. Query-time exclusion is cheaper than a per-row guard at dispatch.
+            ->where('source', '!=', BookingSource::GoogleCalendar->value)
             ->whereBetween('starts_at', [$now, $horizonEnd])
             ->with(['business', 'service', 'provider.user', 'customer', 'reminders'])
             ->get();

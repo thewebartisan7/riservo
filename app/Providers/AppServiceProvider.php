@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Services\Calendar\CalendarProviderFactory;
 use App\Support\TenantContext;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -16,6 +17,7 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->scoped(TenantContext::class);
+        $this->app->singleton(CalendarProviderFactory::class);
     }
 
     /**

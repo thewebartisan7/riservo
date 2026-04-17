@@ -84,3 +84,16 @@ export function getProviderColorMap(providerIds: number[]): Map<number, Provider
     });
     return map;
 }
+
+/**
+ * Neutral palette for external (Google Calendar) events (D-084).
+ * Visually distinct from riservo bookings — no accent hue, just the COSS UI
+ * muted tones.
+ */
+export const EXTERNAL_EVENT_COLOR: ProviderColor = {
+    bg: 'bg-muted/60',
+    hoverBg: 'hover:bg-muted',
+    text: 'text-muted-foreground',
+    accent: 'text-muted-foreground/70',
+    dot: 'bg-muted-foreground',
+};

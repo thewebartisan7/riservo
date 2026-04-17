@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Booking;
 
 use App\Enums\BookingStatus;
 use App\Http\Controllers\Controller;
+use App\Jobs\Calendar\PushBookingToCalendarJob;
 use App\Models\Booking;
 use App\Notifications\BookingCancelledNotification;
 use Illuminate\Http\RedirectResponse;
@@ -65,14 +66,20 @@ class BookingManagementController extends Controller
 
         $booking->update(['status' => BookingStatus::Cancelled]);
 
-        $booking->loadMissing(['business.admins', 'provider.user']);
+        if (! $booking->shouldSuppressCustomerNotifications()) {
+            $booking->loadMissing(['business.admins', 'provider.user']);
 
-        $notification = new BookingCancelledNotification($booking, 'customer');
-        $staffUsers = $booking->business->admins
-            ->when($booking->provider?->user, fn ($c) => $c->merge([$booking->provider->user]))
-            ->unique('id');
+            $notification = new BookingCancelledNotification($booking, 'customer');
+            $staffUsers = $booking->business->admins
+                ->when($booking->provider?->user, fn ($c) => $c->merge([$booking->provider->user]))
+                ->unique('id');
 
-        Notification::send($staffUsers, $notification);
+            Notification::send($staffUsers, $notification);
+        }
+
+        if ($booking->shouldPushToCalendar()) {
+            PushBookingToCalendarJob::dispatch($booking->id, 'delete');
+        }
 
         return back()->with('success', __('Booking cancelled successfully.'));
     }

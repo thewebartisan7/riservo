@@ -3,6 +3,8 @@
 namespace App\Http\Middleware;
 
 use App\Enums\BusinessMemberRole;
+use App\Enums\PendingActionStatus;
+use App\Models\PendingAction;
 use App\Models\Service;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
@@ -52,9 +54,37 @@ class HandleInertiaRequests extends Middleware
                 'error' => $request->session()->get('error'),
             ],
             'bookability' => fn () => $this->resolveBookability($request),
+            'calendarPendingActionsCount' => fn () => $this->resolveCalendarPendingActionsCount($request),
             'locale' => $locale,
             'translations' => fn () => $this->getTranslations($locale),
         ];
+    }
+
+    /**
+     * Count pending calendar sync actions for the current viewer (D-088 extension).
+     * Admins see the business-wide count; staff see only actions whose integration
+     * they own.
+     */
+    private function resolveCalendarPendingActionsCount(Request $request): int
+    {
+        if (! $request->user()) {
+            return 0;
+        }
+
+        $tenant = tenant();
+
+        if (! $tenant->has() || $tenant->business() === null) {
+            return 0;
+        }
+
+        $query = PendingAction::where('business_id', $tenant->business()->id)
+            ->where('status', PendingActionStatus::Pending->value);
+
+        if ($tenant->role() !== BusinessMemberRole::Admin) {
+            $query->whereHas('integration', fn ($q) => $q->where('user_id', $request->user()->id));
+        }
+
+        return $query->count();
     }
 
     /**

@@ -13,18 +13,20 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import { BookingStatusBadge } from '@/components/dashboard/booking-status-badge';
+import { CalendarPendingActionsSection } from '@/components/dashboard/calendar-pending-actions-section';
 import { formatTimeShort } from '@/lib/datetime-format';
-import { ArrowUpRightIcon } from 'lucide-react';
-import type { DashboardStats, PageProps, TodayBooking } from '@/types';
+import { ArrowUpRightIcon, CalendarDaysIcon } from 'lucide-react';
+import type { CalendarPendingAction, DashboardStats, PageProps, TodayBooking } from '@/types';
 
 interface DashboardPageProps extends PageProps {
     stats: DashboardStats;
     todayBookings: TodayBooking[];
     timezone: string;
+    calendarPendingActions: CalendarPendingAction[];
 }
 
 export default function Dashboard() {
-    const { auth, stats, todayBookings, timezone } =
+    const { auth, stats, todayBookings, timezone, calendarPendingActions } =
         usePage<DashboardPageProps>().props;
     const { t } = useTrans();
 
@@ -53,6 +55,8 @@ export default function Dashboard() {
             description={t("A calm look at today — glance, act, move on.")}
         >
             <div className="flex flex-col gap-8">
+                <CalendarPendingActionsSection actions={calendarPendingActions} timezone={timezone} />
+
                 <section>
                     <h2 className="sr-only">{t('Overview')}</h2>
                     <dl className="grid grid-cols-2 divide-y divide-border border-y border-border sm:grid-cols-4 sm:divide-x sm:divide-y-0">
@@ -130,10 +134,17 @@ export default function Dashboard() {
                                                 {formatTimeShort(booking.starts_at, timezone)}
                                             </TableCell>
                                             <TableCell className="text-sm font-medium">
-                                                {booking.customer.name}
+                                                {booking.external ? (
+                                                    <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                                                        <CalendarDaysIcon aria-hidden="true" className="size-3.5" />
+                                                        {booking.external_title ?? t('External event')}
+                                                    </span>
+                                                ) : (
+                                                    booking.customer?.name ?? t('—')
+                                                )}
                                             </TableCell>
                                             <TableCell className="text-muted-foreground text-sm">
-                                                {booking.service.name}
+                                                {booking.service?.name ?? (booking.external ? t('External') : t('—'))}
                                             </TableCell>
                                             <TableCell className="text-muted-foreground text-sm">
                                                 {booking.provider.is_active

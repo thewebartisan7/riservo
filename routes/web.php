@@ -12,6 +12,7 @@ use App\Http\Controllers\Booking\PublicBookingController;
 use App\Http\Controllers\Customer\BookingController as CustomerBookingController;
 use App\Http\Controllers\Dashboard\BookingController as DashboardBookingController;
 use App\Http\Controllers\Dashboard\CalendarController;
+use App\Http\Controllers\Dashboard\CalendarPendingActionController;
 use App\Http\Controllers\Dashboard\CustomerController as DashboardCustomerController;
 use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Dashboard\Settings\AccountController;
@@ -25,6 +26,7 @@ use App\Http\Controllers\Dashboard\Settings\ServiceController as SettingsService
 use App\Http\Controllers\Dashboard\Settings\StaffController as SettingsStaffController;
 use App\Http\Controllers\Dashboard\Settings\WorkingHoursController;
 use App\Http\Controllers\OnboardingController;
+use App\Http\Controllers\Webhooks\GoogleCalendarWebhookController;
 use App\Http\Controllers\WelcomeController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -109,6 +111,11 @@ Route::middleware('auth')->group(function () {
         // Calendar
         Route::get('/dashboard/calendar', [CalendarController::class, 'index'])->name('dashboard.calendar');
 
+        // Calendar sync — pending actions (shared admin+staff; owner-or-admin check
+        // enforced in controller per D-085 extension + D-088).
+        Route::post('/dashboard/calendar-pending-actions/{action}/resolve', [CalendarPendingActionController::class, 'resolve'])
+            ->name('dashboard.calendar-pending-actions.resolve');
+
         // Dashboard API (JSON)
         Route::get('/dashboard/api/available-dates', [DashboardBookingController::class, 'availableDates'])->name('dashboard.api.available-dates');
         Route::get('/dashboard/api/slots', [DashboardBookingController::class, 'slots'])->name('dashboard.api.slots');
@@ -191,6 +198,12 @@ Route::middleware('auth')->group(function () {
                 ->name('settings.calendar-integration.connect');
             Route::get('/calendar-integration/callback', [CalendarIntegrationController::class, 'callback'])
                 ->name('settings.calendar-integration.callback');
+            Route::get('/calendar-integration/configure', [CalendarIntegrationController::class, 'configure'])
+                ->name('settings.calendar-integration.configure');
+            Route::post('/calendar-integration/configure', [CalendarIntegrationController::class, 'saveConfiguration'])
+                ->name('settings.calendar-integration.save-configuration');
+            Route::post('/calendar-integration/sync-now', [CalendarIntegrationController::class, 'syncNow'])
+                ->name('settings.calendar-integration.sync-now');
             Route::delete('/calendar-integration', [CalendarIntegrationController::class, 'disconnect'])
                 ->name('settings.calendar-integration.disconnect');
         });
@@ -202,6 +215,11 @@ Route::middleware('auth')->group(function () {
         Route::post('/my-bookings/{booking}/cancel', [CustomerBookingController::class, 'cancel'])->name('customer.bookings.cancel');
     });
 });
+
+// Google Calendar push notifications. No auth, CSRF excluded in bootstrap/app.php.
+// Channel id + token are validated inside the controller (D-086).
+Route::post('/webhooks/google-calendar', [GoogleCalendarWebhookController::class, 'store'])
+    ->name('webhooks.google-calendar');
 
 // Guest booking management (no auth, via cancellation token)
 Route::get('/bookings/{token}', [BookingManagementController::class, 'show'])->name('bookings.show');

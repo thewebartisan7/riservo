@@ -16,7 +16,7 @@ import {
 } from 'date-fns';
 import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
 import type { DashboardBooking } from '@/types';
-import type { ProviderColor } from '@/lib/calendar-colors';
+import { EXTERNAL_EVENT_COLOR, type ProviderColor } from '@/lib/calendar-colors';
 import {
     CalendarEvent,
     getBookingGridPosition,
@@ -111,7 +111,9 @@ export function DayView({ bookings, date, timezone, colorMap, onBookingClick }: 
                                     booking.ends_at,
                                     timezone,
                                 );
-                                const color = colorMap.get(booking.provider.id) ?? DEFAULT_COLOR;
+                                const color = booking.external
+                                    ? EXTERNAL_EVENT_COLOR
+                                    : (colorMap.get(booking.provider.id) ?? DEFAULT_COLOR);
 
                                 return (
                                     <li

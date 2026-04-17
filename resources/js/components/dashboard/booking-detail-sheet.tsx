@@ -17,6 +17,7 @@ import { Display } from '@/components/ui/display';
 import { BookingStatusBadge, BookingSourceBadge } from './booking-status-badge';
 import { formatDateTimeMedium, formatTimeShort } from '@/lib/datetime-format';
 import { formatPrice, formatDurationShort } from '@/lib/booking-format';
+import { CalendarDaysIcon, ExternalLinkIcon } from 'lucide-react';
 import type { DashboardBooking } from '@/types';
 
 interface BookingDetailSheetProps {
@@ -71,7 +72,9 @@ export default function BookingDetailSheet({
 
     if (!booking) return null;
 
-    const actions = statusTransitions[booking.status] ?? [];
+    // External (Google Calendar) bookings are managed in Google; the dashboard
+    // sheet stays read-only for them.
+    const actions = booking.external ? [] : (statusTransitions[booking.status] ?? []);
     const startTime = formatTimeShort(booking.starts_at, timezone);
     const endTime = formatTimeShort(booking.ends_at, timezone);
 
@@ -108,10 +111,17 @@ export default function BookingDetailSheet({
             <SheetPopup side="right" className="w-full sm:max-w-md">
                 <SheetHeader>
                     <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                        {t('Booking')}
+                        {booking.external ? t('External event') : t('Booking')}
                     </p>
                     <SheetTitle className="font-display">
-                        {booking.customer.name}
+                        {booking.external ? (
+                            <span className="inline-flex items-center gap-2">
+                                <CalendarDaysIcon aria-hidden="true" className="size-4 text-muted-foreground" />
+                                {booking.external_title ?? t('External event')}
+                            </span>
+                        ) : (
+                            booking.customer?.name ?? ''
+                        )}
                     </SheetTitle>
                     <SheetDescription>
                         {formatDateTimeMedium(booking.starts_at, timezone)}
@@ -130,41 +140,61 @@ export default function BookingDetailSheet({
                                 <span className="mx-1.5 text-muted-foreground/80">–</span>
                                 {endTime}
                             </Display>
-                            <span className="text-xs text-muted-foreground">
-                                {formatDurationShort(booking.service.duration_minutes, t)}
-                            </span>
+                            {booking.service && (
+                                <span className="text-xs text-muted-foreground">
+                                    {formatDurationShort(booking.service.duration_minutes, t)}
+                                </span>
+                            )}
                         </div>
                     </Meta>
 
-                    <div className="grid grid-cols-2 gap-5">
-                        <Meta label={t('Service')}>
-                            <p className="font-medium">{booking.service.name}</p>
-                            {booking.service.price !== null && (
+                    {!booking.external && (
+                        <div className="grid grid-cols-2 gap-5">
+                            <Meta label={t('Service')}>
+                                <p className="font-medium">{booking.service?.name ?? '—'}</p>
+                                {booking.service?.price !== null && booking.service?.price !== undefined && (
+                                    <p className="text-xs text-muted-foreground">
+                                        {formatPrice(booking.service.price, t)}
+                                    </p>
+                                )}
+                            </Meta>
+                            <Meta label={t('With')}>
+                                <p className="font-medium">
+                                    {booking.provider.is_active
+                                        ? booking.provider.name
+                                        : t(':name (deactivated)', { name: booking.provider.name })}
+                                </p>
+                            </Meta>
+                        </div>
+                    )}
+
+                    {booking.external && booking.external_html_link && (
+                        <Meta label={t('Source')}>
+                            <a
+                                href={booking.external_html_link}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground underline-offset-4 hover:underline"
+                            >
+                                {t('Open in Google Calendar')}
+                                <ExternalLinkIcon aria-hidden="true" className="size-3.5" />
+                            </a>
+                        </Meta>
+                    )}
+
+                    {booking.customer && !booking.external && (
+                        <Meta label={t('Customer')}>
+                            <p className="font-medium">{booking.customer.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                                {booking.customer.email}
+                            </p>
+                            {booking.customer.phone && (
                                 <p className="text-xs text-muted-foreground">
-                                    {formatPrice(booking.service.price, t)}
+                                    {booking.customer.phone}
                                 </p>
                             )}
                         </Meta>
-                        <Meta label={t('With')}>
-                            <p className="font-medium">
-                                {booking.provider.is_active
-                                    ? booking.provider.name
-                                    : t(':name (deactivated)', { name: booking.provider.name })}
-                            </p>
-                        </Meta>
-                    </div>
-
-                    <Meta label={t('Customer')}>
-                        <p className="font-medium">{booking.customer.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                            {booking.customer.email}
-                        </p>
-                        {booking.customer.phone && (
-                            <p className="text-xs text-muted-foreground">
-                                {booking.customer.phone}
-                            </p>
-                        )}
-                    </Meta>
+                    )}
 
                     {booking.notes && (
                         <Meta label={t('Customer note')}>

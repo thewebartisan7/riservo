@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef } from 'react';
 import { parseISO, startOfWeek, addDays, format, isToday } from 'date-fns';
 import type { DashboardBooking } from '@/types';
-import type { ProviderColor } from '@/lib/calendar-colors';
+import { EXTERNAL_EVENT_COLOR, type ProviderColor } from '@/lib/calendar-colors';
 import { formatTimeShort } from '@/lib/datetime-format';
 import { useTrans } from '@/hooks/use-trans';
 import {
@@ -149,7 +149,9 @@ export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }:
                                                     new Date(b.starts_at).getTime(),
                                             )
                                             .map((booking) => {
-                                                const color = colorMap.get(booking.provider.id) ?? DEFAULT_COLOR;
+                                                const color = booking.external
+                                                    ? EXTERNAL_EVENT_COLOR
+                                                    : (colorMap.get(booking.provider.id) ?? DEFAULT_COLOR);
                                                 const startTime = formatTimeShort(booking.starts_at, timezone);
                                                 const endTime = formatTimeShort(booking.ends_at, timezone);
                                                 return (
@@ -165,10 +167,10 @@ export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }:
                                                             />
                                                             <div className="flex min-w-0 flex-1 flex-col">
                                                                 <p className="truncate text-sm font-semibold text-foreground">
-                                                                    {booking.service.name}
+                                                                    {booking.service?.name ?? booking.external_title ?? t('External event')}
                                                                 </p>
                                                                 <p className="truncate text-xs text-muted-foreground">
-                                                                    {booking.customer.name}
+                                                                    {booking.customer?.name ?? (booking.external ? t('External') : '')}
                                                                 </p>
                                                             </div>
                                                             <time
@@ -242,7 +244,9 @@ export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }:
                                                 booking.ends_at,
                                                 timezone,
                                             );
-                                            const color = colorMap.get(booking.provider.id) ?? DEFAULT_COLOR;
+                                            const color = booking.external
+                                                ? EXTERNAL_EVENT_COLOR
+                                                : (colorMap.get(booking.provider.id) ?? DEFAULT_COLOR);
 
                                             return (
                                                 <li

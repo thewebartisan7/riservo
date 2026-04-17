@@ -79,13 +79,16 @@ export interface DashboardBooking {
     ends_at: string;
     status: string;
     source: string;
+    external: boolean;
+    external_title: string | null;
+    external_html_link: string | null;
     notes: string | null;
     internal_notes: string | null;
     created_at: string;
     cancellation_token: string;
-    service: { id: number; name: string; duration_minutes: number; price: number | null };
+    service: { id: number; name: string; duration_minutes: number; price: number | null } | null;
     provider: { id: number; name: string; avatar_url: string | null; is_active: boolean };
-    customer: { id: number; name: string; email: string; phone: string | null };
+    customer: { id: number; name: string; email: string; phone: string | null } | null;
 }
 
 export interface TodayBooking {
@@ -93,9 +96,29 @@ export interface TodayBooking {
     starts_at: string;
     ends_at: string;
     status: string;
-    service: { name: string; duration_minutes: number };
+    external: boolean;
+    external_title: string | null;
+    service: { name: string; duration_minutes: number } | null;
     provider: { id: number; name: string; is_active: boolean };
-    customer: { name: string };
+    customer: { name: string } | null;
+}
+
+export interface CalendarPendingAction {
+    id: number;
+    type: 'riservo_event_deleted_in_google' | 'external_booking_conflict';
+    payload: Record<string, unknown> & {
+        external_event_id?: string;
+        external_summary?: string | null;
+        external_start?: string;
+        external_end?: string;
+    };
+    created_at: string;
+    booking: {
+        id: number;
+        starts_at: string;
+        customer_name: string | null;
+        service_name: string | null;
+    } | null;
 }
 
 export interface DashboardStats {
@@ -199,6 +222,7 @@ export interface PageProps {
     bookability: {
         unbookableServices: Array<{ id: number; name: string }>;
     };
+    calendarPendingActionsCount: number;
     locale: string;
     translations: Record<string, string>;
     [key: string]: unknown;

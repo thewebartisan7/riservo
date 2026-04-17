@@ -101,7 +101,9 @@ test('callback persists the integration with tokens encrypted at rest', function
 
     $this->actingAs($this->admin)
         ->get(route('settings.calendar-integration.callback'))
-        ->assertRedirect(route('settings.calendar-integration'));
+        // MVPC-2: successful callback now redirects to the configure step so
+        // the user picks a destination + conflict calendars before sync begins.
+        ->assertRedirect(route('settings.calendar-integration.configure'));
 
     $integration = $this->admin->refresh()->calendarIntegration;
     expect($integration)->not->toBeNull();

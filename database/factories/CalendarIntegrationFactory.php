@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\Business;
 use App\Models\CalendarIntegration;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -27,8 +28,22 @@ class CalendarIntegrationFactory extends Factory
             'token_expires_at' => now()->addHour(),
             'calendar_id' => null,
             'google_account_email' => fake()->safeEmail(),
-            'webhook_channel_id' => Str::uuid()->toString(),
-            'webhook_expiry' => now()->addDays(7),
+            // MVPC-1 rows default to unconfigured. `configured()` finalises.
+            'business_id' => null,
+            'destination_calendar_id' => null,
+            'conflict_calendar_ids' => null,
         ];
+    }
+
+    /**
+     * Finalise the integration as if the MVPC-2 configure step ran.
+     */
+    public function configured(?int $businessId = null): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'business_id' => $businessId ?? Business::factory(),
+            'destination_calendar_id' => 'primary',
+            'conflict_calendar_ids' => ['primary'],
+        ]);
     }
 }

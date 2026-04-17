@@ -20,6 +20,13 @@ return Application::configure(basePath: dirname(__DIR__))
             HandleInertiaRequests::class,
         ]);
 
+        // Google Calendar push-notification webhook cannot carry a CSRF token.
+        // Authenticity is enforced by X-Goog-Channel-Id + X-Goog-Channel-Token
+        // inside GoogleCalendarWebhookController (D-086).
+        $middleware->preventRequestForgery(except: [
+            'webhooks/google-calendar',
+        ]);
+
         $middleware->alias([
             'role' => EnsureUserHasRole::class,
             'onboarded' => EnsureOnboardingComplete::class,

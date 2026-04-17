@@ -304,15 +304,23 @@ export default function BookingsPage() {
                                             {formatDateTimeShort(booking.starts_at, timezone)}
                                         </TableCell>
                                         <TableCell>
-                                            <div className="text-sm font-medium">
-                                                {booking.customer.name}
-                                            </div>
-                                            <div className="text-muted-foreground text-xs">
-                                                {booking.customer.email}
-                                            </div>
+                                            {booking.external ? (
+                                                <div className="text-sm font-medium text-muted-foreground">
+                                                    {booking.external_title ?? t('External event')}
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <div className="text-sm font-medium">
+                                                        {booking.customer?.name ?? '—'}
+                                                    </div>
+                                                    <div className="text-muted-foreground text-xs">
+                                                        {booking.customer?.email ?? ''}
+                                                    </div>
+                                                </>
+                                            )}
                                         </TableCell>
                                         <TableCell className="text-sm">
-                                            {booking.service.name}
+                                            {booking.service?.name ?? (booking.external ? t('External') : '—')}
                                         </TableCell>
                                         {isAdmin && (
                                             <TableCell className="text-muted-foreground text-sm">

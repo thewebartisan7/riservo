@@ -38,7 +38,7 @@ export function CalendarEvent({
                 >
                     <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${color.dot}`} />
                     <span className={`truncate font-medium ${color.text}`}>
-                        {booking.service.name}
+                        {booking.service?.name ?? booking.external_title ?? t('External event')}
                     </span>
                 </PopoverTrigger>
                 <PopoverPopup side="right" align="start" sideOffset={6} className="w-64">
@@ -50,10 +50,10 @@ export function CalendarEvent({
                             />
                             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                                 <p className="font-semibold text-foreground text-sm leading-snug">
-                                    {booking.service.name}
+                                    {booking.service?.name ?? booking.external_title ?? t('External event')}
                                 </p>
                                 <p className="truncate text-muted-foreground text-xs">
-                                    {booking.customer.name}
+                                    {booking.customer?.name ?? (booking.external ? t('External') : '')}
                                 </p>
                             </div>
                         </div>
@@ -93,11 +93,11 @@ export function CalendarEvent({
             style={{ top: '1px', bottom: '1px' }}
         >
             <p className={`truncate font-semibold ${color.text}`}>
-                {booking.service.name}
+                {booking.service?.name ?? booking.external_title ?? t('External event')}
             </p>
             {!compact && (
                 <p className={`truncate ${color.accent}`}>
-                    {booking.customer.name}
+                    {booking.customer?.name ?? (booking.external ? t('External') : '')}
                 </p>
             )}
             <p className={`mt-auto ${color.accent}`}>

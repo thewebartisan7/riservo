@@ -10,3 +10,4 @@ Artisan::command('inspire', function () {
 
 Schedule::command('bookings:send-reminders')->everyFiveMinutes()->withoutOverlapping();
 Schedule::command('bookings:auto-complete')->everyFifteenMinutes();
+Schedule::command('calendar:renew-watches')->dailyAt('03:00');

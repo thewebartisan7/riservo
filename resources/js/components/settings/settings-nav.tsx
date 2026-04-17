@@ -6,6 +6,7 @@ import type { PageProps } from '@/types';
 interface NavItem {
     label: string;
     href: string;
+    badgeKey?: 'calendarPendingActionsCount';
 }
 
 interface NavGroup {
@@ -16,6 +17,7 @@ interface NavGroup {
 const calendarIntegrationItem: NavItem = {
     label: 'Calendar Integration',
     href: '/dashboard/settings/calendar-integration',
+    badgeKey: 'calendarPendingActionsCount',
 };
 
 // Admin sees the union of admin-only items and shared items. Shared items are
@@ -68,7 +70,9 @@ const staffGroups: NavGroup[] = [
 
 export function SettingsNav() {
     const { t } = useTrans();
-    const role = usePage<PageProps>().props.auth.role;
+    const page = usePage<PageProps>();
+    const role = page.props.auth.role;
+    const calendarPendingActionsCount = page.props.calendarPendingActionsCount ?? 0;
     const currentPath = window.location.pathname;
 
     const navGroups = role === 'admin' ? adminGroups : staffGroups;
@@ -86,6 +90,10 @@ export function SettingsNav() {
                                 currentPath === item.href ||
                                 (item.href !== '/dashboard/settings/profile' &&
                                     currentPath.startsWith(item.href));
+
+                            const badgeValue = item.badgeKey === 'calendarPendingActionsCount'
+                                ? calendarPendingActionsCount
+                                : 0;
 
                             return (
                                 <li key={item.href}>
@@ -112,6 +120,11 @@ export function SettingsNav() {
                                         <span className={cn(isActive && 'font-medium')}>
                                             {t(item.label)}
                                         </span>
+                                        {badgeValue > 0 && (
+                                            <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary/10 px-1.5 text-[10px] font-semibold tabular-nums text-primary">
+                                                {badgeValue}
+                                            </span>
+                                        )}
                                     </Link>
                                 </li>
                             );

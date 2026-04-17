@@ -132,4 +132,27 @@ class BookingFactory extends Factory
             'source' => BookingSource::Manual,
         ]);
     }
+
+    /**
+     * External Google Calendar event materialised as a booking row.
+     *
+     * MVPC-2 (locked #2): external events have no customer and no service —
+     * both FKs are nullable; buffers are 0; source is `google_calendar`; the
+     * event's Google id is pinned via `external_calendar_id`; the event's
+     * htmlLink is pinned via `external_html_link` (D-084 revised).
+     */
+    public function external(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'customer_id' => null,
+            'service_id' => null,
+            'buffer_before_minutes' => 0,
+            'buffer_after_minutes' => 0,
+            'source' => BookingSource::GoogleCalendar,
+            'status' => BookingStatus::Confirmed,
+            'external_calendar_id' => 'google-event-'.Str::random(20),
+            'external_title' => fake()->sentence(3),
+            'external_html_link' => fake()->url(),
+        ]);
+    }
 }

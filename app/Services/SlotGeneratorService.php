@@ -215,12 +215,15 @@ class SlotGeneratorService
         $dayStart = $date->startOfDay()->setTimezone('UTC');
         $dayEnd = $date->endOfDay()->setTimezone('UTC');
 
+        // D-066: conflictsWithBookings reads effective_starts_at / effective_ends_at
+        // generated columns directly. Eager-loading `service` is dead weight and
+        // introduces a null-service footgun now that external bookings (google_calendar
+        // source) carry null service_id.
         return Booking::where('business_id', $business->id)
             ->where('provider_id', $provider->id)
             ->whereIn('status', [BookingStatus::Confirmed, BookingStatus::Pending])
             ->where('starts_at', '<', $dayEnd)
             ->where('ends_at', '>', $dayStart)
-            ->with('service')
             ->get();
     }
 

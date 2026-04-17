@@ -9,6 +9,7 @@ use App\Exceptions\Booking\SlotNoLongerAvailableException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Dashboard\StoreManualBookingRequest;
 use App\Http\Requests\Dashboard\UpdateBookingStatusRequest;
+use App\Jobs\Calendar\PushBookingToCalendarJob;
 use App\Models\Booking;
 use App\Models\Customer;
 use App\Models\Provider;
@@ -80,6 +81,11 @@ class BookingController extends Controller
             $query->where('starts_at', '<=', $dateTo);
         }
 
+        // Default is "include external". `?include_external=0` suppresses google_calendar bookings.
+        if ($request->string('include_external')->toString() === '0') {
+            $query->where('source', '!=', BookingSource::GoogleCalendar->value);
+        }
+
         $sortField = $request->string('sort', 'starts_at');
         $sortDir = $request->string('direction', 'desc');
         $allowedSorts = ['starts_at', 'created_at'];
@@ -110,16 +116,21 @@ class BookingController extends Controller
                 'ends_at' => $booking->ends_at->toIso8601String(),
                 'status' => $booking->status->value,
                 'source' => $booking->source->value,
+                'external' => $booking->source === BookingSource::GoogleCalendar,
+                'external_title' => $booking->external_title,
+                'external_html_link' => $booking->external_html_link,
                 'notes' => $booking->notes,
                 'internal_notes' => $booking->internal_notes,
                 'created_at' => $booking->created_at->toIso8601String(),
                 'cancellation_token' => $booking->cancellation_token,
-                'service' => [
-                    'id' => $booking->service->id,
-                    'name' => $booking->service->name,
-                    'duration_minutes' => $booking->service->duration_minutes,
-                    'price' => $booking->service->price,
-                ],
+                'service' => $booking->service
+                    ? [
+                        'id' => $booking->service->id,
+                        'name' => $booking->service->name,
+                        'duration_minutes' => $booking->service->duration_minutes,
+                        'price' => $booking->service->price,
+                    ]
+                    : null,
                 'provider' => [
                     'id' => $booking->provider->id,
                     'name' => $booking->provider->user?->name ?? '',
@@ -128,12 +139,14 @@ class BookingController extends Controller
                         : null,
                     'is_active' => ! $booking->provider->trashed(),
                 ],
-                'customer' => [
-                    'id' => $booking->customer->id,
-                    'name' => $booking->customer->name,
-                    'email' => $booking->customer->email,
-                    'phone' => $booking->customer->phone,
-                ],
+                'customer' => $booking->customer
+                    ? [
+                        'id' => $booking->customer->id,
+                        'name' => $booking->customer->name,
+                        'email' => $booking->customer->email,
+                        'phone' => $booking->customer->phone,
+                    ]
+                    : null,
             ]),
             'services' => $services->map(fn (Service $service) => [
                 'id' => $service->id,
@@ -190,15 +203,27 @@ class BookingController extends Controller
         $booking->loadMissing(['customer', 'business.admins', 'provider.user']);
 
         if ($newStatus === BookingStatus::Confirmed) {
-            Notification::route('mail', $booking->customer->email)
-                ->notify(new BookingConfirmedNotification($booking));
+            if (! $booking->shouldSuppressCustomerNotifications()) {
+                Notification::route('mail', $booking->customer->email)
+                    ->notify(new BookingConfirmedNotification($booking));
 
-            $this->notifyStaff($booking, new BookingReceivedNotification($booking, 'confirmed'), $user->id);
+                $this->notifyStaff($booking, new BookingReceivedNotification($booking, 'confirmed'), $user->id);
+            }
         }
 
         if ($newStatus === BookingStatus::Cancelled) {
-            Notification::route('mail', $booking->customer->email)
-                ->notify(new BookingCancelledNotification($booking, 'business'));
+            if (! $booking->shouldSuppressCustomerNotifications() && $booking->customer) {
+                Notification::route('mail', $booking->customer->email)
+                    ->notify(new BookingCancelledNotification($booking, 'business'));
+            }
+        }
+
+        // Push the booking change to Google Calendar. Cancel → delete;
+        // confirm/complete/no-show → create-or-update. shouldPushToCalendar()
+        // handles the "inbound origin" skip and the configured-integration gate.
+        if ($booking->shouldPushToCalendar()) {
+            $action = $newStatus === BookingStatus::Cancelled ? 'delete' : 'update';
+            PushBookingToCalendarJob::dispatch($booking->id, $action);
         }
 
         return back()->with('success', __('Booking status updated to :status.', [
@@ -331,10 +356,16 @@ class BookingController extends Controller
             throw $e;
         }
 
-        Notification::route('mail', $customer->email)
-            ->notify(new BookingConfirmedNotification($booking));
+        if (! $booking->shouldSuppressCustomerNotifications()) {
+            Notification::route('mail', $customer->email)
+                ->notify(new BookingConfirmedNotification($booking));
 
-        $this->notifyStaff($booking, new BookingReceivedNotification($booking, 'new'), $user->id);
+            $this->notifyStaff($booking, new BookingReceivedNotification($booking, 'new'), $user->id);
+        }
+
+        if ($booking->shouldPushToCalendar()) {
+            PushBookingToCalendarJob::dispatch($booking->id, 'create');
+        }
 
         return redirect()->route('dashboard.bookings')
             ->with('success', __('Booking created successfully.'));

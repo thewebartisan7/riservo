@@ -9,6 +9,7 @@ use App\Exceptions\Booking\NoProviderAvailableException;
 use App\Exceptions\Booking\SlotNoLongerAvailableException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Booking\StorePublicBookingRequest;
+use App\Jobs\Calendar\PushBookingToCalendarJob;
 use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Customer;
@@ -326,12 +327,20 @@ class PublicBookingController extends Controller
             throw $e;
         }
 
-        if ($booking->status === BookingStatus::Confirmed) {
+        if (! $booking->shouldSuppressCustomerNotifications() && $booking->status === BookingStatus::Confirmed) {
             Notification::route('mail', $customer->email)
                 ->notify(new BookingConfirmedNotification($booking));
         }
 
-        $this->notifyStaff($booking);
+        if (! $booking->shouldSuppressCustomerNotifications()) {
+            $this->notifyStaff($booking);
+        }
+
+        // Confirmed bookings push immediately; pending bookings push on confirmation
+        // (admin action in Dashboard\BookingController::updateStatus).
+        if ($booking->status === BookingStatus::Confirmed && $booking->shouldPushToCalendar()) {
+            PushBookingToCalendarJob::dispatch($booking->id, 'create');
+        }
 
         return response()->json([
             'token' => $booking->cancellation_token,

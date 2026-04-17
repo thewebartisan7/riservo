@@ -45,10 +45,15 @@ QUEUE_CONNECTION=database
 MAIL_MAILER=
 MAIL_FROM_ADDRESS=noreply@riservo.ch
 MAIL_FROM_NAME="riservo"
+
+# Google Calendar OAuth + sync (MVPC-1 + MVPC-2)
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=${APP_URL}/dashboard/settings/calendar-integration/callback
 ```
 
-Additional variables (Google OAuth for calendar sync, Stripe keys when Cashier
-is adopted, etc.) are added as each integration lands.
+Additional variables (Stripe keys when Cashier is adopted, etc.) are added as
+each integration lands.
 
 ---
 
@@ -61,6 +66,7 @@ configuration is required. Scheduled commands:
 |---------|-----------|-------------|
 | `bookings:send-reminders` | Every 5 minutes | Sends reminder emails based on each business's `reminder_hours` config |
 | `bookings:auto-complete` | Every 15 minutes | Transitions confirmed bookings past their end time to `completed` status |
+| `calendar:renew-watches` | Daily at 03:00 | Refreshes Google Calendar push-notification channels approaching their 30-day expiry (D-086) |
 
 ---
 
@@ -121,3 +127,54 @@ php artisan queue:restart
 
 If a local migration or seeder fails with a `pgsql` driver error, verify that
 `pdo_pgsql` is enabled in the Herd-selected PHP runtime.
+
+---
+
+## Google Calendar OAuth + Sync
+
+riservo supports bidirectional sync with Google Calendar: riservo bookings push
+to the user's destination calendar; events on configured conflict calendars pull
+into riservo as external bookings that block availability. Operational
+requirements:
+
+### Google Cloud Console setup
+
+1. Create a Google Cloud project and enable **Google Calendar API**.
+2. Configure the OAuth consent screen (external, production).
+3. Create an OAuth 2.0 Client ID of type **Web application**.
+4. Register the exact redirect URI — must match `GOOGLE_REDIRECT_URI` byte-for-byte:
+   - Production: `https://riservo.ch/dashboard/settings/calendar-integration/callback`
+   - Local: `https://{tunnel-domain}/dashboard/settings/calendar-integration/callback`
+5. Copy the client ID + secret into the Laravel Cloud project's env vars.
+
+### Webhook endpoint
+
+Google delivers push notifications to `POST {APP_URL}/webhooks/google-calendar`.
+
+- **HTTPS is required.** Google rejects HTTP. In local dev use a tunnel (ngrok /
+  Expose / Herd Share) and register the tunnel's HTTPS URL alongside the
+  redirect URI.
+- The domain hosting the webhook endpoint must be **verified** in Google Cloud
+  Console (Webmaster Central) before channels can be created. Without
+  verification, `events.watch` returns 401/403.
+- The endpoint is CSRF-excluded (`bootstrap/app.php`). Authenticity is enforced
+  inside the controller by comparing `X-Goog-Channel-Token` against the
+  per-channel secret (`calendar_watches.channel_token`, constant-time compare).
+
+### Queue worker
+
+Push and pull flow through queued jobs:
+
+- `PushBookingToCalendarJob` — dispatched from every booking mutation site (D-083).
+- `PullCalendarEventsJob` — dispatched by the webhook and by the sync-now button.
+- `StartCalendarSyncJob` — dispatched once per integration at configure time.
+
+A queue worker must run in production for any calendar activity to reach Google
+(and vice versa). Laravel Cloud handles this automatically; for local dev:
+`php artisan queue:work`.
+
+### Scheduler
+
+`calendar:renew-watches` runs daily at 03:00 UTC. Google caps watch channels at
+~30 days; the command refreshes any channel expiring within the next 24 hours
+(stops the old channel, starts a new one, updates `calendar_watches`).

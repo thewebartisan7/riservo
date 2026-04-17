@@ -13,7 +13,7 @@ import {
 } from 'date-fns';
 import { ClockIcon } from 'lucide-react';
 import type { DashboardBooking } from '@/types';
-import type { ProviderColor } from '@/lib/calendar-colors';
+import { EXTERNAL_EVENT_COLOR, type ProviderColor } from '@/lib/calendar-colors';
 import { getDateInTimezone } from './calendar-event';
 import { useTrans } from '@/hooks/use-trans';
 import { formatTimeShort } from '@/lib/datetime-format';
@@ -121,9 +121,9 @@ export function MonthView({ bookings, date, timezone, colorMap, onBookingClick }
                                     {dayBookings.length > 0 && (
                                         <ol className="flex flex-col gap-0.5 overflow-hidden">
                                             {dayBookings.slice(0, 3).map((booking) => {
-                                                const color =
-                                                    colorMap.get(booking.provider.id) ??
-                                                    DEFAULT_COLOR;
+                                                const color = booking.external
+                                                    ? EXTERNAL_EVENT_COLOR
+                                                    : (colorMap.get(booking.provider.id) ?? DEFAULT_COLOR);
                                                 const startTime = formatTimeShort(booking.starts_at, timezone);
 
                                                 return (
@@ -138,7 +138,7 @@ export function MonthView({ bookings, date, timezone, colorMap, onBookingClick }
                                                                 className={`size-1.5 shrink-0 rounded-full ${color.dot}`}
                                                             />
                                                             <span className="flex-auto truncate font-medium text-foreground">
-                                                                {booking.service.name}
+                                                                {booking.service?.name ?? booking.external_title ?? t('External event')}
                                                             </span>
                                                             <time
                                                                 dateTime={booking.starts_at}
@@ -206,7 +206,9 @@ export function MonthView({ bookings, date, timezone, colorMap, onBookingClick }
                                     {dayBookings.length > 0 && (
                                         <span className="flex gap-0.5">
                                             {dayBookings.slice(0, 4).map((b) => {
-                                                const color = colorMap.get(b.provider.id) ?? DEFAULT_COLOR;
+                                                const color = b.external
+                                                    ? EXTERNAL_EVENT_COLOR
+                                                    : (colorMap.get(b.provider.id) ?? DEFAULT_COLOR);
                                                 return (
                                                     <span
                                                         key={b.id}
@@ -238,7 +240,9 @@ export function MonthView({ bookings, date, timezone, colorMap, onBookingClick }
                 {selectedDayBookings.length > 0 ? (
                     <ol className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto rounded-xl border border-border/60 bg-background p-1 text-sm shadow-xs/5">
                         {selectedDayBookings.map((booking) => {
-                            const color = colorMap.get(booking.provider.id) ?? DEFAULT_COLOR;
+                            const color = booking.external
+                                ? EXTERNAL_EVENT_COLOR
+                                : (colorMap.get(booking.provider.id) ?? DEFAULT_COLOR);
                             const startTime = formatTimeShort(booking.starts_at, timezone);
 
                             return (
@@ -254,10 +258,10 @@ export function MonthView({ bookings, date, timezone, colorMap, onBookingClick }
                                         />
                                         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                                             <p className="truncate font-semibold text-foreground">
-                                                {booking.service.name}
+                                                {booking.service?.name ?? booking.external_title ?? t('External event')}
                                             </p>
                                             <p className="truncate text-xs text-muted-foreground">
-                                                {booking.customer.name}
+                                                {booking.customer?.name ?? (booking.external ? t('External') : '')}
                                             </p>
                                         </div>
                                         <time

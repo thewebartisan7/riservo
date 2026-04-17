@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Dashboard;
 
+use App\Enums\BookingSource;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\Provider;
@@ -77,16 +78,21 @@ class CalendarController extends Controller
                 'ends_at' => $booking->ends_at->toIso8601String(),
                 'status' => $booking->status->value,
                 'source' => $booking->source->value,
+                'external' => $booking->source === BookingSource::GoogleCalendar,
+                'external_title' => $booking->external_title,
+                'external_html_link' => $booking->external_html_link,
                 'notes' => $booking->notes,
                 'internal_notes' => $booking->internal_notes,
                 'created_at' => $booking->created_at->toIso8601String(),
                 'cancellation_token' => $booking->cancellation_token,
-                'service' => [
-                    'id' => $booking->service->id,
-                    'name' => $booking->service->name,
-                    'duration_minutes' => $booking->service->duration_minutes,
-                    'price' => $booking->service->price,
-                ],
+                'service' => $booking->service
+                    ? [
+                        'id' => $booking->service->id,
+                        'name' => $booking->service->name,
+                        'duration_minutes' => $booking->service->duration_minutes,
+                        'price' => $booking->service->price,
+                    ]
+                    : null,
                 'provider' => [
                     'id' => $booking->provider->id,
                     'name' => $booking->provider->user?->name ?? '',
@@ -95,12 +101,14 @@ class CalendarController extends Controller
                         : null,
                     'is_active' => ! $booking->provider->trashed(),
                 ],
-                'customer' => [
-                    'id' => $booking->customer->id,
-                    'name' => $booking->customer->name,
-                    'email' => $booking->customer->email,
-                    'phone' => $booking->customer->phone,
-                ],
+                'customer' => $booking->customer
+                    ? [
+                        'id' => $booking->customer->id,
+                        'name' => $booking->customer->name,
+                        'email' => $booking->customer->email,
+                        'phone' => $booking->customer->phone,
+                    ]
+                    : null,
             ]),
             'providers' => $providers->map(fn (Provider $p) => [
                 'id' => $p->id,

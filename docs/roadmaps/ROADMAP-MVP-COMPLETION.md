@@ -99,77 +99,76 @@ Stand up the OAuth plumbing in isolation so Session 2 can focus entirely on sync
 Full bidirectional sync: riservo bookings push to the user's chosen Google calendar, and Google events on the user's selected conflict calendars pull into riservo as `External Event` bookings that block availability.
 
 ### Data layer
-- [ ] Migration: `bookings.customer_id` → nullable; `bookings.service_id` → nullable; add `bookings.external_title` (per locked decision #2)
-- [ ] Migration: extend `calendar_integrations` with `destination_calendar_id` (default `'primary'`), `conflict_calendar_ids` (JSON), `sync_token` (text), `webhook_resource_id`, `webhook_channel_id`, `webhook_channel_token`, `webhook_expiry`, `last_synced_at`, `last_pushed_at`, `sync_error`, `sync_error_at`, `push_error`, `push_error_at`
-- [ ] New table `calendar_pending_actions`: `id`, `business_id`, `integration_id`, `booking_id` (nullable FK), `type` (enum: `riservo_event_deleted_in_google` | `external_booking_conflict`), `payload` JSON, `status` (enum: `pending` | `resolved` | `dismissed`), `created_at`, `resolved_at`
-- [ ] `Booking` model: `external_title` fillable; `BelongsTo` for customer and service stay (already null-tolerant)
-- [ ] `CalendarIntegration` model: new fillables and casts; tokens encrypted
+- [x] Migration: `bookings.customer_id` → nullable; `bookings.service_id` → nullable; add `bookings.external_title` + `bookings.external_html_link` (per locked decision #2, D-084 revised)
+- [x] Migration: extend `calendar_integrations` with `business_id` (FK, per D-085), `destination_calendar_id`, `conflict_calendar_ids` (JSON), `sync_token`, `webhook_resource_id`, `webhook_channel_token`, `last_synced_at`, `last_pushed_at`, `sync_error`, `sync_error_at`, `push_error`, `push_error_at`
+- [x] New table `calendar_pending_actions`: `id`, `business_id`, `integration_id`, `booking_id` (nullable), `type`, `payload` JSON, `status`, `resolved_by_user_id`, `resolution_note`, `resolved_at`, timestamps
+- [x] New table `calendar_watches`: one row per watched Google calendar (D-086)
+- [x] `Booking` model: `external_title` + `external_html_link` fillable; helpers `shouldPushToCalendar`, `shouldSuppressCustomerNotifications`, `serviceLabel`
+- [x] `CalendarIntegration` model: new fillables/casts; `isConfigured()`, `watches()`, `pendingActions()`, `business()` relations
 
 ### Provider abstraction
-- [ ] `app/Services/Calendar/CalendarProvider.php` interface with `pushEvent`, `updateEvent`, `deleteEvent`, `startWatch`, `stopWatch`, `syncIncremental`, `listCalendars`, `createCalendar`
-- [ ] `GoogleCalendarProvider` implementing the interface; uses a private `clientFor(CalendarIntegration)` helper for the `Google\Client` with token-refresh callback that persists rotated access tokens
-- [ ] `CalendarProviderFactory` resolving from a `CalendarIntegration` or `Booking`, bound in `AppServiceProvider`
+- [x] `app/Services/Calendar/CalendarProvider.php` interface with `listCalendars`, `createCalendar`, `pushEvent`, `updateEvent`, `deleteEvent`, `startWatch`, `stopWatch`, `syncIncremental` (D-082)
+- [x] `GoogleCalendarProvider` implementing the interface; `GoogleClientFactory` wires `setTokenCallback` so rotated access tokens persist to the row
+- [x] `CalendarProviderFactory::for($integration)` bound as a singleton in `AppServiceProvider::register()`
 
 ### OAuth connect — configuration step (extends Session 1)
-- [ ] After Google callback, render a configuration step before finalising the integration:
-  - Dropdown: "Add riservo bookings to..." — lists the user's Google calendars plus a "Create a new dedicated calendar" option (which calls `createCalendar` if chosen)
-  - Multi-select: "Check these calendars for conflicts" — primary pre-selected (per locked decision #4)
-  - Preview: count of upcoming events that will become External Bookings
-  - Conflict warning: list any imported events that overlap with confirmed riservo bookings
-  - "Connect and import" finalises by saving config and dispatching `StartCalendarSyncJob`
-- [ ] `StartCalendarSyncJob` (queued): calls `startWatch` and an initial `syncIncremental` (forward-only, per locked decision #3)
-- [ ] `disconnect()` action now also calls `stopWatch` (best-effort try/catch) before deleting the integration
+- [x] Callback redirects to new `settings.calendar-integration.configure` step instead of finalising directly
+- [x] Configure page renders the `listCalendars` dropdown + multi-select with primary pre-selected
+- [x] "Create a new dedicated calendar" option calls `createCalendar` on save
+- [x] Save-configuration pins `business_id` (D-085), persists destination + conflicts, dispatches `StartCalendarSyncJob`
+- [x] `StartCalendarSyncJob` (queued) calls `startWatch` + initial `syncIncremental` per distinct calendar (forward-only per locked decision #3)
+- [x] `disconnect()` iterates `$integration->watches` and calls `stopWatch` best-effort before deleting
 
 ### Push sync — outbound
-- [ ] `PushBookingToCalendarJob` (queued, `tries=3`, `backoff=[60,300,900]`); constructor takes `Booking` + action (`create` | `update` | `delete`)
-- [ ] On `create`: store returned Google event ID in `bookings.external_calendar_id`
-- [ ] On failure: write `push_error` and `push_error_at` on the integration
-- [ ] Dispatch sites: every booking mutation point — public booking, manual dashboard booking, status transitions to cancelled / no_show / completed, confirmation of pending bookings, customer-side cancel, dashboard cancel, reschedule (Session 5 will reuse this)
-- [ ] Skip dispatch when `booking.source === google_calendar` (those are pull-originated)
-- [ ] Google event format: `SUMMARY` = `[Service] — [Customer]`; `DESCRIPTION` includes phone, internal notes, deep link back to riservo; `LOCATION` from business address; `extendedProperties.private.riservo_booking_id` = booking UUID; start/end in UTC
+- [x] `PushBookingToCalendarJob(int $bookingId, string $action)`, `tries=3`, `backoff=[60,300,900]`, `afterCommit()` (D-083)
+- [x] On `create`: stores returned Google event ID in `bookings.external_calendar_id`
+- [x] On final failure: writes `push_error` + `push_error_at`
+- [x] Dispatch sites wired: public booking create, manual dashboard create, status transitions, customer cancel, token cancel
+- [x] `Booking::shouldPushToCalendar()` gates every dispatch (skips `source = google_calendar` + unconfigured integrations)
+- [x] Google event format: summary `[Service] — [Customer]`, description = phone + notes, location = business address, `extendedProperties.private.riservo_booking_id` + `riservo_business_id`, UTC start/end. No deep-link in description (review: out of scope for MVPC-2).
 
 ### Pull sync — inbound
-- [ ] `POST /webhooks/google-calendar` endpoint, no auth, CSRF excluded in `bootstrap/app.php`; validate `X-Goog-Channel-Token` against `calendar_integrations.webhook_channel_token`; dispatch `PullCalendarEventsJob` and return 200 immediately
-- [ ] `PullCalendarEventsJob` (queued, `tries=5`, `backoff=[60,120,300,600,1200]`)
-- [ ] `syncIncremental` logic:
-  - Use stored `syncToken`; full-sync fallback on 410
-  - **Skip** events with `extendedProperties.private.riservo_booking_id` set if active
-  - If a riservo-originated event was deleted in Google → create a `riservo_event_deleted_in_google` pending action (no auto-cancel, per locked decision #5)
-  - For new/updated external events: upsert booking by `external_calendar_id` with `source = google_calendar`, `status = confirmed`, nullable customer/service, `external_title` from event summary; attempt to link first matching customer by attendee email (per locked decision #6)
-  - For external events that overlap a confirmed riservo booking: import + create an `external_booking_conflict` pending action (per locked decision #5)
-  - For cancelled external events: auto-cancel the corresponding `source = google_calendar` booking (no customer notification — there may be no customer)
-  - Persist new `nextSyncToken` and `last_synced_at`
-- [ ] On persistent error: write `sync_error` / `sync_error_at`
+- [x] `POST /webhooks/google-calendar` (no auth, CSRF-excluded in `bootstrap/app.php`); validates `X-Goog-Channel-Id` and `X-Goog-Channel-Token` (constant-time via `hash_equals`), dispatches `PullCalendarEventsJob`, returns 200
+- [x] `PullCalendarEventsJob(int $integrationId, string $calendarId)`, `tries=5`, `backoff=[60,120,300,600,1200]`, `afterCommit()`
+- [x] 410 → clear sync token → forward-only retry
+- [x] Own-event echo detection via `extendedProperties.private.riservo_booking_id`
+- [x] Riservo event deleted in Google → `riservo_event_deleted_in_google` pending action (no auto-cancel)
+- [x] New/updated external events → upsert external booking; first-match customer by attendee email (locked decision #6); `external_title` + `external_html_link` persisted
+- [x] Overlap with confirmed riservo booking → rollback, create `external_booking_conflict` pending action with `conflict_booking_ids[]` in payload
+- [x] Cancelled foreign events → auto-cancel the corresponding external booking
+- [x] Persists `sync_token` + `last_synced_at`; `failed()` writes `sync_error` + `sync_error_at`
 
 ### Webhook renewal
-- [ ] Artisan command `calendar:renew-watches`: integrations with `webhook_expiry < now + 24h` get `stopWatch` then `startWatch`
-- [ ] Schedule daily at 03:00 in `routes/console.php`
+- [x] `calendar:renew-watches` artisan command: refreshes `calendar_watches` expiring within 24h
+- [x] Scheduled daily at 03:00 in `routes/console.php`
 
 ### Pending actions UI
-- [ ] Dashboard section "Calendar Sync — Pending Actions" listing unresolved items with count badge
-- [ ] `riservo_event_deleted_in_google` row: actions "Cancel booking and notify customer" | "Keep booking and dismiss"
-- [ ] `external_booking_conflict` row: actions "Keep both" | "Cancel external event" | "Cancel riservo booking" (with confirmation + customer notification on the last)
-- [ ] Pending actions count surfaced in the Settings → Calendar Integration header
+- [x] Dashboard section "Calendar sync — pending actions" with per-row resolution buttons (viewer-scoped per D-085 + D-088)
+- [x] `riservo_event_deleted_in_google`: "Cancel booking and notify customer" | "Keep booking and dismiss"
+- [x] `external_booking_conflict`: "Keep riservo booking (ignore external)" | "Cancel external event" | "Cancel riservo booking" (D-087 revised — cancel path re-dispatches `PullCalendarEventsJob`)
+- [x] Pending-actions count surfaced in settings nav + settings page header via `calendarPendingActionsCount` shared Inertia prop
 
 ### Slot generator + UI
-- [ ] `SlotGeneratorService`: nullsafe access on `$booking->service?->buffer_*` (external bookings have no service)
-- [ ] Booking detail panel: when `source = google_calendar` show "External Event" + `external_title`, hide customer/service blocks, show "Open in Google Calendar" link (event htmlLink)
-- [ ] Calendar views: external events get a Google icon and a neutral colour, visually distinct from riservo bookings
-- [ ] Bookings list: filter to show/hide external events
+- [x] `SlotGeneratorService::getBlockingBookings` no longer eager-loads `service` (D-066 already reads effective_* columns directly; removes null-service footgun)
+- [x] Booking detail sheet: external events render with `CalendarDays` icon, hide customer/service blocks, surface "Open in Google Calendar" link
+- [x] Calendar views (day/week/month): external events use `EXTERNAL_EVENT_COLOR` neutral palette (D-084)
+- [x] Bookings list: `?include_external=0` filter support; default is "include"
 
 ### Notification suppression
-- [ ] All Notification dispatch sites guard with `if ($booking->source !== BookingSource::GoogleCalendar)` (per locked decision #7)
-- [ ] `SendBookingReminders` query excludes `source = google_calendar`
+- [x] All customer + staff notification dispatch sites guard with `Booking::shouldSuppressCustomerNotifications()` (D-088)
+- [x] `SendBookingReminders` excludes `source = google_calendar` at query time
 
 ### Settings page (extends Session 1)
-- [ ] Connected state: account email, destination calendar, conflict calendars summary, last synced timestamp, disconnect button, pending-actions count
-- [ ] Error state: banner with error message and "Reconnect" CTA
-- [ ] "Sync now" button for manual sync (debugging)
+- [x] Connected state: account email, destination calendar, conflict summary, last synced, disconnect, pending-actions badge, "Change settings", "Sync now", pinned-business notice
+- [x] Error state: Alert banner driven by `integration.sync_error`
+- [x] "Sync now" button dispatches `PullCalendarEventsJob` per watched calendar
 
 ### Tests + ops
-- [ ] Feature tests for OAuth callback config step, push dispatch matrix, webhook validation, pull-sync upsert/skip/cancel paths, webhook renewal, notification suppression, slot generator with null service, pending actions resolution
-- [ ] Update `docs/DEPLOYMENT.md` with: Google Cloud Console OAuth setup; redirect URI exact match; webhook endpoint must be HTTPS-reachable (Google rejects HTTP); local dev requires a tunnel (ngrok / Expose / Herd Share); queue worker required for push and pull jobs; `calendar:renew-watches` daily cron
-- [ ] Pint clean, full Pest suite green, `npm run build` clean
+- [x] Feature tests: push job, pull job (seven cases), webhook controller (five cases), configure flow, pending-action resolution (including owner-or-admin matrix), renew watches, notification suppression, slot generation with null service
+- [x] `docs/DEPLOYMENT.md` updated: Google Cloud OAuth setup, HTTPS webhook requirement, local tunnel guidance, queue worker requirement, daily `calendar:renew-watches` cron, env var inventory
+- [x] Pint clean, Feature + Unit suite **574 passed / 2438 assertions** (+39 vs MVPC-1 baseline 535), `npm run build` clean, Wayfinder regenerated
+
+**Session 2 closed 2026-04-17.** D-082 through D-088 recorded in `docs/decisions/DECISIONS-CALENDAR-INTEGRATIONS.md`.
 
 ---
 

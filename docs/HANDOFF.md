@@ -1,171 +1,232 @@
 # Handoff
 
-**Session**: MVPC-1 — Google OAuth Foundation (Session 1 of `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`)
-**Date**: 2026-04-17
-**Status**: Code complete; full Pest suite green (**784 passed / 3264 assertions** — Unit 15 + Feature 520 + Browser 249); Pint clean; `npm run build` green; plan archived to `docs/archive/plans/PLAN-MVPC-1-OAUTH-FOUNDATION.md`.
+**Session**: MVPC-2 — Google Calendar Sync (Bidirectional) (Session 2 of `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`)
+**Date**: 2026-04-17 (code) / 2026-04-17 (round-2 review fixes)
+**Status**: Code complete; Feature + Unit suite **582 passed / 2471 assertions** (post-MVPC-1 baseline 535, +47). Pint clean. `npm run build` green. Wayfinder regenerated. Plan archived to `docs/archive/plans/PLAN-MVPC-2-CALENDAR-SYNC.md`.
+
+> Full-suite Browser/E2E run is the developer's session-close check (`tests/Browser` takes 2+ minutes). The iteration loop used `php artisan test tests/Feature tests/Unit --compact` throughout.
 
 ---
 
-## Suite-count context
+## Review round 2 — five state-management fixes applied
 
-The previous R-19 handoff reported **518 passed**. The actual pre-MVPC-1 baseline was higher because the E2E browser test suite (commit `ec7a65b`, "test: E2E test suite implementation E2E-1 through E2E-6") landed between R-19 close and MVPC-1 kickoff without updating HANDOFF. The pre-session full-suite count was effectively **767 passed**; MVPC-1 adds **+17** cases to reach **784 passed**.
+After the initial MVPC-2 landing, reviewer flagged five correctness bugs around multi-calendar state management. All five were real and are fixed + tested in this revision.
 
-Breakdown:
-- Feature: 503 → **520** (+17): 16 new in `tests/Feature/Settings/CalendarIntegrationTest.php` + 1 new in `tests/Feature/Settings/SettingsAuthorizationTest.php` (`staff can access shared settings pages`).
-- Unit: 15 (unchanged).
-- Browser: 249 (unchanged).
+| # | Bug | Fix |
+|---|---|---|
+| P1 | `sync_token` stored on `calendar_integrations`; replaying calendar A's token against calendar B triggers 410 and drops changes between runs for any multi-calendar setup | Moved `sync_token` to `calendar_watches` (per-row). `GoogleCalendarProvider::syncIncremental` + `PullCalendarEventsJob` read/write per watch. Integration-level column retained but no longer written. |
+| P2a | Push job only stored Google event id; a later `Change settings` reconfigure re-targeted update/delete pushes to the new destination, orphaning events in the original calendar | Added `bookings.external_event_calendar_id`; create writes it; update/delete in both the job and `GoogleCalendarProvider::updateEvent` target the booking's stored origin (fallback to current destination only for pre-fix legacy rows). |
+| P2b | `cancel_external` resolver swallowed provider failures but still marked the action resolved — staff could not retry, external event kept blocking availability | Resolver returns a three-state outcome (`resolved` / `failed` / `invalid`). Provider failure → action stays `pending`, user sees an error flash. 404/410 inside `GoogleCalendarProvider::deleteEvent` are still absorbed as "event already gone". |
+| P2c | `saveConfiguration` only upserted the config; `StartCalendarSyncJob` only created missing watches. Unchecking a calendar left its channel alive in Google, importing events from calendars the user no longer selected | `StartCalendarSyncJob` now reconciles the desired set against existing watches: stopWatch + row delete for removed calendars, startWatch + initial pull for added calendars, leave unchanged calendars alone. stopWatch failures are swallowed but the row is still deleted. |
+| P2d | Repinning an integration to a different business silently reused the old business's watches, per-watch sync tokens, and orphaned the old pending actions out of view of both tenants | `saveConfiguration` detects a `business_id` change and tears down integration-scoped state before the repin: stop all watches in Google (best-effort), delete all `calendar_watches` rows, delete all `calendar_pending_actions`, clear timing/error timestamps. OAuth tokens are preserved. `StartCalendarSyncJob` then builds fresh watches under the new business. |
+
+New migration: `2026_04_17_100004_add_per_watch_sync_token_and_booking_source_calendar.php` (adds `calendar_watches.sync_token` and `bookings.external_event_calendar_id`).
+
+Decision records extended:
+- **D-083** — now covers the origin-calendar persistence on the booking.
+- **D-085** — now covers repin-time teardown semantics (P2d).
+- **D-086** — now covers the per-watch sync token + reconfigure teardown.
+- **D-087** — adds failure semantics for `cancel_external`.
+
+Test delta: +8 cases (47 calendar tests total, up from 39).
+- `PullCalendarEventsJobTest` — two existing sync-token tests updated to read the watch row; one new test for per-calendar token independence.
+- `PushBookingToCalendarJobTest` — one new test: reconfigure + delete targets the original calendar.
+- `CalendarPendingActionResolutionTest` — one new test: provider failure keeps `cancel_external` pending.
+- `StartCalendarSyncJobTest` (new file) — three tests: distinct-set watch creation, stale-calendar teardown, stopWatch-failure resilience.
+- `CalendarIntegrationConfigureTest` — two new tests: repin tears down old state; same-business save preserves watches + sync tokens + pending actions.
 
 ---
 
 ## What Was Built
 
-Session 1 stands up the Google OAuth round-trip in isolation so Session 2 (webhooks, push/pull, pending actions) lands on a stable foundation. No sync logic in this session — only the plumbing that lets a user click "Connect Google Calendar", grant consent, and land back with tokens encrypted-at-rest.
+MVPC-2 delivers the full bidirectional Google Calendar sync behind a `CalendarProvider` interface. MVPC-1 stood up the OAuth round-trip in isolation; MVPC-2 owns everything above it — the configure step, the push/pull pipelines, the pending-actions UX, webhook renewal, the schema relaxations that let external events land as proper Booking rows, and the notification-suppression audit across every dispatch site.
 
-Plan: `docs/archive/plans/PLAN-MVPC-1-OAUTH-FOUNDATION.md`. Two new decisions:
-- **D-080** — `docs/decisions/DECISIONS-CALENDAR-INTEGRATIONS.md` — Socialite + `google/apiclient:^2.15` stack.
-- **D-081** — `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md` — settings routes split into admin-only and admin+staff shared groups; the shared inner group carries no additional middleware because the outer dashboard group already enforces `role:admin,staff`.
+Plan: `docs/archive/plans/PLAN-MVPC-2-CALENDAR-SYNC.md`. Seven new decisions:
 
-### Composer dependencies
-
-- `laravel/socialite` (v5) — installed for OAuth authorization-code flow.
-- `google/apiclient:^2.15` — installed now even though Session 2 is the first caller, so Session 2 starts green with no composer step.
-
-### Config + env
-
-- `config/services.php` — new `google` block reading `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` from env.
-- `.env.example` — new "Google Calendar OAuth" section with placeholders; `GOOGLE_REDIRECT_URI` interpolates `${APP_URL}/dashboard/settings/calendar-integration/callback`.
+- **D-082** — `CalendarProvider` interface + `CalendarProviderFactory` singleton placement.
+- **D-083** — Single `PushBookingToCalendarJob(int $bookingId, string $action)` design.
+- **D-084** — External-event visuals (neutral `EXTERNAL_EVENT_COLOR` + lucide `CalendarDays` icon) + dedicated `bookings.external_html_link` column (review-revised, not `internal_notes` overload).
+- **D-085** — `calendar_integrations.business_id` pins integration to one business.
+- **D-086** — `calendar_watches` sub-table for per-calendar webhook registrations.
+- **D-087** — "Keep riservo booking (ignore external)" replaces the ambiguous "Keep both"; `cancel_riservo_booking` re-dispatches `PullCalendarEventsJob` for the source calendar.
+- **D-088** — Notification suppression lives at dispatch sites via `Booking::shouldSuppressCustomerNotifications()`; pending-action visibility + resolution restricted to owner-of-integration OR admin.
 
 ### Database
 
-- Migration `database/migrations/2026_04_16_100014_extend_calendar_integrations_for_oauth.php` extends the existing `calendar_integrations` table (created in the original Session 2 migration `2026_04_16_100010_...`):
-  - Adds `token_expires_at` (nullable `timestamp`).
-  - Adds `google_account_email` (nullable string). Picked a dedicated column rather than reusing `calendar_id` to avoid mutating a column's semantic meaning mid-roadmap — Session 2 keeps `calendar_id` strictly for the destination Google calendar ID from day one.
-  - Drops the existing non-unique `(user_id, provider)` index and installs a **unique** index on the same pair (enforces one Google connection per user).
-- `access_token` and `refresh_token` columns were already present (both `text`, nullable for `refresh_token`) — unchanged. Encryption-at-rest is via model cast, not column type.
+Five new migrations (all additive / reverse-safe):
 
-### Model + factory
+- `2026_04_17_100000_make_booking_customer_and_service_nullable_add_external_fields.php` — `bookings.customer_id` → nullable, `bookings.service_id` → nullable, add `bookings.external_title`, add `bookings.external_html_link`.
+- `2026_04_17_100001_extend_calendar_integrations_for_sync.php` — adds `business_id` (FK, cascadeOnDelete, D-085), `destination_calendar_id`, `conflict_calendar_ids` (JSON), `sync_token` (no longer written after round-2; see 100004), `webhook_resource_id`, `webhook_channel_token`, `last_synced_at`, `last_pushed_at`, `sync_error`, `sync_error_at`, `push_error`, `push_error_at`. MVPC-1 columns (`webhook_channel_id`, `webhook_expiry`) remain but are unused — kept per D-086 to avoid schema churn.
+- `2026_04_17_100002_create_calendar_watches_table.php` — `(id, integration_id, calendar_id, channel_id unique, resource_id, channel_token, expires_at, timestamps)` + indexes on `(integration_id, calendar_id)` and `expires_at`.
+- `2026_04_17_100003_create_calendar_pending_actions_table.php` — `(id, business_id, integration_id, booking_id nullable, type, payload JSON, status, resolved_by_user_id, resolution_note, resolved_at, timestamps)` + indexes on `(business_id, status)` and `(integration_id, status)`.
+- `2026_04_17_100004_add_per_watch_sync_token_and_booking_source_calendar.php` (round 2) — adds `calendar_watches.sync_token` (per-watch cursor — D-086 revised) and `bookings.external_event_calendar_id` (push-time origin calendar — D-083 revised).
 
-- `app/Models/CalendarIntegration.php`:
-  - Fillable gains `token_expires_at` and `google_account_email`.
-  - Cast `token_expires_at` → `datetime`.
-  - Existing `encrypted` casts on `access_token` / `refresh_token` retained; `#[Hidden]` attribute retained.
-- `database/factories/CalendarIntegrationFactory.php` gains `token_expires_at => now()->addHour()` and `google_account_email => fake()->safeEmail()`; `calendar_id` default flipped to `null` (Session 2 will set it during the configuration step).
+### Provider abstraction
 
-### Controller
+- `app/Services/Calendar/CalendarProvider.php` — interface with eight methods.
+- `app/Services/Calendar/GoogleCalendarProvider.php` — Google SDK adapter; maps to/from typed DTOs; translates `410 Gone` to `SyncTokenExpiredException`.
+- `app/Services/Calendar/GoogleClientFactory.php` — builds `Google\Client` per integration with `setTokenCallback` that persists rotated access tokens back to the row (D-080 / D-082 consequence).
+- `app/Services/Calendar/CalendarProviderFactory.php` — singleton resolver, bound in `AppServiceProvider::register()`.
+- DTOs: `CalendarSummary`, `WatchResult`, `ExternalEvent`, `SyncResult` under `app/Services/Calendar/DTOs/`.
+- Exceptions: `SyncTokenExpiredException`, `UnsupportedCalendarProviderException`.
 
-`app/Http/Controllers/Dashboard/Settings/CalendarIntegrationController.php` with four actions:
+### Queued jobs
 
-- `index(Request)` — renders `dashboard/settings/calendar-integration` with `connected: bool`, `googleAccountEmail: string | null`, and an `error: null` prop (reserved slot for Session 2's sync-error surface).
-- `connect(Request)` (POST) — builds the Socialite redirect to Google with scopes `openid` + `email` + `calendar.events` and `access_type=offline` + `prompt=consent` (which guarantees a refresh token on every consent). **Inertia detection**: when the request carries `X-Inertia: true`, returns `Inertia::location($targetUrl)` so the client can perform a full `window.location` change (an external 302 cannot navigate the browser from XHR). Non-Inertia POSTs receive the raw `RedirectResponse` — the browser follows the 302 natively.
-- `callback(Request)` — three branches: (1) if Google returned `?error=...` (user denied consent, invalid scope, etc.), short-circuit to the settings page with a recoverable flash error; (2) if `Socialite::driver('google')->user()` throws (invalid state, token exchange failure, network error), catch, `report()` the exception, and redirect with a generic flash error — never 500; (3) success path: upsert the integration row via `updateOrCreate(['user_id' => ..., 'provider' => 'google'], [...])`, **preserve** the previously stored refresh token if Socialite returned null (defense against a re-consent), pin `google_account_email`, store the token expiry derived from `expiresIn`, flash success, redirect to the index route.
-- `disconnect(Request)` — leaves `// TODO Session 2: stop webhook watch here` at the call site, then deletes the user's integration row, flashes success, redirects to the index. No-op-safe when nothing is connected.
+Under `app/Jobs/Calendar/`:
 
-### Routing
+- `PushBookingToCalendarJob(int $bookingId, string $action)` — action ∈ create|update|delete. `tries=3`, `backoff=[60,300,900]`, `afterCommit()`. Gated at dispatch by `Booking::shouldPushToCalendar()`.
+- `PullCalendarEventsJob(int $integrationId, string $calendarId)` — `tries=5`, `backoff=[60,120,300,600,1200]`, `afterCommit()`. 410 → clear sync token + forward-only retry. 23P01 (GIST exclusion) → rollback + `external_booking_conflict` pending action with `conflict_booking_ids[]` in payload.
+- `StartCalendarSyncJob(int $integrationId)` — called from configure finalisation; starts a watch per distinct calendar, dispatches an initial pull each.
 
-`routes/web.php` now has two sibling settings groups inside the existing outer dashboard group at `routes/web.php:98`:
+### HTTP
 
-1. `Route::middleware('role:admin')->prefix('dashboard/settings')->group(...)` — admin-only (unchanged existing pages).
-2. `Route::prefix('dashboard/settings')->group(...)` — **no inner middleware** (outer group already enforces `role:admin,staff`, per D-081). Calendar Integration lives here. Four routes:
-   - `GET /dashboard/settings/calendar-integration` → `index` (name: `settings.calendar-integration`)
-   - `POST /dashboard/settings/calendar-integration/connect` → `connect` (name: `settings.calendar-integration.connect`)
-   - `GET /dashboard/settings/calendar-integration/callback` → `callback` (name: `settings.calendar-integration.callback`)
-   - `DELETE /dashboard/settings/calendar-integration` → `disconnect` (name: `settings.calendar-integration.disconnect`)
+- `POST /webhooks/google-calendar` → `App\Http\Controllers\Webhooks\GoogleCalendarWebhookController@store` (no auth; CSRF-excluded in `bootstrap/app.php`). Validates `X-Goog-Channel-Id` + `X-Goog-Channel-Token` (constant-time `hash_equals`). Dispatches `PullCalendarEventsJob` and returns 200.
+- Six routes added to the shared settings group (reusing D-081 shape):
+  - `GET /dashboard/settings/calendar-integration/configure` → `configure`
+  - `POST /dashboard/settings/calendar-integration/configure` → `saveConfiguration`
+  - `POST /dashboard/settings/calendar-integration/sync-now` → `syncNow`
+- `POST /dashboard/calendar-pending-actions/{action}/resolve` → `Dashboard\CalendarPendingActionController@resolve` (owner-or-admin auth per D-088).
 
-Connect is POST (not GET) because `Socialite::redirect()` writes OAuth state into the session cookie; GET with session side effects is the wrong shape. Callback is GET (Google returns via 302 + query params, which is CSRF-exempt for GET).
+### Dispatch sites wired
+
+`PushBookingToCalendarJob` dispatched from:
+
+- `Booking/PublicBookingController::store` (action=`create` for confirmed bookings).
+- `Dashboard/BookingController::store` (manual booking, action=`create`).
+- `Dashboard/BookingController::updateStatus` (action=`delete` for cancelled, action=`update` for confirmed/completed/no_show).
+- `Customer/BookingController::cancel` (action=`delete`).
+- `Booking/BookingManagementController::cancel` (action=`delete`).
+
+Every dispatch gated by `Booking::shouldPushToCalendar()` — skips `source = google_calendar` AND unconfigured integrations.
+
+### Notification suppression (D-088)
+
+Every customer and staff notification dispatch site guards with `if (! $booking->shouldSuppressCustomerNotifications())`. `SendBookingReminders::handle()` additionally excludes `source = google_calendar` at query time. No Notification class was modified — the policy lives entirely at dispatch.
 
 ### Frontend
 
-- `resources/js/pages/dashboard/settings/calendar-integration.tsx` — new page. Two states:
-  - **Not connected**: explanatory copy + `<Form action={connect()} method="post">` (Inertia) wrapping a "Connect Google Calendar" button. The controller's Inertia-branch in `connect()` returns `Inertia::location(...)` which makes the client navigate to Google.
-  - **Connected**: shows the Google account email + `<Form action={disconnect()} method="delete">` wrapping a destructive "Disconnect" button. No teaser copy about Session 2 — the connected state shows only the account email and the Disconnect action.
-  - Error banner slot (`<Alert variant="error">`) renders either `flash.error` (one-shot, set by the callback when Google returns an error or Socialite throws) or the reserved `error` prop (Session 2's persistent sync-error surface). Flash wins when both are present since a just-failed OAuth attempt is more actionable than a stored sync error.
-- `resources/js/components/settings/settings-nav.tsx` — now reads `auth.role` from `usePage<PageProps>()`. Admin sees the union (existing items + Calendar Integration under "You"); staff sees only the shared group (Calendar Integration). Session 4 will extend the staff branch with Account and Availability.
-- Wayfinder regenerated: `resources/js/actions/App/Http/Controllers/Dashboard/Settings/CalendarIntegrationController.ts` + matching route files are produced on `php artisan wayfinder:generate` (and by the Vite plugin on `npm run build`). These files are gitignored per project convention — regenerate locally before frontend work.
+- `resources/js/pages/dashboard/settings/calendar-integration.tsx` — rewritten. Connected state shows destination + conflict calendars + last synced + pending-actions badge + Sync now + Change settings + muted pinned-business notice when the viewer's tenant differs from `integration.business_id` (Q7 revised: no "Disconnect to reconfigure" CTA).
+- `resources/js/pages/dashboard/settings/calendar-integration-configure.tsx` — new page. Dropdown for destination calendar with a "Create a dedicated new calendar" toggle; multi-select for conflict calendars with primary pre-selected.
+- `resources/js/components/dashboard/calendar-pending-actions-section.tsx` — new component rendered inline at the top of `/dashboard`. Per-row action buttons posted as Inertia `<Form>`s via the Wayfinder-generated resolve route.
+- `resources/js/pages/dashboard.tsx` — wires `CalendarPendingActionsSection`, handles nullable customer/service in the today's-schedule table with an external-event fallback.
+- `resources/js/components/dashboard/booking-detail-sheet.tsx` — external-event variant hides the customer/service blocks, adds an "Open in Google Calendar" external link, read-only (no status-transition buttons for external events).
+- `resources/js/components/calendar/{day,week,month}-view.tsx` + `calendar-event.tsx` — branch on `booking.external` for `EXTERNAL_EVENT_COLOR` palette and null-safe labels.
+- `resources/js/components/settings/settings-nav.tsx` — Calendar Integration nav item renders a badge pulled from `calendarPendingActionsCount` shared Inertia prop.
+- `resources/js/lib/calendar-colors.ts` — new `EXTERNAL_EVENT_COLOR` neutral palette.
+- `resources/js/types/index.d.ts` — `DashboardBooking.external/external_title/external_html_link` flags, nullable customer/service, `TodayBooking` external flag, `CalendarPendingAction` shape, `PageProps.calendarPendingActionsCount`.
+
+### Shared Inertia props
+
+`HandleInertiaRequests::share` now publishes `calendarPendingActionsCount` (viewer-scoped per D-085 extension: admins see business-wide count; staff see only actions owned by their own integration).
+
+### Scheduler
+
+`routes/console.php` now schedules `calendar:renew-watches` daily at 03:00 UTC. The command (`app/Console/Commands/RenewCalendarWatches.php`) refreshes any `calendar_watches` row expiring within 24h: stopWatch (best-effort, swallows 404) then startWatch, updating the row in place.
 
 ### Tests
 
-- `tests/Feature/Settings/CalendarIntegrationTest.php` — new file, 16 cases covering: connect redirect native-POST branch (three independent scope assertions for ordering-resilience + `access_type=offline` + `prompt=consent`); connect Inertia-visit branch (409 + `X-Inertia-Location` header points at Google); callback persistence with encryption-at-rest proof (raw DB read does NOT equal the plaintext; model cast DOES — the "starts with `eyJ`" envelope-format check was removed on review because it couples to Laravel internals); callback upsert (second connect replaces the row); callback refresh-token preservation when Socialite returns null; callback Google-error branch (`?error=access_denied` redirects with flash error, no row persisted); callback Socialite-throws branch (no fake registered → redirect with flash error, no 500); disconnect delete; disconnect no-op; admin/staff access (200); guest 302 to `/login`; customer-only 403; unverified admin 302 to `verification.notice`; un-onboarded admin 302 to onboarding; Inertia prop assertions for connected/not-connected state.
-- `tests/Feature/Settings/SettingsAuthorizationTest.php` — deliberate contract evolution for D-081: the old "staff cannot access any settings page" split into two tests, "staff cannot access any admin-only settings page" (unchanged set of admin-only routes) and "staff can access shared settings pages" (Calendar Integration today). The admin matrix gains Calendar Integration. No existing assertion was weakened; the new shape accurately names the access model after the role split.
+New Pest test files under `tests/Feature/Calendar/`:
 
-### No scope drift
+- `PushBookingToCalendarJobTest.php` — 5 cases: create persists external_calendar_id; delete calls deleteEvent; skip for google_calendar source; skip for unconfigured integration; failed() writes push_error.
+- `PullCalendarEventsJobTest.php` — 7 cases: foreign event upsert (null customer + service); first-match-by-email; 23P01 → pending action (with conflict_booking_ids); riservo-deleted-in-google → pending action (no auto-cancel); cancelled foreign event → booking cancelled; 410 → forward-only re-sync; failed() writes sync_error.
+- `GoogleCalendarWebhookControllerTest.php` — 5 cases: valid → 200 + job; missing channel → 400; unknown channel → 404; wrong token → 400; CSRF-exempt.
+- `CalendarIntegrationConfigureTest.php` — 6 cases: callback redirects to configure; configure renders with calendars; save dispatches StartCalendarSyncJob; create-new-calendar flow; sync-now dispatches per watch; disconnect calls stopWatch + deletes.
+- `CalendarPendingActionResolutionTest.php` — 9 cases covering all five resolution choices across both types + the owner-or-admin + tenant-scoping matrix. Asserts `cancel_riservo_booking` re-dispatches `PullCalendarEventsJob` (D-087 revised).
+- `RenewCalendarWatchesCommandTest.php` — 3 cases: refresh imminent expiries; leave distant expiries alone; swallow stopWatch failures.
+- `NotificationSuppressionTest.php` — 3 cases: helper returns correct value; updateStatus→cancelled on google_calendar dispatches zero notifications; reminder command query-excludes google_calendar.
+- `SlotGenerationWithExternalBookingTest.php` — 1 case: external booking with null service blocks its window without crashing.
 
-No unplanned refactors. No changes to the `CalendarProvider` interface (Session 2 introduces it), no webhook plumbing, no `bookings` schema changes, no `SlotGeneratorService` nullsafe, no `calendar_pending_actions` table, no notification suppression. Account + Availability settings are untouched — Session 4 still owns their role-split migration. `SettingsNav` is the only layout touchpoint; `settings-layout.tsx` itself was not modified.
+Shared: `tests/Support/Calendar/FakeCalendarProvider.php` — programmable CalendarProvider double used across every Calendar test file.
+
+Pre-existing test contract evolution: `tests/Feature/Settings/CalendarIntegrationTest.php` — the callback-success redirect target changed from `settings.calendar-integration` to `settings.calendar-integration.configure` (deliberate; the callback no longer finalises — the configure step does). One line of assertion change, one comment explaining why.
 
 ---
 
 ## Current Project State
 
 - **Backend**:
-  - `Dashboard\Settings\CalendarIntegrationController` is the single home for OAuth connect/disconnect.
-  - `CalendarIntegration` model gains `token_expires_at` + `google_account_email` fillable/casts; encrypted casts for both tokens remain the only way to round-trip them.
-  - Settings routes split into two groups; the shared group uses no extra middleware and relies on the outer `role:admin,staff` guard.
-- **Database**: `calendar_integrations` carries `UNIQUE(user_id, provider)` + `token_expires_at` + `google_account_email`. Existing columns (tokens, `calendar_id`, webhook fields) unchanged.
-- **Frontend**: New page `dashboard/settings/calendar-integration`. Nav is role-aware. Bundle size 967 kB (was 963 kB — +4 kB for the new page + Alert import).
-- **Config / i18n**: `services.google` added. `.env.example` gains three Google env vars. All new user-facing strings flow through `__()` / `useTrans`.
-- **Tests**: Pest suite 781 passed, 3253 assertions (Feature 517, Unit 15, Browser 249). +14 from actual pre-session baseline.
-- **Decisions**: D-080 + D-081 recorded. No existing decision superseded.
-- **Dependencies**: `laravel/socialite` (v5.26) + `google/apiclient` (^2.15) added. No removals.
+  - `app/Services/Calendar/` — interface, Google implementation, factory, DTOs, exceptions.
+  - `app/Jobs/Calendar/` — three queued jobs.
+  - `app/Http/Controllers/Webhooks/GoogleCalendarWebhookController.php`.
+  - `app/Http/Controllers/Dashboard/CalendarPendingActionController.php`.
+  - `app/Console/Commands/RenewCalendarWatches.php`.
+  - `app/Models/PendingAction.php`, `app/Models/CalendarWatch.php` (new).
+  - `app/Enums/PendingActionType.php`, `app/Enums/PendingActionStatus.php` (new).
+  - `CalendarIntegration`, `Booking` extended with new fillables/casts/helpers.
+- **Database**: four new migrations applied. `calendar_watches` and `calendar_pending_actions` tables created. `bookings` relaxed. `calendar_integrations` extended.
+- **Frontend**: one new page (configure), one new dashboard section, external-event variants across detail sheet + calendar views + bookings list; settings nav pending-actions badge.
+- **Config / env**: no new env vars. `GOOGLE_CLIENT_ID`/`_SECRET`/`_REDIRECT_URI` were already present from MVPC-1.
+- **Tests**: Feature + Unit **574 passed / 2438 assertions**. Browser suite 249 untouched by this session (developer runs it at close).
+- **Decisions**: D-082 through D-088 recorded. No existing decision superseded.
+- **Dependencies**: no changes.
 
 ---
 
 ## How to Verify Locally
 
 ```bash
-php artisan test --compact        # 781 passed
-vendor/bin/pint --dirty --format agent  # {"result":"pass"}
-npm run build                     # green, ~1.6s
-php artisan wayfinder:generate    # idempotent; no diff after run
+php artisan test tests/Feature tests/Unit --compact     # 574 passed (iteration loop)
+php artisan test --compact                              # full suite incl. Browser (run by developer at close)
+vendor/bin/pint --dirty --format agent                  # {"result":"pass"}
+php artisan wayfinder:generate                          # idempotent
+npm run build                                           # green, ~1.3s
 ```
 
-Targeted checks:
+Targeted:
 
 ```bash
-php artisan test --compact --filter='CalendarIntegrationTest|SettingsAuthorization'
-# → 17 passed (13 CalendarIntegration + 4 SettingsAuthorization)
-
+php artisan test tests/Feature/Calendar --compact       # 39 Calendar-specific cases
+php artisan route:list --path=webhooks                  # POST /webhooks/google-calendar
 php artisan route:list --path=calendar-integration
-# → 4 routes: GET|HEAD, DELETE, GET|HEAD (callback), POST (connect)
+php artisan route:list --path=calendar-pending-actions
 ```
 
-Manual smoke (requires real Google OAuth credentials):
+Manual smoke (requires real Google OAuth creds + a tunnel):
 
-1. Set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` in `.env`. The redirect URI must match exactly what you configure in Google Cloud Console.
-2. Register a business, onboard, sign in as admin, visit `/dashboard/settings/calendar-integration`.
-3. Click Connect → Google consent → redirect back. Page should show the Google account email + a Disconnect button.
-4. Click Disconnect → row deleted, UI returns to the not-connected state.
-5. Sign in as a staff member (invited via `/dashboard/settings/staff`) → settings nav shows **only** Calendar Integration. Other settings URLs return 403.
+1. Configure `GOOGLE_CLIENT_ID`/`SECRET`/`REDIRECT_URI` in `.env` and in Google Cloud Console (exact-match redirect URI, domain-verified for webhook).
+2. Tunnel: `ngrok http 80` or Herd Share; register both the redirect URI and the webhook URL.
+3. `php artisan queue:work` in a side terminal.
+4. Dashboard → Settings → Calendar Integration → Connect → configure destination + conflict calendars → Save.
+5. Create a dashboard manual booking. Within ~10s, the event should appear in your Google calendar.
+6. Cancel that booking. Within ~10s, the Google event should be deleted.
+7. Create a Google event directly (on a conflict calendar). Within ~10s of the webhook arriving, it should appear on `/dashboard` with the neutral external-event tone.
+8. Delete a riservo-originated event in Google. A pending action should appear on `/dashboard` with "Cancel booking and notify customer" and "Keep booking and dismiss".
+9. Click Disconnect → the row deletes, stopWatch is called per watched calendar (best-effort), UI returns to not-connected.
 
 ---
 
 ## What the Next Session Needs to Know
 
-Next up: **Session 2 — Google Calendar Sync (Bidirectional)** in `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`. Session 2 owns webhooks, push/pull jobs, sync tokens, event mutation, the `bookings.customer_id` / `bookings.service_id` nullability + `bookings.external_title` migration, `calendar_pending_actions`, notification suppression for `source = google_calendar`, and the `CalendarProvider` interface + `GoogleCalendarProvider` implementation.
+Next up: **Session 3 — Subscription Billing (Cashier)** in `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`. Session 3 installs Laravel Cashier on the `Business` model, one paid tier (monthly + annual), indefinite trial, billing portal, webhook handler, cancel-at-period-end semantics, read-only transition on lapse.
 
-### Conventions MVPC-1 established that future work must not break
+### Conventions MVPC-2 established that future work must not break
 
-- **D-080 — the OAuth provider is Socialite; the Calendar API client is `google/apiclient`.** No fallback HTTP client, no custom token refresh. Session 2 instantiates `Google\Client` in `GoogleCalendarProvider::clientFor(CalendarIntegration $integration)` using the encrypted tokens from the row; the token-refresh callback writes rotated access tokens + new `token_expires_at` back to the row.
-- **D-081 — the shared settings inner group carries no middleware.** Adding a new shared settings page is a one-line route-file change inside the shared group. Admin-only pages stay in the admin-only group. Do NOT re-declare `role:admin,staff` on the inner shared group — the outer dashboard group is the single source of truth for that guard.
-- **`CalendarIntegration` is scoped to the User, not the Business.** A provider who works at two businesses has one Google connection, shared across their businesses. Session 2's destination-calendar-per-provider configuration must stay user-keyed.
-- **`google_account_email` is the display-only Google account email; `calendar_id` is Session 2's destination calendar ID.** Do not overload either column.
-- **Session 2 must preserve the refresh-token fallback in `callback()`.** A re-consent that returns a null refresh token must not overwrite the stored one.
-- **Earlier conventions remain unchanged**: D-079 (restore-or-create membership + soft-delete filter), D-078 (structural bookability scope), D-077/D-076/D-075/D-074/D-073/D-067/D-066/D-063/D-061/D-062 remain as described in prior handoffs.
+- **D-082 — the CalendarProvider interface is the only surface above the SDK.** Session 5's reschedule endpoint must call `PushBookingToCalendarJob::dispatch($booking->id, 'update')` with the same `shouldPushToCalendar()` gate. Do not bypass the interface.
+- **D-083 — one job, one action argument.** Adding a fourth action (e.g., "reassign provider") is a match-arm, not a new job.
+- **D-084 — `external_html_link` is the dedicated htmlLink column.** `internal_notes` stays admin-notes-only regardless of source.
+- **D-085 — `CalendarIntegration.business_id` is set once at configure time.** A user with multiple business memberships has one integration; it syncs to one business. Multi-business sync is an explicit post-MVP follow-up (R-2B carry-over).
+- **D-086 — `calendar_watches` rows are the only place channel_id → calendar_id mapping lives.** The webhook controller queries by `channel_id`; no JSON lookup.
+- **D-087 — the conflict resolver's `cancel_riservo_booking` choice is the one place that re-dispatches a pull.** Do not delete that dispatch — without it the external event only appears on the next webhook.
+- **D-088 — `Booking::shouldSuppressCustomerNotifications()` is the single source of truth.** Any new Booking-related Notification dispatch site (Session 5's reschedule notification included) MUST call this guard.
+- **Session 5's reschedule notification** — locked decision #16 already says suppress for `source = google_calendar`. The guard + the push dispatch are both `shouldSuppress…` + `shouldPush…` one-liners.
 
-### Session 2 hand-off notes
+### MVPC-2 hand-off notes
 
-- The `disconnect()` action has a `// TODO Session 2: stop webhook watch here` comment at the exact call site. Replace with `app(CalendarProviderFactory::class)->for($integration)->stopWatch($integration)` (or the Session 2-agent-chosen equivalent), wrapped in try/catch so a dead/already-stopped channel does not block local row deletion.
-- The `error` prop on the Inertia page is already plumbed through `index()` but always null today. Session 2 writes the most recent sync error (from `sync_error` / `sync_error_at`, which Session 2 adds via migration) into this prop, and the frontend renders it in the pre-existing `<Alert variant="error">` banner slot.
-- Session 2 is free to rename `GOOGLE_SCOPES` in the controller or add new scopes (e.g., `https://www.googleapis.com/auth/calendar.readonly` for the conflict calendars if Google demands a broader scope). Today's three scopes are the MVP minimum.
+- The MVPC-1 `webhook_channel_id` / `webhook_expiry` columns on `calendar_integrations` are unused and kept intentionally (D-086 rationale). Do not drop unless a future cleanup session is approved separately.
+- The integration-level `calendar_integrations.sync_token` column is also unused post round-2; the authoritative cursor lives on `calendar_watches.sync_token`. Same zero-churn rationale — kept for a future cleanup.
+- Pending-action count is scoped per viewer. Tests cover both admin and staff-owner matrices.
+- Bookings pushed to Google carry their origin calendar on `bookings.external_event_calendar_id`. Any future session that resets or migrates booking rows must preserve this — otherwise update/delete pushes will target the current destination (wrong calendar for historical bookings).
 
 ---
 
 ## Open Questions / Deferred Items
 
-No new carry-overs from MVPC-1.
+No new carry-overs from MVPC-2 beyond the ones called out above.
 
-Earlier carry-overs remain unchanged from the post-R-19 list:
+Earlier carry-overs remain unchanged from the post-MVPC-1 list:
 - Tenancy (R-19 carry-overs): R-2B business-switcher UI; admin-driven member deactivation + re-invite flow; "leave business" self-serve UX.
 - R-16 frontend code splitting (deferred).
-- R-17 carry-overs: admin email/push notification when a service crosses into unbookable post-launch; richer "provider is on vacation" UX on the public page; per-user banner dismiss / ack history.
+- R-17 carry-overs: admin email/push notification when a service crosses into unbookable post-launch; richer "provider is on vacation" UX; per-user banner dismiss / ack history.
 - R-9 / R-8 manual QA.
 - Orphan-logo cleanup.
 - Profile + onboarding logo upload deduplication.
