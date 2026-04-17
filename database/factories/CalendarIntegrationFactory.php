@@ -24,7 +24,9 @@ class CalendarIntegrationFactory extends Factory
             'provider' => 'google',
             'access_token' => Str::random(64),
             'refresh_token' => Str::random(64),
-            'calendar_id' => fake()->safeEmail(),
+            'token_expires_at' => now()->addHour(),
+            'calendar_id' => null,
+            'google_account_email' => fake()->safeEmail(),
             'webhook_channel_id' => Str::uuid()->toString(),
             'webhook_expiry' => now()->addDays(7),
         ];

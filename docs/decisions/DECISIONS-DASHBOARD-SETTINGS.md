@@ -94,6 +94,25 @@ This file contains live decisions about onboarding, settings architecture, embed
 
 ---
 
+### D-081 — Settings routes split into admin-only and admin+staff shared groups
+- **Date**: 2026-04-16
+- **Status**: accepted
+- **Extends**: D-052 (Dashboard\\Settings namespace), D-055 (settings sub-navigation via nested layout).
+- **Context**: Pre-MVPC-1, every settings route sat inside a single `Route::middleware('role:admin')->prefix('dashboard/settings')->group(...)`. The MVP-completion roadmap (`docs/roadmaps/ROADMAP-MVP-COMPLETION.md` Session 1 locked decision #8) opens three settings pages to `staff`: Calendar Integration (MVPC-1, this session) plus Account and Availability (MVPC-4). Every other settings page remains admin-only.
+- **Decision**:
+  1. Settings routes split into two sibling groups under `prefix('dashboard/settings')`, both nested inside the outer dashboard group at `routes/web.php:98` that already wraps with `['verified', 'role:admin,staff', 'onboarded']`:
+     - `Route::middleware('role:admin')->prefix('dashboard/settings')->group(...)` — admin-only (existing pages; unchanged).
+     - `Route::prefix('dashboard/settings')->group(...)` — shared. **No additional middleware** on the inner group: the outer dashboard group already enforces `role:admin,staff`, so re-declaring it would be redundant and read as if the inner group narrowed access. Calendar Integration lands here in MVPC-1; Account and Availability move here (or their new sibling routes land here) in MVPC-4.
+  2. The shared group is named by intent, not by middleware. Its role is "no inner guard beyond what the outer group already enforces." No route-name prefix, no new middleware alias, no page-specific name. A future shared page is a one-line addition to the shared group.
+  3. Settings nav (`resources/js/components/settings/settings-nav.tsx`) derives visibility from the shared `auth.role` prop. Admin sees the union of items across both groups (existing pages plus Calendar Integration under the "You" grouping); staff sees only the shared group's items.
+  4. `tests/Feature/Settings/SettingsAuthorizationTest.php` splits into two matrices: "staff cannot access any admin-only settings page" (all existing admin-only routes) and "staff can access shared settings pages" (Calendar Integration today). Admin's matrix is the union. Staff users who lack a Provider row still reach every shared page the permission layer permits; Session 4 will add a provider-row check at the controller level for Availability, not at the middleware level.
+- **Consequences**:
+  - Adding a new shared settings page in future sessions is a one-line route file change (add the route into the shared group).
+  - The access model is honest in both the route file and the test file — admin-only and shared are named and asserted distinctly.
+  - Admin-only pages remain admin-only indefinitely; no staff access is implied or granted by this split.
+
+---
+
 ### D-078 — Structural bookability is a single query scope; public page hides, dashboard banner surfaces
 - **Date**: 2026-04-16
 - **Status**: accepted

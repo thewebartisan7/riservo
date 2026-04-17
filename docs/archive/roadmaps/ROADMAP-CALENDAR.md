@@ -1,7 +1,9 @@
 # riservo.ch — Calendar Integration Roadmap
 
+> **SUPERSEDED 2026-04-16** — Phase 2 (Google bidirectional sync) is now Session 2 of `docs/roadmaps/ROADMAP-MVP-COMPLETION.md` with definitive decisions locked (HTTP client, schema, sync window, pending actions UX, etc.). Phase 1 (ICS one-way feed) is deferred to `docs/BACKLOG.md`. Phase 3 (Outlook / Apple Calendar) remains post-MVP — refer to this file for that scope only. Kept for historical context.
+
 > Version: 1.1  
-> Status: Planning  
+> Status: Superseded (Phase 2); Phase 3 historical reference only  
 > Scope: External calendar sync (Google Calendar Phase 1–2, multi-provider Phase 3+)
 
 ---

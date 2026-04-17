@@ -10,8 +10,10 @@
     "license": "MIT",
     "require": {
         "php": "^8.3",
+        "google/apiclient": "^2.15",
         "inertiajs/inertia-laravel": "^3.0",
         "laravel/framework": "^13.0",
+        "laravel/socialite": "^5.26",
         "laravel/tinker": "^3.0",
         "laravel/wayfinder": "^0.1.16"
     },
@@ -58,6 +60,16 @@
         "test": [
             "@php artisan config:clear --ansi",
             "@php artisan test"
+        ],
+        "test:unit": [
+            "@php bin/pest-no-browser --compact --testsuite=Unit"
+        ],
+        "test:feature": [
+            "@php bin/pest-no-browser --compact --testsuite=Feature"
+        ],
+        "test:browser": [
+            "@php artisan config:clear --ansi",
+            "@php artisan test --compact tests/Browser"
         ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",

@@ -5,10 +5,11 @@ Start here before reading any other project documentation. This file is the sour
 ## Read First
 
 1. `docs/HANDOFF.md` — latest project state, current conventions, and immediate follow-up guidance
-2. `docs/ROADMAP.md` — primary delivery roadmap and session ordering
-3. `docs/SPEC.md` — product scope, rules, and domain model
-4. `docs/DECISIONS.md` — decision index; from there, open only the topical decision files relevant to the task
-5. `docs/ARCHITECTURE-SUMMARY.md` — concise implementation-oriented summary of the current system
+2. `docs/roadmaps/ROADMAP-MVP-COMPLETION.md` — **active** delivery roadmap (Sessions 1–5 closing the MVP plus immediate post-MVP polish)
+3. `docs/ROADMAP.md` — historical MVP roadmap (Sessions 1–11 shipped; 12–13 superseded by the active roadmap above)
+4. `docs/SPEC.md` — product scope, rules, and domain model
+5. `docs/DECISIONS.md` — decision index; from there, open only the topical decision files relevant to the task
+6. `docs/ARCHITECTURE-SUMMARY.md` — concise implementation-oriented summary of the current system
 
 ## Read When Relevant
 

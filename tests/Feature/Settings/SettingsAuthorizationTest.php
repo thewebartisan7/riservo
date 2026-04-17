@@ -4,15 +4,16 @@ use App\Models\Business;
 use App\Models\User;
 
 beforeEach(function () {
+    $this->withoutVite();
     $this->business = Business::factory()->onboarded()->create();
-    $this->admin = User::factory()->create();
+    $this->admin = User::factory()->create(['email_verified_at' => now()]);
     attachAdmin($this->business, $this->admin);
 
-    $this->staff = User::factory()->create();
+    $this->staff = User::factory()->create(['email_verified_at' => now()]);
     attachStaff($this->business, $this->staff);
 });
 
-test('staff cannot access any settings page', function () {
+test('staff cannot access any admin-only settings page', function () {
     $routes = [
         '/dashboard/settings/profile',
         '/dashboard/settings/booking',
@@ -31,6 +32,12 @@ test('staff cannot access any settings page', function () {
     }
 });
 
+test('staff can access shared settings pages', function () {
+    $this->actingAs($this->staff)
+        ->get('/dashboard/settings/calendar-integration')
+        ->assertOk();
+});
+
 test('unauthenticated users are redirected to login', function () {
     $this->get('/dashboard/settings/profile')
         ->assertRedirect('/login');
@@ -46,6 +53,7 @@ test('admin can access all settings pages', function () {
         '/dashboard/settings/staff',
         '/dashboard/settings/embed',
         '/dashboard/settings/account',
+        '/dashboard/settings/calendar-integration',
     ];
 
     foreach ($routes as $route) {

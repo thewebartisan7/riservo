@@ -14,6 +14,13 @@ This file captures unscheduled follow-up work, UX ideas, and deferred engineerin
 - Evaluate link prefetching for calendar navigation and adjacent booking screens after the calendar work is complete enough to measure perceived performance.
 - Revisit scroll preservation on the bookings list so returning from detail views or panels does not reset position unnecessarily.
 
+## Calendar — ICS one-way feed (deferred from ROADMAP-CALENDAR Phase 1)
+
+- A signed per-user `.ics` feed URL that any calendar app can subscribe to (Google, Apple, Outlook). Read-only, poll-based (1–24h refresh depending on the client), zero OAuth.
+- Deferred on 2026-04-16 in favour of going straight to the bidirectional Google integration (Session 2 of `ROADMAP-MVP-COMPLETION.md`). The OAuth integration covers the full set of users who would want a feed plus the bidirectional flow that ICS cannot deliver.
+- Revisit only if user research surfaces a real demand from providers who refuse to grant Google OAuth scopes but still want their riservo bookings on their personal calendar.
+- Implementation sketch lives in `docs/archive/roadmaps/ROADMAP-CALENDAR.md §Phase 1 — Session C1` — keep that file as the recoverable reference if this lands later.
+
 ## Technical Debt / Deferred Engineering Cleanup
 
 - The onboarding logo upload path still reflects the older standalone-request implementation described in D-042. When that area is touched again, evaluate migrating it to the current Inertia v3 `useHttp` pattern.

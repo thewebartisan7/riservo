@@ -1,0 +1,32 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+$projectRoot = dirname(__DIR__);
+$pluginCacheDirectory = $projectRoot.'/.pest-no-browser';
+$pluginCacheFile = $pluginCacheDirectory.'/pest-plugins.json';
+$vendorPluginCacheFile = $projectRoot.'/vendor/pest-plugins.json';
+
+if (! is_dir($pluginCacheDirectory)) {
+    mkdir($pluginCacheDirectory, 0755, true);
+}
+
+passthru(sprintf(
+    '%s %s config:clear --ansi',
+    escapeshellarg(PHP_BINARY),
+    escapeshellarg($projectRoot.'/artisan'),
+));
+
+$plugins = json_decode((string) file_get_contents($vendorPluginCacheFile), true, 512, JSON_THROW_ON_ERROR);
+
+$plugins = array_values(array_filter(
+    $plugins,
+    static fn (string $plugin): bool => $plugin !== 'Pest\\Browser\\Plugin',
+));
+
+file_put_contents($pluginCacheFile, json_encode($plugins, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR).PHP_EOL);
+
+$GLOBALS['_composer_bin_dir'] = $pluginCacheDirectory.'/bin';
+
+require $projectRoot.'/vendor/pestphp/pest/bin/pest';

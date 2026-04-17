@@ -1,202 +1,189 @@
 # Handoff
 
-**Session**: R-19 — Existing-user invitation flow + `business_members` schema drift (Round 2, Session C of 3 — final)
-**Date**: 2026-04-16
-**Status**: Code complete; full Pest suite green (518 passed / 2248 assertions); Pint clean; `npm run build` green; R-19 closed and **Review Round 2 fully closed** in `docs/archive/reviews/ROADMAP-REVIEW-2.md`.
+**Session**: MVPC-1 — Google OAuth Foundation (Session 1 of `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`)
+**Date**: 2026-04-17
+**Status**: Code complete; full Pest suite green (**784 passed / 3264 assertions** — Unit 15 + Feature 520 + Browser 249); Pint clean; `npm run build` green; plan archived to `docs/archive/plans/PLAN-MVPC-1-OAUTH-FOUNDATION.md`.
 
 ---
 
-## Review Round 2 — CLOSED
+## Suite-count context
 
-All three sessions complete:
+The previous R-19 handoff reported **518 passed**. The actual pre-MVPC-1 baseline was higher because the E2E browser test suite (commit `ec7a65b`, "test: E2E test suite implementation E2E-1 through E2E-6") landed between R-19 close and MVPC-1 kickoff without updating HANDOFF. The pre-session full-suite count was effectively **767 passed**; MVPC-1 adds **+17** cases to reach **784 passed**.
 
-- **R-17** — Bookability enforcement (closed 2026-04-16, D-078).
-- **R-18** — Slot generator reads snapped buffers (closed 2026-04-16, no new decision).
-- **R-19** — Existing-user invitation + `business_members` schema drift (closed this session, D-079).
-
-Round 2 archived to `docs/archive/reviews/`:
-
-- `docs/archive/reviews/REVIEW-2.md`
-- `docs/archive/reviews/ROADMAP-REVIEW-2.md`
-
-`docs/reviews/` is empty again, per `docs/reviews/CLAUDE.md`.
+Breakdown:
+- Feature: 503 → **520** (+17): 16 new in `tests/Feature/Settings/CalendarIntegrationTest.php` + 1 new in `tests/Feature/Settings/SettingsAuthorizationTest.php` (`staff can access shared settings pages`).
+- Unit: 15 (unchanged).
+- Browser: 249 (unchanged).
 
 ---
 
 ## What Was Built
 
-Session closes REVIEW-2 **MEDIUM-1** (invitation flow must branch on existing-user) and **INFO-1** (`business_members` uniqueness shape drift vs. D-061). One new decision — **D-079** — covers both items together in `docs/decisions/DECISIONS-AUTH.md`.
+Session 1 stands up the Google OAuth round-trip in isolation so Session 2 (webhooks, push/pull, pending actions) lands on a stable foundation. No sync logic in this session — only the plumbing that lets a user click "Connect Google Calendar", grant consent, and land back with tokens encrypted-at-rest.
 
-Plan: `docs/plans/PLAN-R-19-INVITE-AND-SCHEMA.md`, moved to `docs/archive/plans/` at session close.
+Plan: `docs/archive/plans/PLAN-MVPC-1-OAUTH-FOUNDATION.md`. Two new decisions:
+- **D-080** — `docs/decisions/DECISIONS-CALENDAR-INTEGRATIONS.md` — Socialite + `google/apiclient:^2.15` stack.
+- **D-081** — `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md` — settings routes split into admin-only and admin+staff shared groups; the shared inner group carries no additional middleware because the outer dashboard group already enforces `role:admin,staff`.
 
-### R-19A — Existing-user invitation flow
+### Composer dependencies
 
-`InvitationController::accept()` now branches on `User::where('email', $invitation->email)->exists()`:
+- `laravel/socialite` (v5) — installed for OAuth authorization-code flow.
+- `google/apiclient:^2.15` — installed now even though Session 2 is the first caller, so Session 2 starts green with no composer step.
 
-- **New-user branch** (`acceptAsNewUser`): unchanged contract — create the user, mark email verified, attach membership via the new helper, create a provider row, attach services, `Auth::login()`, pin session.
-- **Existing-user branch** (`acceptAsExistingUser`): no `User::create()`; no mutation of `name`, `password`, or `email_verified_at`. Three acceptance states handled:
-  - **No session** — `AcceptInvitationRequest` requires only `password`; controller calls `Auth::attempt(['email' => $invitation->email, 'password' => ...])`; failure throws a `ValidationException` on the `password` field so the field-level error renders in the same shape as `/login`.
-  - **Session already matches invitation email** — `AcceptInvitationRequest::rules()` returns an empty array (no password required); controller runs the attach directly.
-  - **Session does not match** — controller redirects to `invitation.show` with a flash error naming both the current and target emails; the accept page renders a "Sign out and try again" button that posts to the Wayfinder `logout` action.
+### Config + env
 
-On success in either branch, `current_business_id` is pinned to the invitation's business, matching the LoginController / MagicLinkController convention (D-063).
+- `config/services.php` — new `google` block reading `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` from env.
+- `.env.example` — new "Google Calendar OAuth" section with placeholders; `GOOGLE_REDIRECT_URI` interpolates `${APP_URL}/dashboard/settings/calendar-integration/callback`.
 
-**Route relocation**: `GET` and `POST /invite/{token}` leave the `guest` middleware group. `guest` redirects authenticated users to `/dashboard` before the controller runs, which would make the "already signed in as invitee" and "signed in as other user" branches unreachable. The routes now sit in the top-level public routing space in `routes/web.php`.
+### Database
 
-**Frontend**: `resources/js/pages/auth/accept-invitation.tsx` receives two new props from the controller — `isExistingUser: boolean` and `authUserEmail: string | null` — and renders the four UI states (new user / existing-not-signed-in / existing-signed-in-matches / existing-signed-in-mismatches). Each state uses the same Wayfinder `accept()` action; the mismatch state adds a `logout()` action for the sign-out button.
+- Migration `database/migrations/2026_04_16_100014_extend_calendar_integrations_for_oauth.php` extends the existing `calendar_integrations` table (created in the original Session 2 migration `2026_04_16_100010_...`):
+  - Adds `token_expires_at` (nullable `timestamp`).
+  - Adds `google_account_email` (nullable string). Picked a dedicated column rather than reusing `calendar_id` to avoid mutating a column's semantic meaning mid-roadmap — Session 2 keeps `calendar_id` strictly for the destination Google calendar ID from day one.
+  - Drops the existing non-unique `(user_id, provider)` index and installs a **unique** index on the same pair (enforces one Google connection per user).
+- `access_token` and `refresh_token` columns were already present (both `text`, nullable for `refresh_token`) — unchanged. Encryption-at-rest is via model cast, not column type.
 
-**Invite-time contract unchanged**: `StaffController::invite()` still accepts emails that already belong to a `User`. Rejection is at the acceptance layer (wrong password → field error; wrong session user → redirect + flash). This matches the roadmap's explicit choice to keep admin workflow frictionless and defer the decision to acceptance.
+### Model + factory
 
-### R-19B — `business_members` uniqueness + restore-or-create + soft-delete audit
+- `app/Models/CalendarIntegration.php`:
+  - Fillable gains `token_expires_at` and `google_account_email`.
+  - Cast `token_expires_at` → `datetime`.
+  - Existing `encrypted` casts on `access_token` / `refresh_token` retained; `#[Hidden]` attribute retained.
+- `database/factories/CalendarIntegrationFactory.php` gains `token_expires_at => now()->addHour()` and `google_account_email => fake()->safeEmail()`; `calendar_id` default flipped to `null` (Session 2 will set it during the configuration step).
 
-**Migration**: `database/migrations/2026_04_16_100013_update_business_members_unique_index.php` drops `UNIQUE(business_id, user_id)` and installs `UNIQUE(business_id, user_id, deleted_at)`. Matches the `providers` index shape from D-061. Safe against fresh DB + seeder; no data migration needed (project reseeds pre-launch).
+### Controller
 
-**Helper**: `Business::attachOrRestoreMember(User $user, BusinessMemberRole $role): BusinessMember`. Queries `BusinessMember::withTrashed()` for `(business, user)`; if a trashed row exists, restores + updates the role; otherwise attaches a new row. Returns the active pivot.
+`app/Http/Controllers/Dashboard/Settings/CalendarIntegrationController.php` with four actions:
 
-Every caller that adds a user to a business now routes through the helper:
+- `index(Request)` — renders `dashboard/settings/calendar-integration` with `connected: bool`, `googleAccountEmail: string | null`, and an `error: null` prop (reserved slot for Session 2's sync-error surface).
+- `connect(Request)` (POST) — builds the Socialite redirect to Google with scopes `openid` + `email` + `calendar.events` and `access_type=offline` + `prompt=consent` (which guarantees a refresh token on every consent). **Inertia detection**: when the request carries `X-Inertia: true`, returns `Inertia::location($targetUrl)` so the client can perform a full `window.location` change (an external 302 cannot navigate the browser from XHR). Non-Inertia POSTs receive the raw `RedirectResponse` — the browser follows the 302 natively.
+- `callback(Request)` — three branches: (1) if Google returned `?error=...` (user denied consent, invalid scope, etc.), short-circuit to the settings page with a recoverable flash error; (2) if `Socialite::driver('google')->user()` throws (invalid state, token exchange failure, network error), catch, `report()` the exception, and redirect with a generic flash error — never 500; (3) success path: upsert the integration row via `updateOrCreate(['user_id' => ..., 'provider' => 'google'], [...])`, **preserve** the previously stored refresh token if Socialite returned null (defense against a re-consent), pin `google_account_email`, store the token expiry derived from `expiresIn`, flash success, redirect to the index route.
+- `disconnect(Request)` — leaves `// TODO Session 2: stop webhook watch here` at the call site, then deletes the user's integration row, flashes success, redirects to the index. No-op-safe when nothing is connected.
 
-- `InvitationController::accept()` — both branches.
-- `RegisterController::store()` — the initial admin attach on new business registration.
+### Routing
 
-No raw `$business->members()->attach()` outside the helper's body.
+`routes/web.php` now has two sibling settings groups inside the existing outer dashboard group at `routes/web.php:98`:
 
-**Soft-delete audit**. Eloquent's `BelongsToMany` does NOT auto-apply a pivot model's `SoftDeletes` scope — `BusinessMember` carries the trait, but `$business->members()` and `$user->businesses()` would return trashed pivot rows unless filtered explicitly. Both relations now apply `->wherePivotNull('deleted_at')`. The filter propagates to:
+1. `Route::middleware('role:admin')->prefix('dashboard/settings')->group(...)` — admin-only (unchanged existing pages).
+2. `Route::prefix('dashboard/settings')->group(...)` — **no inner middleware** (outer group already enforces `role:admin,staff`, per D-081). Calendar Integration lives here. Four routes:
+   - `GET /dashboard/settings/calendar-integration` → `index` (name: `settings.calendar-integration`)
+   - `POST /dashboard/settings/calendar-integration/connect` → `connect` (name: `settings.calendar-integration.connect`)
+   - `GET /dashboard/settings/calendar-integration/callback` → `callback` (name: `settings.calendar-integration.callback`)
+   - `DELETE /dashboard/settings/calendar-integration` → `disconnect` (name: `settings.calendar-integration.disconnect`)
 
-- `Business::admins()` / `Business::staff()` (via `members()`).
-- `User::hasBusinessRole()` (via `businesses()`).
-- `StaffController::index` / `show` / `invite` / `ensureUserBelongsToBusiness` (all via `members()`).
+Connect is POST (not GET) because `Socialite::redirect()` writes OAuth state into the session cookie; GET with session side effects is the wrong shape. Callback is GET (Google returns via 302 + query params, which is CSRF-exempt for GET).
 
-Other consumers use `BusinessMember::query()`, which applies the model's `SoftDeletingScope` automatically. Verified in-session, unchanged:
+### Frontend
 
-- `ResolveTenantContext::resolveMembership()`
-- `LoginController::pinCurrentBusiness()`
-- `MagicLinkController::verify()`
+- `resources/js/pages/dashboard/settings/calendar-integration.tsx` — new page. Two states:
+  - **Not connected**: explanatory copy + `<Form action={connect()} method="post">` (Inertia) wrapping a "Connect Google Calendar" button. The controller's Inertia-branch in `connect()` returns `Inertia::location(...)` which makes the client navigate to Google.
+  - **Connected**: shows the Google account email + `<Form action={disconnect()} method="delete">` wrapping a destructive "Disconnect" button. No teaser copy about Session 2 — the connected state shows only the account email and the Disconnect action.
+  - Error banner slot (`<Alert variant="error">`) renders either `flash.error` (one-shot, set by the callback when Google returns an error or Socialite throws) or the reserved `error` prop (Session 2's persistent sync-error surface). Flash wins when both are present since a just-failed OAuth attempt is more actionable than a stored sync error.
+- `resources/js/components/settings/settings-nav.tsx` — now reads `auth.role` from `usePage<PageProps>()`. Admin sees the union (existing items + Calendar Integration under "You"); staff sees only the shared group (Calendar Integration). Session 4 will extend the staff branch with Account and Availability.
+- Wayfinder regenerated: `resources/js/actions/App/Http/Controllers/Dashboard/Settings/CalendarIntegrationController.ts` + matching route files are produced on `php artisan wayfinder:generate` (and by the Vite plugin on `npm run build`). These files are gitignored per project convention — regenerate locally before frontend work.
 
-No consumer intentionally reads trashed rows for historical display in the app today, so there is no "preserve trashed-inclusive behaviour" exception to document.
+### Tests
 
-**Provider semantics** are unchanged. The existing-user branch still calls `Provider::create()` for a fresh row per acceptance. D-061's `UNIQUE(business_id, user_id, deleted_at)` permits one active + any number of trashed provider rows per `(business, user)`, so historical bookings remain attached to their original (possibly trashed) provider via `Booking::provider()->withTrashed()` (D-067).
-
-### Tests added (+10, suite 508 → 518)
-
-**`tests/Feature/Auth/InvitationTest.php` — +5 cases**:
-
-1. *existing user accepting invite does not recreate user or touch user fields* — invite an email already registered to a user in another business; accept with that user's existing password; assert `User` row count unchanged, `name`/`password`/`email_verified_at` untouched, new membership + provider + services present, session pinned to the new business, old membership intact, invitation marked accepted.
-2. *existing user invite rejects wrong password and does not attach* — same fixture, submit wrong password; assert `password` field error, guest session, no membership, no provider, invitation not accepted.
-3. *cannot accept existing-user invite while signed in as a different user* — `actingAs($other)`; assert redirect back to `invitation.show` with a flash error and no attach.
-4. *existing user already signed in as invitee accepts without password* — `actingAs($invitee)`, POST with no password; assert redirect to dashboard, attach ran, session pinned.
-5. *accept-invitation page signals new-user vs existing-user branch* — render `GET /invite/{token}` for two invitations (one for a new email, one for an existing user); assert `isExistingUser` Inertia prop matches the user existence check.
-
-**`tests/Feature/Settings/MembershipReEntryTest.php` — +5 cases**:
-
-1. *soft-deleted business_members row does not block a new active row* — insert + soft-delete + insert new; assert both rows coexist under the new index.
-2. *`Business::members()` excludes soft-deleted rows* — verifies the `wherePivotNull` fix.
-3. *`User::businesses()` excludes soft-deleted rows* — mirror.
-4. *`attachOrRestoreMember()` restores a soft-deleted row instead of duplicating* — assert the restored row shares the original `id` and total row count stays at 1.
-5. *full cycle: invite → soft-delete membership → re-invite → accept lands on restored row* — exercises the end-to-end R-19A + R-19B integration through the HTTP layer.
-
-All pre-existing cases stay green (including `StaffTest.php`, which still uses `$business->members()->attach()` directly in its pre-existing `'admin can invite staff'` and `'cannot invite existing member'` coverage).
+- `tests/Feature/Settings/CalendarIntegrationTest.php` — new file, 16 cases covering: connect redirect native-POST branch (three independent scope assertions for ordering-resilience + `access_type=offline` + `prompt=consent`); connect Inertia-visit branch (409 + `X-Inertia-Location` header points at Google); callback persistence with encryption-at-rest proof (raw DB read does NOT equal the plaintext; model cast DOES — the "starts with `eyJ`" envelope-format check was removed on review because it couples to Laravel internals); callback upsert (second connect replaces the row); callback refresh-token preservation when Socialite returns null; callback Google-error branch (`?error=access_denied` redirects with flash error, no row persisted); callback Socialite-throws branch (no fake registered → redirect with flash error, no 500); disconnect delete; disconnect no-op; admin/staff access (200); guest 302 to `/login`; customer-only 403; unverified admin 302 to `verification.notice`; un-onboarded admin 302 to onboarding; Inertia prop assertions for connected/not-connected state.
+- `tests/Feature/Settings/SettingsAuthorizationTest.php` — deliberate contract evolution for D-081: the old "staff cannot access any settings page" split into two tests, "staff cannot access any admin-only settings page" (unchanged set of admin-only routes) and "staff can access shared settings pages" (Calendar Integration today). The admin matrix gains Calendar Integration. No existing assertion was weakened; the new shape accurately names the access model after the role split.
 
 ### No scope drift
 
-No unplanned refactors. `SlotGeneratorService`, the R-17 bookability scopes, the R-18 generated-column reads, the D-075 closure-after-response dispatch, and the `bookability` shared prop are all untouched. The `EXPIRY_HOURS` constant remains the single source of truth for invitation expiry.
+No unplanned refactors. No changes to the `CalendarProvider` interface (Session 2 introduces it), no webhook plumbing, no `bookings` schema changes, no `SlotGeneratorService` nullsafe, no `calendar_pending_actions` table, no notification suppression. Account + Availability settings are untouched — Session 4 still owns their role-split migration. `SettingsNav` is the only layout touchpoint; `settings-layout.tsx` itself was not modified.
 
 ---
 
 ## Current Project State
 
 - **Backend**:
-  - `InvitationController::accept()` splits on existing-user and uses the helper for the attach in both branches.
-  - `AcceptInvitationRequest` has dynamic rules: password-only for existing-user, empty when the session user already matches the invitation, name+password+confirmation for the new-user branch.
-  - `Business::attachOrRestoreMember()` is the single home for adding a user to a business.
-  - `Business::members()` and `User::businesses()` filter trashed pivot rows via `wherePivotNull('deleted_at')`.
-  - `RegisterController::store()` uses the helper for the initial admin attach.
-  - Invitation routes moved out of the `guest` middleware group.
-- **Database**: `business_members` now carries `UNIQUE(business_id, user_id, deleted_at)` — same shape as `providers`.
-- **Frontend**: `auth/accept-invitation.tsx` renders four states driven by `isExistingUser` + `authUserEmail`. Uses Wayfinder `accept()` and `logout()` actions. Bundle size unchanged (~963 kB main chunk).
-- **Config / i18n**: no changes. New user-facing strings flow through `__()` and the existing translation file pipeline.
-- **Tests**: full Pest suite green on Postgres — **518 passed, 2248 assertions**. +10 from R-18's baseline of 508.
-- **Decisions**: **D-079** recorded in `docs/decisions/DECISIONS-AUTH.md`. No existing decision superseded — D-079 extends D-061 and D-063.
-- **Dependencies**: no changes.
+  - `Dashboard\Settings\CalendarIntegrationController` is the single home for OAuth connect/disconnect.
+  - `CalendarIntegration` model gains `token_expires_at` + `google_account_email` fillable/casts; encrypted casts for both tokens remain the only way to round-trip them.
+  - Settings routes split into two groups; the shared group uses no extra middleware and relies on the outer `role:admin,staff` guard.
+- **Database**: `calendar_integrations` carries `UNIQUE(user_id, provider)` + `token_expires_at` + `google_account_email`. Existing columns (tokens, `calendar_id`, webhook fields) unchanged.
+- **Frontend**: New page `dashboard/settings/calendar-integration`. Nav is role-aware. Bundle size 967 kB (was 963 kB — +4 kB for the new page + Alert import).
+- **Config / i18n**: `services.google` added. `.env.example` gains three Google env vars. All new user-facing strings flow through `__()` / `useTrans`.
+- **Tests**: Pest suite 781 passed, 3253 assertions (Feature 517, Unit 15, Browser 249). +14 from actual pre-session baseline.
+- **Decisions**: D-080 + D-081 recorded. No existing decision superseded.
+- **Dependencies**: `laravel/socialite` (v5.26) + `google/apiclient` (^2.15) added. No removals.
 
 ---
 
 ## How to Verify Locally
 
 ```bash
-php artisan test --compact
-vendor/bin/pint --dirty --format agent
-npm run build
+php artisan test --compact        # 781 passed
+vendor/bin/pint --dirty --format agent  # {"result":"pass"}
+npm run build                     # green, ~1.6s
+php artisan wayfinder:generate    # idempotent; no diff after run
 ```
-
-All three green: **518 passed** (in ~24 s), `{"result":"pass"}`, Vite build in ~700 ms with only the pre-existing large-chunk warning.
 
 Targeted checks:
 
 ```bash
-php artisan test --compact --filter='InvitationTest|MembershipReEntry'
-# → 16 passed
+php artisan test --compact --filter='CalendarIntegrationTest|SettingsAuthorization'
+# → 17 passed (13 CalendarIntegration + 4 SettingsAuthorization)
 
-grep -rn "business_members\|->members(\|->businesses(\|BusinessMember::" app/
-# → only the helper, the SoftDeletes-aware model-level queries, and the
-#   relation definitions remain; no raw attach() outside the helper's body
+php artisan route:list --path=calendar-integration
+# → 4 routes: GET|HEAD, DELETE, GET|HEAD (callback), POST (connect)
 ```
 
-Manual smoke for the D-079 existing-user flow:
+Manual smoke (requires real Google OAuth credentials):
 
-1. Register business A as admin `alice@example.com`.
-2. Sign out. Register business B as admin `bob@example.com`.
-3. As Bob, go to `/dashboard/settings/staff` and invite `alice@example.com`.
-4. Copy the invite link from the mail log; open it in a new incognito window.
-5. The accept page should say "You already have a riservo.ch account. Sign in to accept." and show a password-only form.
-6. Submit Alice's password → redirect to Business B's dashboard. Alice is logged in; session `current_business_id` = B.
-7. In a new tab, log in as Alice → lands on Business A's dashboard (her oldest active membership per `ResolveTenantContext`).
+1. Set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` in `.env`. The redirect URI must match exactly what you configure in Google Cloud Console.
+2. Register a business, onboard, sign in as admin, visit `/dashboard/settings/calendar-integration`.
+3. Click Connect → Google consent → redirect back. Page should show the Google account email + a Disconnect button.
+4. Click Disconnect → row deleted, UI returns to the not-connected state.
+5. Sign in as a staff member (invited via `/dashboard/settings/staff`) → settings nav shows **only** Calendar Integration. Other settings URLs return 403.
 
 ---
 
 ## What the Next Session Needs to Know
 
-Review Round 2 is fully closed. The next agent returns to the main roadmap: `docs/ROADMAP.md`. No review-remediation work remains open.
+Next up: **Session 2 — Google Calendar Sync (Bidirectional)** in `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`. Session 2 owns webhooks, push/pull jobs, sync tokens, event mutation, the `bookings.customer_id` / `bookings.service_id` nullability + `bookings.external_title` migration, `calendar_pending_actions`, notification suppression for `source = google_calendar`, and the `CalendarProvider` interface + `GoogleCalendarProvider` implementation.
 
-### Conventions that future work must not break (post-R-19)
+### Conventions MVPC-1 established that future work must not break
 
-- **D-079 — restore-or-create is the only membership-add path.** No new code may call `$business->members()->attach(...)` directly. Routes through `Business::attachOrRestoreMember($user, $role)`. Rationale: the only way to ship "add user to business" on top of the new uniqueness index without a future uniqueness-violation incident.
-- **D-079 — soft-deleted pivot rows stay out of live reads.** `Business::members()` and `User::businesses()` filter `deleted_at`. Any new relation or eager-load on `business_members` must apply the same filter, unless the caller explicitly wants trashed rows for historical display (no such caller exists today). `BusinessMember::query()` is soft-delete-aware via the model scope; use it for direct pivot reads.
-- **D-079 — invitation routes are public.** `GET` / `POST /invite/{token}` sit outside `guest` and outside `auth`. Do not wrap them in either — the existing-user branch needs to handle all three session states.
-- **Earlier conventions are unchanged**: D-078 (structural bookability single scope, R-17), D-066 read/write symmetry (R-18), D-077/D-076/D-075/D-074/D-073 and earlier remain as described in prior handoffs.
-- **Factories / test helpers**: `tests/Pest.php::attachStaff` / `attachAdmin` / `attachProvider` still use raw pivot attaches in test setup. This is acceptable — tests pre-seed clean state and never exercise the re-entry path through the helper via those functions. Tests that need restore-or-create semantics call `Business::attachOrRestoreMember` directly (see `tests/Feature/Settings/MembershipReEntryTest.php`).
+- **D-080 — the OAuth provider is Socialite; the Calendar API client is `google/apiclient`.** No fallback HTTP client, no custom token refresh. Session 2 instantiates `Google\Client` in `GoogleCalendarProvider::clientFor(CalendarIntegration $integration)` using the encrypted tokens from the row; the token-refresh callback writes rotated access tokens + new `token_expires_at` back to the row.
+- **D-081 — the shared settings inner group carries no middleware.** Adding a new shared settings page is a one-line route-file change inside the shared group. Admin-only pages stay in the admin-only group. Do NOT re-declare `role:admin,staff` on the inner shared group — the outer dashboard group is the single source of truth for that guard.
+- **`CalendarIntegration` is scoped to the User, not the Business.** A provider who works at two businesses has one Google connection, shared across their businesses. Session 2's destination-calendar-per-provider configuration must stay user-keyed.
+- **`google_account_email` is the display-only Google account email; `calendar_id` is Session 2's destination calendar ID.** Do not overload either column.
+- **Session 2 must preserve the refresh-token fallback in `callback()`.** A re-consent that returns a null refresh token must not overwrite the stored one.
+- **Earlier conventions remain unchanged**: D-079 (restore-or-create membership + soft-delete filter), D-078 (structural bookability scope), D-077/D-076/D-075/D-074/D-073/D-067/D-066/D-063/D-061/D-062 remain as described in prior handoffs.
+
+### Session 2 hand-off notes
+
+- The `disconnect()` action has a `// TODO Session 2: stop webhook watch here` comment at the exact call site. Replace with `app(CalendarProviderFactory::class)->for($integration)->stopWatch($integration)` (or the Session 2-agent-chosen equivalent), wrapped in try/catch so a dead/already-stopped channel does not block local row deletion.
+- The `error` prop on the Inertia page is already plumbed through `index()` but always null today. Session 2 writes the most recent sync error (from `sync_error` / `sync_error_at`, which Session 2 adds via migration) into this prop, and the frontend renders it in the pre-existing `<Alert variant="error">` banner slot.
+- Session 2 is free to rename `GOOGLE_SCOPES` in the controller or add new scopes (e.g., `https://www.googleapis.com/auth/calendar.readonly` for the conflict calendars if Google demands a broader scope). Today's three scopes are the MVP minimum.
 
 ---
 
 ## Open Questions / Deferred Items
 
-R-19 adds three new `docs/BACKLOG.md` entries under "Tenancy (R-19 carry-overs)":
+No new carry-overs from MVPC-1.
 
-- **R-2B — Business-switcher UI** in the dashboard header. Post-D-079 multi-business membership is reachable through the invite flow but not yet switchable in-app.
-- **Admin-driven member deactivation + re-invite flow**. D-079's restore-or-create helper unblocks this but no UI drives soft-delete of a `business_members` row today.
-- **"Leave business" self-serve UX** for staff members. Same prerequisite.
-
-Earlier carry-overs remain unchanged:
-
-- **R-16** — frontend code splitting (deferred, tracked in `docs/BACKLOG.md`).
+Earlier carry-overs remain unchanged from the post-R-19 list:
+- Tenancy (R-19 carry-overs): R-2B business-switcher UI; admin-driven member deactivation + re-invite flow; "leave business" self-serve UX.
+- R-16 frontend code splitting (deferred).
 - R-17 carry-overs: admin email/push notification when a service crosses into unbookable post-launch; richer "provider is on vacation" UX on the public page; per-user banner dismiss / ack history.
-- R-9 / R-8 manual QA — carry-over.
-- Orphan-logo cleanup — carry-over.
-- Profile + onboarding logo upload deduplication — deferred.
-- Per-business invite-lifetime override — carry-over.
-- Real `/dashboard/settings/notifications` page — no product driver.
-- Per-business email branding — post-launch (D-075).
-- Mail rendering smoke-test in CI — post-MVP.
-- Failure observability for after-response dispatch — post-MVP.
-- Customer email verification flow — post-MVP.
-- Customer profile page — post-MVP.
-- Scheduler-lag alerting — carry-over.
-- `X-RateLimit-Remaining` / `Retry-After` headers on auth-recovery throttle — carry-over.
-- SMS / WhatsApp reminder channel — SPEC §9 post-MVP.
-- Browser-test infrastructure (Pest Browser, Playwright) — carry-over.
-- Popup widget i18n — carry-over.
-- `docs/ARCHITECTURE-SUMMARY.md` stale terminology — carry-over.
-- Real-concurrency smoke test — carry-over.
-- Availability-exception race — carry-over.
-- Parallel test execution (`paratest`) — carry-over.
-- Slug-alias history — carry-over.
-- Booking-flow state persistence — carry-over.
+- R-9 / R-8 manual QA.
+- Orphan-logo cleanup.
+- Profile + onboarding logo upload deduplication.
+- Per-business invite-lifetime override.
+- Real `/dashboard/settings/notifications` page.
+- Per-business email branding.
+- Mail rendering smoke-test in CI.
+- Failure observability for after-response dispatch.
+- Customer email verification flow.
+- Customer profile page.
+- Scheduler-lag alerting.
+- `X-RateLimit-Remaining` / `Retry-After` headers on auth-recovery throttle.
+- SMS / WhatsApp reminder channel.
+- Browser-test infrastructure beyond Pest Browser.
+- Popup widget i18n.
+- `docs/ARCHITECTURE-SUMMARY.md` stale terminology.
+- Real-concurrency smoke test.
+- Availability-exception race.
+- Parallel test execution (`paratest`).
+- Slug-alias history.
+- Booking-flow state persistence.

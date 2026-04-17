@@ -1,12 +1,31 @@
-import { Link } from '@inertiajs/react';
+import { Link, usePage } from '@inertiajs/react';
 import { useTrans } from '@/hooks/use-trans';
 import { cn } from '@/lib/utils';
+import type { PageProps } from '@/types';
 
-const navGroups = [
+interface NavItem {
+    label: string;
+    href: string;
+}
+
+interface NavGroup {
+    label: string;
+    items: NavItem[];
+}
+
+const calendarIntegrationItem: NavItem = {
+    label: 'Calendar Integration',
+    href: '/dashboard/settings/calendar-integration',
+};
+
+// Admin sees the union of admin-only items and shared items. Shared items are
+// grouped under "You"; admin-only items keep their existing groupings (D-081).
+const adminGroups: NavGroup[] = [
     {
         label: 'You',
         items: [
             { label: 'Account', href: '/dashboard/settings/account' },
+            calendarIntegrationItem,
         ],
     },
     {
@@ -38,9 +57,21 @@ const navGroups = [
     },
 ];
 
+// Staff users only see the shared (admin+staff) settings pages. Session 4 will
+// extend this list with Account and Availability (D-081).
+const staffGroups: NavGroup[] = [
+    {
+        label: 'You',
+        items: [calendarIntegrationItem],
+    },
+];
+
 export function SettingsNav() {
     const { t } = useTrans();
+    const role = usePage<PageProps>().props.auth.role;
     const currentPath = window.location.pathname;
+
+    const navGroups = role === 'admin' ? adminGroups : staffGroups;
 
     return (
         <nav aria-label={t('Settings navigation')} className="flex flex-col gap-5">

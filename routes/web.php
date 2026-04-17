@@ -17,6 +17,7 @@ use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Dashboard\Settings\AccountController;
 use App\Http\Controllers\Dashboard\Settings\BookingSettingsController;
 use App\Http\Controllers\Dashboard\Settings\BusinessExceptionController;
+use App\Http\Controllers\Dashboard\Settings\CalendarIntegrationController;
 use App\Http\Controllers\Dashboard\Settings\EmbedController;
 use App\Http\Controllers\Dashboard\Settings\ProfileController as SettingsProfileController;
 use App\Http\Controllers\Dashboard\Settings\ProviderController as SettingsProviderController;
@@ -177,6 +178,21 @@ Route::middleware('auth')->group(function () {
             Route::put('/account/exceptions/{exception}', [AccountController::class, 'updateException'])->name('settings.account.update-exception');
             Route::delete('/account/exceptions/{exception}', [AccountController::class, 'destroyException'])->name('settings.account.destroy-exception');
             Route::put('/account/services', [AccountController::class, 'updateServices'])->name('settings.account.update-services');
+        });
+
+        // Settings accessible to admin AND staff. The outer group (line above)
+        // already enforces `role:admin,staff`, so this inner group carries no
+        // additional middleware — declaring `role:admin,staff` again would
+        // read as if the inner group narrowed access when it does not (D-081).
+        Route::prefix('dashboard/settings')->group(function () {
+            Route::get('/calendar-integration', [CalendarIntegrationController::class, 'index'])
+                ->name('settings.calendar-integration');
+            Route::post('/calendar-integration/connect', [CalendarIntegrationController::class, 'connect'])
+                ->name('settings.calendar-integration.connect');
+            Route::get('/calendar-integration/callback', [CalendarIntegrationController::class, 'callback'])
+                ->name('settings.calendar-integration.callback');
+            Route::delete('/calendar-integration', [CalendarIntegrationController::class, 'disconnect'])
+                ->name('settings.calendar-integration.disconnect');
         });
     });
 

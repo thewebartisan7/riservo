@@ -1,7 +1,9 @@
-# riservo.ch — Feature Roadmap 
+# riservo.ch — Feature Roadmap
+
+> **SUPERSEDED 2026-04-16** — Sessions F1, F2, F3 were folded into `docs/roadmaps/ROADMAP-MVP-COMPLETION.md` (Sessions 1, 4, 5 respectively) with definitive decisions locked. Read the active roadmap for current scope; this file is kept for historical context only.
 
 > Version: 0.1 — Draft  
-> Status: Planning  
+> Status: Superseded  
 > Scope: Three focused feature sessions to be scheduled alongside or after the core MVP roadmap.  
 > Each session represents a focused, reviewable unit of work with a clear deliverable.  
 > Implementation details are defined per-session by the agent at the start of each session.

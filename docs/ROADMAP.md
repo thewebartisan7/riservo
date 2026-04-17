@@ -237,41 +237,11 @@ Custom calendar component for the business dashboard. Built with TailwindPlus te
 
 ---
 
-## Session 12 — Google Calendar Sync
+## Sessions 12–13 — Superseded by `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`
 
-Two-way synchronization between riservo.ch bookings and a Provider's Google Calendar. Built behind a `CalendarProvider` interface (integration pattern, not the domain Provider entity) for future extensibility. Synced events are displayed in the calendar view built in Session 11.
+Sessions 12 (Google Calendar Sync) and 13 (Cashier Billing) were rescoped on 2026-04-16 and folded into the MVP completion roadmap together with the previously-separate F1 (Google OAuth foundation), F2 (Provider self-service settings), and F3 (Advanced calendar interactions).
 
-- [ ] Define `CalendarProvider` interface (connect, disconnect, push event, delete event, handle incoming webhook)
-- [ ] Google Calendar OAuth 2.0 flow per Provider, authenticated via the Provider's linked User (connect / disconnect from `settings/account` and `settings/providers/{provider}`)
-- [ ] Push sync: booking created/updated/cancelled on riservo → event created/updated/deleted on Google Calendar
-- [ ] Google Calendar events store `riservo_booking_id` in extended properties for sync tracking
-- [ ] Google Push Notifications (webhooks) setup: subscribe to calendar changes per Provider
-- [ ] Pull sync: incoming webhook from Google → parse event → create or update Booking on riservo with `source: google_calendar`
-- [ ] External bookings (no riservo customer): displayed in dashboard as "External Booking" with source indicator
-- [ ] Conflict resolution: handle simultaneous changes gracefully
-- [ ] Webhook channel renewal (Google webhooks expire after ~7 days — auto-renew via scheduled job)
-- [ ] Connect/disconnect UI in the Provider's settings page
-- [ ] Sync status indicator in dashboard (connected, last synced, error state)
-- [ ] Add any relevant info about calendar sync deployments on server in the `docs/DEPLOYMENT.md`
-
----
-
-## Session 13 — Billing (Laravel Cashier)
-
-SaaS subscription management for business accounts.
-
-- [ ] Install and configure Laravel Cashier (Stripe) on the `Business` model
-- [ ] Define subscription plans in config (monthly, annual)
-- [ ] Trial mode: new businesses start on indefinite trial (no card required at signup)
-- [ ] Billing portal page in dashboard:
-  - Current plan and trial status
-  - Upgrade / subscribe flow (Stripe Checkout)
-  - Manage payment method
-  - Download invoices (PDF via Cashier)
-  - Cancel subscription
-- [ ] Stripe webhook handling (payment succeeded, failed, subscription cancelled, etc.)
-- [ ] Plan limits enforcement (if applicable for MVP — e.g., max staff members / max providers per plan)
-- [ ] Test billing flows in Stripe test mode
+Active source of truth for all remaining MVP work: `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`.
 
 ---
 

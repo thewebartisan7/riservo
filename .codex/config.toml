@@ -1,4 +1,7 @@
 [mcp_servers.laravel-boost]
-command = "php"
+command = "/opt/homebrew/bin/php"
 args = ["artisan", "boost:mcp"]
-cwd = "/Users/damir/Projects/riservo-ch"
+cwd = "/Users/mir/Projects/riservo"
+
+[mcp_servers.laravel-boost.tools.search-docs]
+approval_mode = "approve"

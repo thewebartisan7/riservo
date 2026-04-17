@@ -14,7 +14,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'provider',
     'access_token',
     'refresh_token',
+    'token_expires_at',
     'calendar_id',
+    'google_account_email',
     'webhook_channel_id',
     'webhook_expiry',
 ])]
@@ -27,6 +29,7 @@ class CalendarIntegration extends Model
     protected function casts(): array
     {
         return [
+            'token_expires_at' => 'datetime',
             'webhook_expiry' => 'datetime',
             'access_token' => 'encrypted',
             'refresh_token' => 'encrypted',
