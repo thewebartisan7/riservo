@@ -26,6 +26,19 @@ This file captures unscheduled follow-up work, UX ideas, and deferred engineerin
 - The onboarding logo upload path still reflects the older standalone-request implementation described in D-042. When that area is touched again, evaluate migrating it to the current Inertia v3 `useHttp` pattern.
 - If `docs/design/ui.pen` stops being useful as a repo-local reference, move it out of the repository and update `docs/README.md` accordingly.
 
+## Resend payment link for `unpaid` customer_choice bookings (deferred from ROADMAP-PAYMENTS Session 2)
+
+- ROADMAP-PAYMENTS decision #14 promotes a `customer_choice` booking with a failed/abandoned online Checkout to `confirmed + payment_status = unpaid`. Today the customer falls back to paying at the appointment.
+- Future enhancement: a "Resend payment link" affordance — either on the customer's booking management page (so the customer can retry online prepayment) or on the dashboard booking detail page (so the Business can email a fresh Checkout link).
+- Implementation sketch: a new endpoint that mints a fresh `Stripe\Checkout\Session::create` against the existing `unpaid` booking row, reusing the existing slot reservation and the same `metadata.riservo_booking_id`; on `checkout.session.completed`, the booking transitions `unpaid → paid` (no `confirmed` flip needed, the booking is already confirmed).
+- Not scoped for MVP; revisit if professionals request "give the customer one more chance to prepay" UX.
+
+## Tighten billing freeload envelope (deferred from MVPC-3)
+
+- Per D-089's consequences, `past_due` subscriptions are write-allowed during Stripe's dunning window so legitimate salons aren't locked out mid-payment-retry. Default Stripe retry policy is ~7 days / 4 retries, but account configuration can stretch to ~3 weeks. Worst case: a salon with a permanently invalid card keeps creating bookings for ~3 weeks before Stripe flips them to `canceled` and our webhook transitions them to `read_only`.
+- Future refinement: introduce a "past_due for more than N days → read_only" rule. Likely shape: a helper on `Business` that subtracts `now()` from a stored first-payment-failed-at timestamp and short-circuits `canWrite()` when the gap exceeds a configurable threshold (default 7 days). Requires a new column or event-listener on `invoice.payment_failed` since Cashier doesn't track the first-failure timestamp natively.
+- Not scoped for MVP. Revisit only if abuse telemetry shows the envelope is too generous post-launch.
+
 ## R-16 — Frontend code splitting (deferred from ROADMAP-REVIEW-1)
 
 - The Inertia page resolver uses `import.meta.glob(..., { eager: true })`, producing a single ~958 kB main JS asset. Every user — including those on the lean public booking page — downloads all dashboard, settings, and calendar code upfront.

@@ -19,6 +19,7 @@ Use this file as the stable entrypoint for architectural decisions. Decision IDs
 | `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md` | onboarding, settings architecture, embed/share management, staff and provider lifecycle rules |
 | `docs/decisions/DECISIONS-FRONTEND-UI.md` | React/Inertia frontend conventions, COSS UI, public booking UI, dashboard calendar UI decisions |
 | `docs/decisions/DECISIONS-CALENDAR-INTEGRATIONS.md` | external calendar sync scope and future integration-specific decisions |
+| `docs/decisions/DECISIONS-PAYMENTS.md` | customer-to-professional payment flow (Stripe Connect Express); distinct from the SaaS subscription billing in `DECISIONS-FOUNDATIONS.md` |
 | `docs/decisions/DECISIONS-HISTORY.md` | superseded decisions and resolved planning questions kept for historical reference |
 
 ## Format

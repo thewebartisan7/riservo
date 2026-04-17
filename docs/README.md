@@ -18,7 +18,7 @@ Start here before reading any other project documentation. This file is the sour
 - `docs/BACKLOG.md` — unscheduled UI follow-up, UX ideas, and technical debt notes
 - `docs/plans/` — active implementation plans and current planning artifacts
 - `docs/reviews/` — active review round only (empty between rounds); past rounds live under `docs/archive/reviews/`
-- `docs/roadmaps/` — secondary or future-oriented roadmap documents
+- `docs/roadmaps/` — secondary or future-oriented roadmap documents (notably `ROADMAP-PAYMENTS.md` for the customer-to-professional Stripe Connect work)
 
 ## Archive / Reference
 
