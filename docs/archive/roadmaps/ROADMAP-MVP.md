@@ -1,7 +1,9 @@
 # riservo.ch — Roadmap (MVP)
 
+> **ARCHIVED 2026-04-17** — Sessions 1–11 shipped per this document; Sessions 12 (Google Calendar) and 13 (Cashier billing) were rescoped and delivered via `docs/archive/roadmaps/ROADMAP-MVP-COMPLETION.md` (MVPC-1 through MVPC-5). MVP is fully shipped. Next active roadmap: `docs/roadmaps/ROADMAP-PAYMENTS.md`. Kept for historical context only.
+
 > Version: 0.1 — Draft  
-> Status: In Progress  
+> Status: Shipped and archived  
 > Each session represents a focused, reviewable unit of work with a clear deliverable.  
 > Implementation details are defined per-session by the agent at the start of each session.
 

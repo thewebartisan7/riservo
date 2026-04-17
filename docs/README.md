@@ -5,11 +5,10 @@ Start here before reading any other project documentation. This file is the sour
 ## Read First
 
 1. `docs/HANDOFF.md` — latest project state, current conventions, and immediate follow-up guidance
-2. `docs/roadmaps/ROADMAP-MVP-COMPLETION.md` — **active** delivery roadmap (Sessions 1–5 closing the MVP plus immediate post-MVP polish)
-3. `docs/ROADMAP.md` — historical MVP roadmap (Sessions 1–11 shipped; 12–13 superseded by the active roadmap above)
-4. `docs/SPEC.md` — product scope, rules, and domain model
-5. `docs/DECISIONS.md` — decision index; from there, open only the topical decision files relevant to the task
-6. `docs/ARCHITECTURE-SUMMARY.md` — concise implementation-oriented summary of the current system
+2. `docs/roadmaps/ROADMAP-PAYMENTS.md` — **active** delivery roadmap (customer-to-professional Stripe Connect Express integration; 6 sessions)
+3. `docs/SPEC.md` — product scope, rules, and domain model
+4. `docs/DECISIONS.md` — decision index; from there, open only the topical decision files relevant to the task
+5. `docs/ARCHITECTURE-SUMMARY.md` — concise implementation-oriented summary of the current system
 
 ## Read When Relevant
 
@@ -18,11 +17,15 @@ Start here before reading any other project documentation. This file is the sour
 - `docs/BACKLOG.md` — unscheduled UI follow-up, UX ideas, and technical debt notes
 - `docs/plans/` — active implementation plans and current planning artifacts
 - `docs/reviews/` — active review round only (empty between rounds); past rounds live under `docs/archive/reviews/`
-- `docs/roadmaps/` — secondary or future-oriented roadmap documents (notably `ROADMAP-PAYMENTS.md` for the customer-to-professional Stripe Connect work)
+- `docs/roadmaps/ROADMAP-E2E.md` — end-to-end browser-test roadmap (independent of the payments work)
+- `docs/roadmaps/ROADMAP-GROUP-BOOKINGS.md` — post-MVP planning doc for multi-customer-per-slot bookings
 
 ## Archive / Reference
 
 - `docs/archive/plans/` — completed implementation plans kept for history and rationale
+- `docs/archive/roadmaps/ROADMAP-MVP.md` — original MVP roadmap, Sessions 1–11 shipped (historical)
+- `docs/archive/roadmaps/ROADMAP-MVP-COMPLETION.md` — MVP completion roadmap, MVPC-1..5 fully shipped 2026-04-17 (OAuth, Calendar Sync, Cashier billing, Provider self-service, Advanced calendar interactions)
+- `docs/archive/roadmaps/ROADMAP-FEATURES.md` and `ROADMAP-CALENDAR.md` — superseded by ROADMAP-MVP-COMPLETION
 - `docs/archive/reviews/` — closed review rounds and their remediation roadmaps (e.g., `REVIEW-1.md`, `ROADMAP-REVIEW-1.md`)
 - `docs/design/ui.pen` — design asset reference
 - `docs/decisions/DECISIONS-HISTORY.md` — superseded or resolved decision history
