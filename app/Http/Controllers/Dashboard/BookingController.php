@@ -7,6 +7,7 @@ use App\Enums\BookingStatus;
 use App\Exceptions\Booking\NoProviderAvailableException;
 use App\Exceptions\Booking\SlotNoLongerAvailableException;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Dashboard\RescheduleBookingRequest;
 use App\Http\Requests\Dashboard\StoreManualBookingRequest;
 use App\Http\Requests\Dashboard\UpdateBookingStatusRequest;
 use App\Jobs\Calendar\PushBookingToCalendarJob;
@@ -18,6 +19,7 @@ use App\Models\User;
 use App\Notifications\BookingCancelledNotification;
 use App\Notifications\BookingConfirmedNotification;
 use App\Notifications\BookingReceivedNotification;
+use App\Notifications\BookingRescheduledNotification;
 use App\Services\SlotGeneratorService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\QueryException;
@@ -229,6 +231,215 @@ class BookingController extends Controller
         return back()->with('success', __('Booking status updated to :status.', [
             'status' => $newStatus->label(),
         ]));
+    }
+
+    /**
+     * Reschedule a booking to a new time (drag / resize from the calendar).
+     *
+     * Shape (D-105): `{ starts_at: UTC ISO-8601, duration_minutes: int }`. Server
+     * recomputes `ends_at = starts_at + duration_minutes` so drag and resize
+     * share one endpoint. Availability reuses SlotGeneratorService with
+     * `excluding: $booking` so the booking does not block its own move
+     * (D-066). Transaction + GIST (D-065/D-066) are the race-safe backstop;
+     * a `23P01` (exclusion_violation) surfaces as 409. PushBookingToCalendarJob
+     * is dispatched with action=update when the provider has a configured
+     * integration (D-083). Customer notification (D-108 via locked #16) is
+     * suppressed when the booking is `source = google_calendar` (D-088).
+     *
+     * Refused with 422:
+     *   - the booking's provider is soft-deleted (D-067 — eligibility excludes
+     *     trashed providers for new work);
+     *   - `source = google_calendar` (external bookings are mirrors);
+     *   - terminal status (cancelled/completed/no_show — cannot be rescheduled);
+     *   - the booking has no service attached (defensive — external bookings
+     *     would have hit the source guard above; kept explicit);
+     *   - `starts_at` does not snap to `service.slot_interval_minutes` (D-106);
+     *   - the new window would straddle two calendar days (booking invariant).
+     */
+    public function reschedule(RescheduleBookingRequest $request, Booking $booking): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+        $business = tenant()->business();
+
+        abort_unless($booking->business_id === $business->id, 404);
+
+        $isAdmin = tenant()->role()->value === 'admin';
+        if (! $isAdmin && $booking->provider?->user_id !== $user->id) {
+            abort(403);
+        }
+
+        if ($booking->source === BookingSource::GoogleCalendar) {
+            return response()->json([
+                'message' => __('External calendar events cannot be rescheduled from riservo.'),
+            ], 422);
+        }
+
+        if (! $booking->status->canTransitionTo($booking->status) && ! in_array(
+            $booking->status,
+            [BookingStatus::Pending, BookingStatus::Confirmed],
+            true,
+        )) {
+            // Pending/Confirmed are the only statuses that block availability
+            // (D-031) and therefore the only statuses it makes sense to move.
+            return response()->json([
+                'message' => __('Only pending or confirmed bookings can be rescheduled.'),
+            ], 422);
+        }
+
+        if ($booking->provider?->trashed()) {
+            return response()->json([
+                'message' => __('This booking belongs to a deactivated provider and cannot be rescheduled.'),
+            ], 422);
+        }
+
+        $service = $booking->service;
+        if ($service === null) {
+            return response()->json([
+                'message' => __('This booking has no service attached and cannot be rescheduled.'),
+            ], 422);
+        }
+
+        $durationMinutes = (int) $request->validated('duration_minutes');
+        $timezone = $business->timezone;
+        $startsAtUtc = CarbonImmutable::parse($request->validated('starts_at'))->setTimezone('UTC');
+        $startsAtLocal = $startsAtUtc->setTimezone($timezone);
+        $endsAtLocal = $startsAtLocal->addMinutes($durationMinutes);
+
+        $interval = $service->slot_interval_minutes;
+        if ($startsAtLocal->minute % $interval !== 0 || $startsAtLocal->second !== 0) {
+            return response()->json([
+                'message' => __('Start time must align with the :minutes-minute grid.', [
+                    'minutes' => $interval,
+                ]),
+            ], 422);
+        }
+
+        if ($durationMinutes % $interval !== 0) {
+            return response()->json([
+                'message' => __('Duration must be a multiple of :minutes minutes.', [
+                    'minutes' => $interval,
+                ]),
+            ], 422);
+        }
+
+        if (! $startsAtLocal->isSameDay($endsAtLocal->subSecond())) {
+            return response()->json([
+                'message' => __('A booking cannot straddle two days.'),
+            ], 422);
+        }
+
+        $endsAtUtc = $startsAtUtc->addMinutes($durationMinutes);
+        $previousStartsAt = $booking->starts_at->copy();
+        $previousEndsAt = $booking->ends_at->copy();
+
+        try {
+            DB::transaction(function () use (
+                $business, $service, $booking, $startsAtLocal, $startsAtUtc, $endsAtUtc,
+            ) {
+                $dateLocal = $startsAtLocal->startOfDay();
+
+                $slots = $this->slotGenerator->getAvailableSlots(
+                    $business,
+                    $service,
+                    $dateLocal,
+                    $booking->provider,
+                    excluding: $booking,
+                );
+
+                $slotAvailable = collect($slots)->contains(
+                    fn (CarbonImmutable $slot) => $slot->eq($startsAtLocal),
+                );
+
+                if (! $slotAvailable) {
+                    abort(response()->json([
+                        'message' => __('That slot is not available. Pick another time.'),
+                    ], 422));
+                }
+
+                $booking->forceFill([
+                    'starts_at' => $startsAtUtc,
+                    'ends_at' => $endsAtUtc,
+                ])->save();
+            });
+        } catch (QueryException $e) {
+            if (($e->getPrevious()?->getCode() ?? $e->getCode()) === '23P01') {
+                return response()->json([
+                    'message' => __('This slot was just taken. Pick another time.'),
+                ], 409);
+            }
+            throw $e;
+        }
+
+        $booking->refresh();
+
+        if (! $booking->shouldSuppressCustomerNotifications() && $booking->customer) {
+            Notification::route('mail', $booking->customer->email)
+                ->notify(new BookingRescheduledNotification(
+                    $booking,
+                    $previousStartsAt,
+                    $previousEndsAt,
+                ));
+        }
+
+        if ($booking->shouldPushToCalendar()) {
+            PushBookingToCalendarJob::dispatch($booking->id, 'update');
+        }
+
+        return response()->json([
+            'booking' => $this->bookingPayload($booking),
+        ]);
+    }
+
+    /**
+     * Shared payload shape used by reschedule + calendar index (future
+     * extensions). Kept private so the calendar index retains its explicit
+     * shape today — only new endpoints use this.
+     *
+     * @return array<string, mixed>
+     */
+    private function bookingPayload(Booking $booking): array
+    {
+        $booking->loadMissing(['service:id,name,duration_minutes,price', 'provider.user:id,name,avatar', 'customer:id,name,email,phone']);
+
+        return [
+            'id' => $booking->id,
+            'starts_at' => $booking->starts_at->toIso8601String(),
+            'ends_at' => $booking->ends_at->toIso8601String(),
+            'status' => $booking->status->value,
+            'source' => $booking->source->value,
+            'external' => $booking->source === BookingSource::GoogleCalendar,
+            'external_title' => $booking->external_title,
+            'external_html_link' => $booking->external_html_link,
+            'notes' => $booking->notes,
+            'internal_notes' => $booking->internal_notes,
+            'created_at' => $booking->created_at->toIso8601String(),
+            'cancellation_token' => $booking->cancellation_token,
+            'service' => $booking->service
+                ? [
+                    'id' => $booking->service->id,
+                    'name' => $booking->service->name,
+                    'duration_minutes' => $booking->service->duration_minutes,
+                    'price' => $booking->service->price,
+                ]
+                : null,
+            'provider' => [
+                'id' => $booking->provider->id,
+                'name' => $booking->provider->user?->name ?? '',
+                'avatar_url' => $booking->provider->user?->avatar
+                    ? Storage::disk('public')->url($booking->provider->user->avatar)
+                    : null,
+                'is_active' => ! $booking->provider->trashed(),
+            ],
+            'customer' => $booking->customer
+                ? [
+                    'id' => $booking->customer->id,
+                    'name' => $booking->customer->name,
+                    'email' => $booking->customer->email,
+                    'phone' => $booking->customer->phone,
+                ]
+                : null,
+        ];
     }
 
     public function updateNotes(Request $request, Booking $booking): RedirectResponse

@@ -12,10 +12,13 @@ import {
     endOfWeek,
     parseISO,
 } from 'date-fns';
-import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
+import { useState } from 'react';
+import { CalendarIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
 import { useTrans } from '@/hooks/use-trans';
 import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
 import { Display } from '@/components/ui/display';
+import { Popover, PopoverPopup, PopoverTrigger } from '@/components/ui/popover';
 import {
     Select,
     SelectItem,
@@ -64,6 +67,7 @@ function navigateCalendar(view: string, date: string) {
 export function CalendarHeader({ view, date, isAdmin, onNewBooking }: CalendarHeaderProps) {
     const { t } = useTrans();
     const parsedDate = parseISO(date);
+    const [jumpOpen, setJumpOpen] = useState(false);
 
     function goToday() {
         navigateCalendar(view, format(new Date(), 'yyyy-MM-dd'));
@@ -155,6 +159,34 @@ export function CalendarHeader({ view, date, isAdmin, onNewBooking }: CalendarHe
                 >
                     {t('Today')}
                 </Button>
+
+                <Popover open={jumpOpen} onOpenChange={setJumpOpen}>
+                    <PopoverTrigger
+                        render={
+                            <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                className="text-muted-foreground hover:text-foreground"
+                                aria-label={t('Jump to date')}
+                            />
+                        }
+                    >
+                        <CalendarIcon className="size-4" strokeWidth={1.75} aria-hidden="true" />
+                    </PopoverTrigger>
+                    <PopoverPopup className="w-auto p-2" align="end" sideOffset={6}>
+                        <Calendar
+                            mode="single"
+                            selected={parsedDate}
+                            onSelect={(selected) => {
+                                if (selected) {
+                                    navigateCalendar(view, format(selected, 'yyyy-MM-dd'));
+                                    setJumpOpen(false);
+                                }
+                            }}
+                            defaultMonth={parsedDate}
+                        />
+                    </PopoverPopup>
+                </Popover>
 
                 <Select value={view} onValueChange={changeView}>
                     <SelectTrigger className="w-[110px] sm:w-[130px]">

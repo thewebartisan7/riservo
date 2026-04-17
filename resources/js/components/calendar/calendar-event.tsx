@@ -4,6 +4,8 @@ import { useTrans } from '@/hooks/use-trans';
 import { formatTimeShort } from '@/lib/datetime-format';
 import type { DashboardBooking } from '@/types';
 import type { ProviderColor } from '@/lib/calendar-colors';
+import { BookingHoverCard } from './booking-hover-card';
+import { useDndCalendarContext } from './dnd-context';
 
 interface CalendarEventProps {
     booking: DashboardBooking;
@@ -25,8 +27,17 @@ export function CalendarEvent({
     tight = false,
 }: CalendarEventProps) {
     const { t } = useTrans();
+    const { DraggableBooking, ResizeHandle } = useDndCalendarContext();
     const startTime = formatTimeShort(booking.starts_at, timezone);
     const endTime = formatTimeShort(booking.ends_at, timezone);
+    const durationMinutes = Math.round(
+        (new Date(booking.ends_at).getTime() - new Date(booking.starts_at).getTime()) / 60_000,
+    );
+    // External events (source = google_calendar) and terminal statuses are
+    // read-only from the dashboard calendar — no drag, no resize (matches
+    // the reschedule endpoint's refusal at the server for both cases).
+    const isInteractive = !booking.external
+        && ['pending', 'confirmed'].includes(booking.status);
 
     // For very tight bookings: render a compact trigger that reveals full details in a Popover.
     if (tight) {
@@ -85,7 +96,7 @@ export function CalendarEvent({
         );
     }
 
-    return (
+    const cardButton = (
         <button
             type="button"
             onClick={() => onClick(booking)}
@@ -104,6 +115,35 @@ export function CalendarEvent({
                 <time dateTime={booking.starts_at}>{startTime}</time>
             </p>
         </button>
+    );
+
+    // Resize handle lives OUTSIDE the button (HTML forbids nesting interactive
+    // children inside a <button>). Positioned at the bottom edge of the <li>.
+    const wrapped = isInteractive ? (
+        <DraggableBooking
+            bookingId={booking.id}
+            startsAtUtc={booking.starts_at}
+            endsAtUtc={booking.ends_at}
+            durationMinutes={durationMinutes}
+        >
+            {cardButton}
+            {!tight && (
+                <ResizeHandle
+                    bookingId={booking.id}
+                    startsAtUtc={booking.starts_at}
+                    endsAtUtc={booking.ends_at}
+                    durationMinutes={durationMinutes}
+                />
+            )}
+        </DraggableBooking>
+    ) : (
+        cardButton
+    );
+
+    return (
+        <BookingHoverCard booking={booking} color={color} timezone={timezone}>
+            {wrapped}
+        </BookingHoverCard>
     );
 }
 

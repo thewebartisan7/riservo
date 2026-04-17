@@ -30,6 +30,8 @@ interface DayViewProps {
     timezone: string;
     colorMap: Map<number, ProviderColor>;
     onBookingClick: (booking: DashboardBooking) => void;
+    onEmptySlotClick?: (seed: { date: string; time?: string }) => void;
+    onRegisterGridContainer?: (el: HTMLElement | null) => void;
 }
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
@@ -49,7 +51,7 @@ function formatHourLabel(hour: number): string {
     return `${hour - 12} PM`;
 }
 
-export function DayView({ bookings, date, timezone, colorMap, onBookingClick }: DayViewProps) {
+export function DayView({ bookings, date, timezone, colorMap, onBookingClick, onEmptySlotClick, onRegisterGridContainer }: DayViewProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const parsedDate = parseISO(date);
     const showTimeIndicator = isToday(parsedDate);
@@ -102,8 +104,30 @@ export function DayView({ bookings, date, timezone, colorMap, onBookingClick }: 
 
                         {/* Events */}
                         <ol
+                            ref={onRegisterGridContainer}
                             style={{ gridTemplateRows: '1.75rem repeat(288, minmax(0, 1fr)) auto' }}
                             className="col-start-1 col-end-2 row-start-1 grid grid-cols-1 pr-4"
+                            onClick={(e) => {
+                                if (!onEmptySlotClick) return;
+                                const target = e.target as HTMLElement;
+                                if (target.closest('button, [role="button"], [data-no-slot-click]')) {
+                                    return;
+                                }
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                const HEADER_PX = 28;
+                                const grid = rect.height - HEADER_PX;
+                                const y = e.clientY - rect.top - HEADER_PX;
+                                if (y < 0 || grid <= 0) return;
+                                const slotIndex = Math.floor((y / grid) * 288);
+                                const minutesRaw = slotIndex * 5;
+                                const minutes = Math.round(minutesRaw / 30) * 30;
+                                const hh = Math.floor(minutes / 60).toString().padStart(2, '0');
+                                const mm = (minutes % 60).toString().padStart(2, '0');
+                                onEmptySlotClick({
+                                    date: format(parsedDate, 'yyyy-MM-dd'),
+                                    time: `${hh}:${mm}`,
+                                });
+                            }}
                         >
                             {layoutEvents.map((booking) => {
                                 const { gridRow, gridSpan } = getBookingGridPosition(

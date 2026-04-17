@@ -18,6 +18,10 @@ interface WeekViewProps {
     timezone: string;
     colorMap: Map<number, ProviderColor>;
     onBookingClick: (booking: DashboardBooking) => void;
+    /** Click-to-create: fires when an empty time-grid cell is clicked. */
+    onEmptySlotClick?: (seed: { date: string; time?: string }) => void;
+    /** Shell uses this ref to measure the grid for drag math. */
+    onRegisterGridContainer?: (el: HTMLElement | null) => void;
 }
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
@@ -37,7 +41,7 @@ function formatHourLabel(hour: number): string {
     return `${hour - 12} PM`;
 }
 
-export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }: WeekViewProps) {
+export function WeekView({ bookings, date, timezone, colorMap, onBookingClick, onEmptySlotClick, onRegisterGridContainer }: WeekViewProps) {
     const { t } = useTrans();
     const containerRef = useRef<HTMLDivElement>(null);
     const parsedDate = parseISO(date);
@@ -228,8 +232,42 @@ export function WeekView({ bookings, date, timezone, colorMap, onBookingClick }:
 
                         {/* Events + current time indicator */}
                         <ol
+                            ref={onRegisterGridContainer}
                             style={{ gridTemplateRows: '1.75rem repeat(288, minmax(0, 1fr)) auto' }}
                             className="col-start-1 col-end-2 row-start-1 grid grid-cols-1 pr-2 sm:grid-cols-7"
+                            onClick={(e) => {
+                                if (!onEmptySlotClick) return;
+                                const target = e.target as HTMLElement;
+                                // Skip if the click landed on an interactive
+                                // descendant (booking button, popover trigger,
+                                // etc.). D-107's resize handle also lives in
+                                // a [data-no-slot-click] element.
+                                if (target.closest('button, [role="button"], [data-no-slot-click]')) {
+                                    return;
+                                }
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                const HEADER_PX = 28; // 1.75rem
+                                const grid = rect.height - HEADER_PX;
+                                const y = e.clientY - rect.top - HEADER_PX;
+                                if (y < 0 || grid <= 0) return;
+                                const slotIndex = Math.floor((y / grid) * 288); // 0..287
+                                // Snap to nearest 30 minutes for click-to-create.
+                                const minutesRaw = slotIndex * 5;
+                                const minutes = Math.round(minutesRaw / 30) * 30;
+                                const hh = Math.floor(minutes / 60).toString().padStart(2, '0');
+                                const mm = (minutes % 60).toString().padStart(2, '0');
+
+                                const colWidth = rect.width / 7;
+                                const col = Math.min(
+                                    6,
+                                    Math.max(0, Math.floor((e.clientX - rect.left) / colWidth)),
+                                );
+                                const day = weekDays[col];
+                                onEmptySlotClick({
+                                    date: format(day, 'yyyy-MM-dd'),
+                                    time: `${hh}:${mm}`,
+                                });
+                            }}
                         >
                             {weekDays.map((day, dayIndex) => {
                                 const dayKey = format(day, 'yyyy-MM-dd');

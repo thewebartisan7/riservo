@@ -132,6 +132,7 @@ Route::middleware('auth')->group(function () {
             Route::post('/dashboard/bookings', [DashboardBookingController::class, 'store'])->name('dashboard.bookings.store');
             Route::patch('/dashboard/bookings/{booking}/status', [DashboardBookingController::class, 'updateStatus'])->name('dashboard.bookings.update-status');
             Route::patch('/dashboard/bookings/{booking}/notes', [DashboardBookingController::class, 'updateNotes'])->name('dashboard.bookings.update-notes');
+            Route::patch('/dashboard/bookings/{booking}/reschedule', [DashboardBookingController::class, 'reschedule'])->name('dashboard.bookings.reschedule');
 
             // Calendar
             Route::get('/dashboard/calendar', [CalendarController::class, 'index'])->name('dashboard.calendar');

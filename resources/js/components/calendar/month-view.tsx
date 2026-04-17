@@ -15,6 +15,7 @@ import { ClockIcon } from 'lucide-react';
 import type { DashboardBooking } from '@/types';
 import { EXTERNAL_EVENT_COLOR, type ProviderColor } from '@/lib/calendar-colors';
 import { getDateInTimezone } from './calendar-event';
+import { BookingHoverCard } from './booking-hover-card';
 import { useTrans } from '@/hooks/use-trans';
 import { formatTimeShort } from '@/lib/datetime-format';
 
@@ -24,6 +25,14 @@ interface MonthViewProps {
     timezone: string;
     colorMap: Map<number, ProviderColor>;
     onBookingClick: (booking: DashboardBooking) => void;
+    /**
+     * Click-to-create: fires when an empty area of a day cell is clicked
+     * (time is omitted — the dialog defaults to business opening hour).
+     */
+    onEmptySlotClick?: (seed: { date: string; time?: string }) => void;
+    /** No drag on month view (locked decision #14); prop is accepted for
+     *  API parity with the other views. */
+    onRegisterGridContainer?: (el: HTMLElement | null) => void;
 }
 
 const DEFAULT_COLOR: ProviderColor = {
@@ -36,7 +45,7 @@ const DEFAULT_COLOR: ProviderColor = {
 
 const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 
-export function MonthView({ bookings, date, timezone, colorMap, onBookingClick }: MonthViewProps) {
+export function MonthView({ bookings, date, timezone, colorMap, onBookingClick, onEmptySlotClick }: MonthViewProps) {
     const { t } = useTrans();
     const parsedDate = parseISO(date);
     const monthStart = startOfMonth(parsedDate);
@@ -104,7 +113,18 @@ export function MonthView({ bookings, date, timezone, colorMap, onBookingClick }
                                     key={dayKey}
                                     className={`group relative flex flex-col gap-1 overflow-hidden px-2.5 py-2 ${
                                         isCurrentMonth ? 'bg-background' : 'bg-muted/60'
-                                    } ${isTodayDate ? 'bg-honey-soft/60' : ''}`}
+                                    } ${isTodayDate ? 'bg-honey-soft/60 cursor-pointer' : onEmptySlotClick ? 'cursor-pointer' : ''}`}
+                                    onClick={(e) => {
+                                        if (!onEmptySlotClick) return;
+                                        const target = e.target as HTMLElement;
+                                        if (target.closest('button, [role="button"]')) {
+                                            return;
+                                        }
+                                        // Month view has no time grid — the
+                                        // dialog picks the business opening
+                                        // hour once the service is chosen.
+                                        onEmptySlotClick({ date: dayKey });
+                                    }}
                                 >
                                     <time
                                         dateTime={dayKey}
@@ -128,25 +148,31 @@ export function MonthView({ bookings, date, timezone, colorMap, onBookingClick }
 
                                                 return (
                                                     <li key={booking.id}>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => onBookingClick(booking)}
-                                                            className="group/event flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-[11px] transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                                        <BookingHoverCard
+                                                            booking={booking}
+                                                            color={color}
+                                                            timezone={timezone}
                                                         >
-                                                            <span
-                                                                aria-hidden="true"
-                                                                className={`size-1.5 shrink-0 rounded-full ${color.dot}`}
-                                                            />
-                                                            <span className="flex-auto truncate font-medium text-foreground">
-                                                                {booking.service?.name ?? booking.external_title ?? t('External event')}
-                                                            </span>
-                                                            <time
-                                                                dateTime={booking.starts_at}
-                                                                className="hidden flex-none tabular-nums text-muted-foreground xl:block"
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => onBookingClick(booking)}
+                                                                className="group/event flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-[11px] transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                                             >
-                                                                {startTime}
-                                                            </time>
-                                                        </button>
+                                                                <span
+                                                                    aria-hidden="true"
+                                                                    className={`size-1.5 shrink-0 rounded-full ${color.dot}`}
+                                                                />
+                                                                <span className="flex-auto truncate font-medium text-foreground">
+                                                                    {booking.service?.name ?? booking.external_title ?? t('External event')}
+                                                                </span>
+                                                                <time
+                                                                    dateTime={booking.starts_at}
+                                                                    className="hidden flex-none tabular-nums text-muted-foreground xl:block"
+                                                                >
+                                                                    {startTime}
+                                                                </time>
+                                                            </button>
+                                                        </BookingHoverCard>
                                                     </li>
                                                 );
                                             })}

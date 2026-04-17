@@ -98,3 +98,68 @@ This file contains live decisions about the React/Inertia frontend stack, COSS U
   - *Swipe-driven horizontal week view (Google Calendar mobile).* Requires gesture infra (e.g., `react-use-gesture` or hand-rolled pointer events) that does not exist in this project. Out of scope for one screen.
   - *Hide week view entirely on mobile.* Removing a documented view based on viewport breaks D-058 and produces inconsistent navigation.
   - *Render the time grid in a horizontally-scrollable container on mobile.* Forces horizontal scroll, which is hostile UX for a calendar that should be glanceable. Also conflicts with the vertical scroll already needed for 24 hours.
+
+---
+
+### D-100 — `@dnd-kit/core` loaded only via a React.lazy() shell
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Session 5 locked-decision #13 mandates `@dnd-kit/core` + `@dnd-kit/modifiers` for drag/resize on the dashboard calendar. The libraries add ~43 kB minified (~14 kB gzipped) of code that only runs on the calendar route. Loading them into the main bundle would tax every dashboard page (bookings list, settings, billing, customer directory) for code they never execute.
+- **Decision**: `resources/js/components/calendar/dnd-calendar-shell.tsx` is the only module that statically imports `@dnd-kit/*`. The calendar page loads it via `React.lazy(() => import('@/components/calendar/dnd-calendar-shell'))`, wrapped in `<Suspense>` with a non-interactive fallback that renders the same view component without drag affordance. A companion `dnd-context.tsx` (no dnd-kit imports) provides a shared React context that the shell fills with `DraggableBooking` + `ResizeHandle` component factories; `CalendarEvent` reads them from context and falls back to pass-through when the shell hasn't resolved yet (or when outside the calendar route).
+- **Consequences**:
+  - Vite splits the shell into `dnd-calendar-shell-*.js` (43.24 kB raw / 14.33 kB gzipped) — under the 50 kB gzipped budget set in the plan.
+  - A companion `dnd-context-*.js` chunk (317 kB raw / ~100 kB gzipped) carries the calendar page code and shared calendar components. This is a reshuffling of modules that were previously in the main bundle — not a net-new dependency. The main `app-*.js` bundle dropped from ~999 kB to ~689 kB.
+  - `CalendarEvent` lives in the main graph but never synchronously references dnd-kit — drag is opt-in via context. On routes that never mount `<DndCalendarShell>`, the context keeps its pass-through defaults and dnd-kit stays unloaded.
+  - A future calendar widget embedded elsewhere (e.g., a dashboard home "today" strip) inherits the same behaviour for free.
+- **Rejected alternatives**:
+  - *Static import in `calendar.tsx`.* Pushes dnd-kit into the main bundle (eager page glob at `app.tsx` line 13 imports every page).
+  - *Per-component `React.lazy()` at `CalendarEvent` level.* Hundreds of Suspense boundaries, no clean Provider ownership.
+  - *Module federation / separate Vite entry.* Overengineering for one library.
+
+---
+
+### D-101 — Drag preview uses `DragOverlay` with a faded source card
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: `@dnd-kit/core` offers two drag-preview strategies: the source card visually translates with the cursor, or a `<DragOverlay>` element mirrors the card. The source-moves approach fights CSS grid positioning during partial moves and misrenders when the drag crosses days (the card tries to exist in two grid rows at once). The overlay approach is the conventional choice and matches Google Calendar.
+- **Decision**: `DndCalendarShell` renders a `<DragOverlay dropAnimation={null}>` containing a compact preview card (service name + primary-ring highlight). The source card drops to `opacity: 0.4` while being dragged (via `useDraggable`'s `isDragging`). Cross-day drags track cleanly because the overlay lives outside the grid.
+- **Consequences**: Two cards render during a drag — the source (faded) and the overlay (following cursor). The overlay is lightweight (no hover-card, no resize handle). Transition is visually honest about the in-progress operation.
+- **Rejected alternatives**: *Source-moves*: misrenders across day boundaries. *Ghost-only (source hidden, overlay shown)*: loses the "this is where it was" anchor, making drop-location judgement harder.
+
+---
+
+### D-102 — Click-to-create does not seed `providerId` in MVP
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Session 5 scope asks for "admin clicking a cell in another provider's column pre-selects that provider in the dialog". But the current dashboard calendar is a *combined* view — bookings from all visible providers render in the same time grid, color-coded by provider (D-059). There is no per-provider column, so a click has no column-level provider signal.
+- **Decision**: Click-to-create seeds `{ date, time? }` only. The dialog's existing auto-assign branch handles provider selection. When per-provider columns land post-MVP (not scheduled), the click handler gains a `providerId` from the column's `data` attribute; the dialog already accepts a `providerId` seed through `ManualBookingDialogSeed`.
+- **Consequences**: Admin and staff see the same click-to-create flow today. The dialog's auto-assign step remains useful.
+
+---
+
+### D-103 — Staff can create manual bookings via click-to-create (no header CTA)
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Pre-MVPC-5, `ManualBookingDialog` was rendered only when `isAdmin` (dashboard/calendar.tsx:113). But the backend always accepted staff submissions: `dashboard.bookings.store` is inside the `role:admin,staff` outer group (routes/web.php:132), and `StoreManualBookingRequest::authorize()` is `tenant()->has()` (no role scope). The dialog gate was purely frontend-cosmetic.
+- **Decision**: Drop the `isAdmin` guard on `<ManualBookingDialog>`. The header's "New booking" CTA (`CalendarHeader`) stays admin-only — staff's entry point is click-to-create on empty cells. Extends MVPC-4's self-service spirit (staff manage their own Account + Availability; now they can also log walk-ins for themselves).
+- **Consequences**: Staff get a discoverable path to create manual bookings (on their own calendar view, which is already scoped to their own bookings server-side). The header CTA remains admin-only to keep the admin power-user experience intact. No server-side change — only the frontend guard was removed.
+
+---
+
+### D-107 — Resize handle is always visible at the event's bottom edge
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Session 5 adds resize-to-change-duration on bookings in week + day views. Two handle UX options: hover-only (a thin bar revealed on mouse-over), or always-visible (a low-opacity strip that becomes prominent on hover).
+- **Decision**: Always-visible, 8 px tall, low opacity at rest (`opacity-0 group-hover:opacity-60 hover:opacity-100`). Touch-friendly without a hover signal. Suppressed on the "tight" variant (< 4 grid rows ≈ 20 minutes) — the card is already smaller than the handle would be comfortable to grab, and the tight variant uses a click-to-popover pattern instead.
+- **Consequences**: Resize is discoverable on touch devices (iPad, touch-screen laptops). Visual noise is bounded by the low default opacity. Tight events stay clean.
+- **Rejected alternatives**: *Hover-only*: invisible on touch. *Always-full-opacity*: visual noise on the calendar grid.
+
+---
+
+### D-108 — Reschedule notification includes a manage-booking link
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Session 5 locked-decision #16 requires a customer-facing notification when a booking is rescheduled from the dashboard. Two copy shapes considered: a minimal "time changed" note, or a mirror of `BookingConfirmedNotification` including the signed `bookings.show` management link.
+- **Decision**: `BookingRescheduledNotification` mirrors `BookingConfirmedNotification`'s shape (Markdown panel with service / provider / previous / new date + time) and includes the signed management URL so the customer can cancel from the new time if it doesn't work for them. Subject: *"Your booking has been moved — {business}"*.
+- **Consequences**: Consistent with the rest of the booking-lifecycle emails. Customers can self-manage without contacting the business. English-only at MVP; the existing `__()` pipeline handles i18n pre-launch.
+- **Cross-reference**: Suppression guard lives at the dispatch site via `Booking::shouldSuppressCustomerNotifications()` (D-088). External `source = google_calendar` bookings cannot be rescheduled from the dashboard (D-105 refuses with 422), so the suppression guard is defence-in-depth.

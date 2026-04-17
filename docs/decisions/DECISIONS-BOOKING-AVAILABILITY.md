@@ -309,3 +309,50 @@ This file contains live decisions about timezone handling, availability rules, b
   - *Look-back window with a tuning knob (`N` minutes back + `M` minutes forward).* Trades one arbitrary value (±5 min) for another. Any `N` silently drops reminders past an outage of `N` minutes; the past-due design has no knob to tune.
   - *Watermark (last-processed `(hours_before, starts_at)` cursor).* Extra state, per-hours-before, with concurrency implications. The `booking_reminders` table already gives row-level idempotency; a watermark is strictly more complicated for no added correctness.
   - *Moving eligibility check to the queue worker instead of the scheduled command.* Would re-centre the correctness problem on queue delay; queue delay is a different distribution than scheduler delay. Keeping the eligibility check in the command preserves clear ownership.
+
+---
+
+### D-104 — Dashboard drag is scoped to same-provider same-business
+
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Session 5's locked-decision #14 limits drag to week + day views. The scope question that remained: can an admin drag a booking from Alice's column to Bob's, triggering a cross-provider reschedule? Cross-provider drag requires re-validating service eligibility against the target provider, re-resolving the target provider's calendar integration for the `PushBookingToCalendarJob` dispatch, and re-acquiring the GIST-per-provider lock under the new provider.
+- **Decision**: Drag is scoped to "move this booking to a different time (and possibly a different day) on the SAME provider in the SAME business". The `DashboardBookingController::reschedule` endpoint accepts `starts_at` + `duration_minutes` only — no `provider_id`. `service_id` is also immutable through the reschedule endpoint. Changing provider or service goes through the existing cancel-and-rebook flow in the booking-detail sheet.
+- **Consequences**:
+  - Reschedule is a narrow contract: "move in time". The GIST constraint continues to match the race model (same provider, same booking ID excluded from the conflict check).
+  - Cross-provider drag when per-provider columns land post-MVP writes a new decision.
+  - Customers can always cancel and rebook if their time is wrong — the reschedule flow is optimised for staff correcting a time, not for service-switching.
+- **Supersedes**: none.
+
+---
+
+### D-105 — Reschedule request shape is `{ starts_at, duration_minutes }`
+
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Drag and resize both need to update the booking's time. Three shapes considered: `{ starts_at, ends_at }`, `{ starts_at, duration_minutes }`, or two separate endpoints for drag vs resize.
+- **Decision**: One endpoint, one shape: `PATCH /dashboard/bookings/{booking}/reschedule` with `{ starts_at: ISO-8601 UTC, duration_minutes: int }`. The server recomputes `ends_at = starts_at + duration_minutes`. For a drag (move-only) the client sends the booking's current duration. For a resize the client sends the new duration it drew. Shape chosen so the client cannot send an inconsistent `(starts_at, ends_at)` pair; every request maps to a single unambiguous window.
+- **Consequences**:
+  - Single backend validation path for both gestures. No duplicated availability / GIST / notification plumbing.
+  - The `SlotGeneratorService::getAvailableSlots()` check uses the new `excluding: $booking` parameter (added in MVPC-5) so the booking does not block its own move — matches D-066's "the booking being rescheduled is the one we're freeing up".
+  - `ends_at` stays an invariant of `starts_at + duration`. Existing constraints (GIST on effective interval, buffers in `buffer_before_minutes` / `buffer_after_minutes`) are unchanged.
+  - Staff cannot rename a service or change a provider through reschedule.
+- **Rejected alternatives**:
+  - *`{ starts_at, ends_at }`*: client and server can drift on the ends value; controller would have to reject mismatched pairs.
+  - *Two endpoints*: duplicates availability check, transaction, GIST-backstop, notification dispatch, and push-calendar gating. All three actions (drag, resize, cross-day drag) are the same write from the server's point of view — one endpoint is enough.
+
+---
+
+### D-106 — Reschedule rejects non-grid `starts_at` with 422, not silent snap
+
+- **Date**: 2026-04-17
+- **Status**: accepted
+- **Context**: Session 5 locked-decision #15 mandates that resize granularity equals `service.slot_interval_minutes` and that the server is authoritative. The enforcement choice was: 422 with a friendly error when the request doesn't snap to the grid, or silent server-side snap to the nearest grid point.
+- **Decision**: The reschedule endpoint returns 422 `{ message: "Start time must align with the :minutes-minute grid.", … }` when `starts_at.minute % slot_interval_minutes !== 0` (and the analogous check for `duration_minutes`). No silent snap. The client already snaps its drag to a 15-minute superset of all supported intervals (15 / 30 / 60) in `DndCalendarShell`, so the 422 path fires only when (a) the client is out of date, or (b) the service's interval changed mid-session, or (c) a crafted request reached the endpoint.
+- **Consequences**:
+  - A 422 surfaces a fixable condition rather than hiding a disagreement between what the user drew and what the server accepted.
+  - Client snap (15 min) + server enforcement (actual service interval) keeps the UX smooth on the common path while the server remains honest about drift.
+  - Tests cover the off-grid rejection path directly (`RescheduleBookingTest::reschedule that does not snap to slot interval is refused`).
+- **Rejected alternatives**:
+  - *Silent server-side snap*: the user drew 10:17 but the server stored 10:15. The card visibly jumps after the optimistic move, producing a "did my drag do anything?" feeling. Also hides client bugs.
+  - *Validation layer pre-controller*: needs the service to compute `slot_interval`, which lives on the booking. Controller already has both. No benefit to moving.

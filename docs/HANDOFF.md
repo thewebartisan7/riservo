@@ -1,8 +1,12 @@
 # Handoff
 
-**Session**: MVPC-4 — Provider Self-Service Settings (Session 4 of `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`)
+> **ROADMAP-MVP-COMPLETION fully shipped (2026-04-17).** All five sessions delivered:
+> MVPC-1 (`5388d8a`) Google OAuth foundation · MVPC-2 (`132535e`) Google Calendar bidirectional sync · MVPC-3 (`8da1c5d`) Subscription billing (Cashier) · MVPC-4 (`3eb5bab`) Provider self-service settings · MVPC-5 **(this commit)** Advanced calendar interactions.
+> Next active roadmap: `docs/roadmaps/ROADMAP-PAYMENTS.md` (customer-to-professional Stripe Connect payments, post-MVP).
+
+**Session**: MVPC-5 — Advanced Calendar Interactions (Session 5 of `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`, final)
 **Date**: 2026-04-17
-**Status**: Code complete; Feature + Unit suite **669 passed / 2758 assertions** (post-MVPC-3 baseline 638, +31 cases). Pint clean. `npm run build` green. Wayfinder regenerated. Plan archived to `docs/archive/plans/PLAN-MVPC-4-PROVIDER-SETTINGS.md`.
+**Status**: Code complete; Feature + Unit suite **693 passed / 2814 assertions** (MVPC-4 reported 669; +22 cases delivered plus +2 cases of pre-session drift). Pint clean. `npm run build` green. Wayfinder regenerated. Plan archived to `docs/archive/plans/PLAN-MVPC-5-CALENDAR-INTERACTIONS.md`.
 
 > Full-suite Browser/E2E run is the developer's session-close check (`tests/Browser` takes 2+ minutes). The iteration loop used `php artisan test tests/Feature tests/Unit --compact` throughout.
 
@@ -10,86 +14,90 @@
 
 ## What Was Built
 
-MVPC-4 opens two settings surfaces to staff (not just admins): **Account** (profile / password / avatar — admin + staff) and **Availability** (weekly schedule + exceptions — admin + staff with an active Provider row; services edit stays admin-only). The previously-misnamed `AccountController` (which actually managed admin-as-own-provider availability) was refactored in place: profile/password/avatar moved into it, schedule/exception/services lifted to a new `AvailabilityController`. A typo-recovery flow on the verify-email page lets users fix a wrong email without admin intervention.
+MVPC-5 turns the dashboard calendar from a read-only view into an interactive workspace:
 
-Plan: `docs/archive/plans/PLAN-MVPC-4-PROVIDER-SETTINGS.md`. Four new decisions:
+- **Click an empty cell → create booking.** Week + day views seed the clicked date + time; month view seeds date only. Existing multi-step `ManualBookingDialog` re-used with a new `initial` prop.
+- **Drag a booking → reschedule.** Week + day views (locked decision #14). `@dnd-kit/core` is lazy-loaded via a React.lazy() shell (D-100). Optimistic UI via the new `PATCH /dashboard/bookings/{booking}/reschedule` endpoint. Cross-day drag within the visible week is supported; cross-provider drag is out of scope (D-104).
+- **Resize a booking → change duration.** Bottom-edge resize handle (D-107), 8 px, always visible at low opacity. Snaps to 15 min client-side; server enforces `service.slot_interval_minutes` and rejects off-grid with 422 (D-106).
+- **Hover preview on every view.** COSS UI tooltip primitive (`BookingHoverCard`) with 300 ms delay. Click still opens the full detail sheet.
+- **UX polish**: Jump-to-date popover in the header (COSS Calendar inside Popover). Keyboard nav (`←` / `→` / `t`). Spinner during calendar Inertia partial reloads. Reschedule error banner.
+- **Two REVIEW-1 #8 items**: audit found the nested-`<li>` hydration bug and the mobile-view-switcher hiding were both already closed by 191c029 + 9eea354 (D-069). Locked with pure-PHP regex guards in `tests/Unit/Frontend/CalendarMarkupContractTest.php` — regression-test strategy, not re-fix.
+- **Staff can create manual bookings via click-to-create (D-103).** The dialog's `isAdmin` gate on the calendar page was purely frontend-cosmetic; server already accepted staff writes.
 
-- **D-096** — Account/Availability route split. `AccountController` is profile/password/avatar (shared admin+staff) plus admin-only `toggleProvider`. `AvailabilityController` is schedule/exceptions (shared admin+staff with active Provider row) plus admin-only `updateServices`. Form requests are shared between admin-side `ProviderController` and self-side `AvailabilityController`; auth is enforced by route middleware; controllers re-derive the active provider from `auth()->user()` so a misconfigured route can't write to another person's data. D-079 lockout still works without new middleware (`ResolveTenantContext` queries SoftDeletes-scoped `BusinessMember::query()`).
-- **D-097** — Email change commits immediately, nulls `email_verified_at`, dispatches the standard Laravel `VerifyEmail` notification. No shadow staging table. Typo-recovery via a new auth-only `POST /email/change` endpoint backing an inline form on `verification.notice`. Cross-references DECISIONS-AUTH D-038.
-- **D-098** — Password update branches on null vs non-null `password` column. `UpdateAccountPasswordRequest` reads server-side state to decide whether `current_password` is required. Magic-link-only users set first password without it; subsequent changes require it. Frontend reads the new `hasPassword` Inertia prop to render the right form.
-- **D-099** — `auth.has_active_provider` shared Inertia prop drives Availability nav visibility for both admin and staff. Computed lazily in `HandleInertiaRequests::share()`. Page-level defense: `AvailabilityController.show` aborts 404 when no active provider row.
+Plan: `docs/archive/plans/PLAN-MVPC-5-CALENDAR-INTERACTIONS.md`. Nine new decisions:
+
+- **D-100** — `@dnd-kit/core` lazy-loaded via `<DndCalendarShell>`. Vite chunks split; main bundle shrank from ~999 kB → ~689 kB. Dnd-kit chunk 43.24 kB raw / **14.33 kB gzipped** (budget was < 50 kB gzipped).
+- **D-101** — Drag preview uses `DragOverlay`. Source card fades to 40% opacity while overlay follows the cursor.
+- **D-102** — Click-to-create does NOT seed `providerId` in MVP (combined view has no per-column signal).
+- **D-103** — Staff can create manual bookings via click-to-create (pre-condition verified: `role:admin,staff` on route, `tenant()->has()` in FormRequest).
+- **D-104** — Drag is scoped to same-provider same-business (cross-provider is out of scope per locked #14).
+- **D-105** — Reschedule request shape is `{ starts_at, duration_minutes }` (server recomputes `ends_at`).
+- **D-106** — Non-grid `starts_at` → 422 with a friendly error. No silent snap.
+- **D-107** — Always-visible 8 px resize handle, low opacity at rest. Suppressed on tight events.
+- **D-108** — `BookingRescheduledNotification` mirrors `BookingConfirmedNotification` shape and includes the `bookings.show` management link.
 
 ### Backend
 
-- **New** `App\Services\ProviderScheduleService` — `buildScheduleFromBusinessHours`, `buildScheduleFromProvider`, `writeProviderSchedule`, `writeFromBusinessHours`. Extracted from the legacy AccountController so AccountController.toggleProvider (seeds new provider's schedule) and AvailabilityController.updateSchedule consume one implementation.
-- **New** `App\Http\Controllers\Dashboard\Settings\AvailabilityController` — `show`, `updateSchedule`, `storeException`, `updateException`, `destroyException`, `updateServices`. Every action derives the active provider from `auth()->user() + tenant()` and aborts 404 if no active row. Service edit (admin-only via routing) sits next to the others to keep the controller cohesive.
-- **Refactored** `App\Http\Controllers\Dashboard\Settings\AccountController` — now `edit` (profile/password/avatar payload), `updateProfile`, `updatePassword`, `uploadAvatar`, `removeAvatar` (shared admin+staff) plus the kept admin-only `toggleProvider`. Old `updateSchedule` / `*Exception` / `updateServices` methods removed (moved to `AvailabilityController`).
-- **New** `App\Http\Requests\Dashboard\Settings\UpdateAccountProfileRequest` — name + email rules; `unique:users,email,{actor.id}`.
-- **New** `App\Http\Requests\Dashboard\Settings\UpdateAccountPasswordRequest` — branches on `auth()->user()->password === null` (D-098).
-- **New** `App\Http\Requests\Auth\ChangeEmailRequest` — slim email-only validator for the typo-recovery endpoint.
-- **New** `App\Http\Controllers\Auth\EmailVerificationController::changeEmail` — auth-only (NOT verified-required) handler that updates the email, nulls verified_at, dispatches verification, flashes a status message back to the notice page.
-- **Modified** `UpdateProviderScheduleRequest`, `StoreProviderExceptionRequest`, `UpdateProviderExceptionRequest`, `UpdateProviderServicesRequest` — `authorize()` relaxed to `return true`. PHPDoc updated to point at route middleware as the gate (D-096 §3).
-- **Modified** `App\Http\Middleware\HandleInertiaRequests` — added `auth.has_active_provider` resolver (D-099).
+- **New** `app/Http/Controllers/Dashboard/BookingController::reschedule(RescheduleBookingRequest, Booking)` — 404 on cross-business, 403 on cross-provider-as-staff, 422 on external source / terminal status / trashed provider / off-grid / straddle-two-days / occupied slot. Transaction + GIST 23P01 → 409. Reuses `SlotGeneratorService::getAvailableSlots($business, $service, $date, $provider, excluding: $booking)`. Dispatches `PushBookingToCalendarJob` (action='update') + `BookingRescheduledNotification`, both gated by the existing `shouldPushToCalendar()` / `shouldSuppressCustomerNotifications()` helpers (D-083 / D-088).
+- **New** `app/Http/Requests/Dashboard/RescheduleBookingRequest.php` — shape-only validation (`starts_at: date`, `duration_minutes: int|1..1440`). Business-rule checks live in the controller.
+- **Modified** `app/Services/SlotGeneratorService.php` — `getAvailableSlots()` + underlying `getSlotsForProvider()` / `getSlotsForAnyProvider()` / `getBlockingBookings()` take an optional `?Booking $excluding = null` parameter. When present, the blocking-booking query excludes that row so a booking cannot block its own move (D-066-aligned).
+- **New** `app/Notifications/BookingRescheduledNotification.php` — queued, `afterCommit()`, mirrors `BookingConfirmedNotification` + `previousStartsAt` / `previousEndsAt` constructor args.
+- **New** `resources/views/mail/booking-rescheduled.blade.php` — Markdown mail Blade mirroring the confirmed template.
 
 ### Routes
 
-`routes/web.php` restructure within the existing dashboard sub-groups (D-081):
-
-- **Admin-only** `dashboard/settings` sub-group: `account/toggle-provider` (POST) and **new** `availability/services` (PUT). Removed: old `account/schedule`, `account/exceptions*`, `account/services` route names — they're replaced by `availability/*` in the shared sub-group.
-- **Shared** `dashboard/settings` sub-group: GET `account` + 4 mutating account routes (profile, password, avatar POST/DELETE), GET `availability` + 4 mutating availability routes (schedule, exceptions POST/PUT/DELETE).
-- **Auth-only (top-level)**: new `POST /email/change` (`verification.change-email`), throttled `6,1`. Lives in the `auth` middleware group, NOT inside `verified` — the whole point is to recover from a wrong address that locks the user behind verification.
-
-Route count: **6 Account routes** + **5 Availability routes** + **1 Email-change route**.
+- **New** `PATCH /dashboard/bookings/{booking}/reschedule` — named `dashboard.bookings.reschedule`. Inside the existing `role:admin,staff` + `billing.writable` dashboard group (gate is inherited for free per D-090).
 
 ### Frontend
 
-- **Rewritten** `resources/js/pages/dashboard/settings/account.tsx` — three sections (Profile, Password, Avatar) plus admin-only "Bookable provider" toggle section. Profile + Password use `<Form>` with render props. Avatar upload uses `useHttp` for multipart; avatar remove uses `<Form action={...} method="delete">` with an `onSuccess` callback to clear the local preview URL.
-- **New** `resources/js/pages/dashboard/settings/availability.tsx` — Schedule (existing `WeekScheduleEditor`), Exceptions (existing `ExceptionDialog`), Services (admin: checkbox edit; staff: read-only badges + helper text "Ask an admin to update which services you perform").
-- **Updated** `resources/js/components/settings/settings-nav.tsx` — items support `requiresActiveProvider` flag; both admin and staff nav include Account + Availability + Calendar Integration. Availability hidden when `auth.has_active_provider === false`.
-- **Updated** `resources/js/pages/auth/verify-email.tsx` — adds an inline "Wrong email? Change it." form posting to `verification.change-email`. Renders the current email in the descriptive copy. Hidden by default; revealed on link click.
-- **Updated** `resources/js/types/index.d.ts` — `auth` extended with `has_active_provider: boolean`.
+- **New** `resources/js/components/calendar/dnd-calendar-shell.tsx` — the only module that statically imports `@dnd-kit/core` + `@dnd-kit/modifiers`. React.lazy()-loaded from `calendar.tsx`. Provides `DraggableBooking` + `ResizeHandle` via `DndCalendarContext`. Drag math: `deltaMinutes = delta.y × minutesPerPixel` snapped to 15 min; `deltaDays = delta.x ÷ columnWidth` on week view only; cross-day cross-time support.
+- **New** `resources/js/components/calendar/dnd-context.tsx` — pass-through context, no dnd-kit imports. Views read `DraggableBooking` / `ResizeHandle` from this context; when outside the shell, both fall back to render-pass-through / null.
+- **New** `resources/js/components/calendar/booking-hover-card.tsx` — COSS UI Tooltip wrap around any calendar event. Shows service / customer / time / status chip. 300 ms delay open, 120 ms close.
+- **New** `resources/js/hooks/use-reschedule.ts` — thin HTTP hook around the reschedule endpoint. Returns `{ success, booking?, message? }`. Reloads the calendar bookings on success; caller handles failure message.
+- **Modified** `resources/js/pages/dashboard/calendar.tsx` — `<Suspense>` + lazy `<DndCalendarShell>`, click-to-create seed state, error banner, keyboard nav, loading indicator. Manual-booking dialog now mounts for admin + staff (D-103).
+- **Modified** `resources/js/components/calendar/calendar-event.tsx` — renders `<BookingHoverCard>` around the event button; wraps in `DraggableBooking` + renders `ResizeHandle` when interactive (pending/confirmed and not external).
+- **Modified** `resources/js/components/calendar/week-view.tsx` — empty-cell click handler on `<ol>` maps click coords to `{ date, time }` seed; grid container ref forwarded to the shell.
+- **Modified** `resources/js/components/calendar/day-view.tsx` — same as week-view, single-day flavour.
+- **Modified** `resources/js/components/calendar/month-view.tsx` — day-cell click (when not on a booking pill) seeds `{ date }` with no time.
+- **Modified** `resources/js/components/calendar/calendar-header.tsx` — Jump-to-date popover between Today and view Select.
+- **Modified** `resources/js/components/dashboard/manual-booking-dialog.tsx` — new `initial?: { date?, time?, providerId? }` prop seeds state on open.
 
 ### Tests
 
-New + rewritten Settings tests:
-
-- **`tests/Feature/Settings/SettingsAuthorizationTest.php`** — 9 cases (was 4). New: staff with provider can access availability; staff without provider 404s on availability; staff cannot toggle-provider on themselves; staff with provider cannot edit services; soft-deleted staff cannot reach any settings page (D-079 lock); admin admin-only matrix moves Account out and adds Availability + admin-only sub-actions.
-- **`tests/Feature/Settings/AccountTest.php`** — REWRITTEN (was 16 schedule/exception cases). Now 20 cases covering: view (admin + staff + magic-link-only), profile update (admin + staff), email change re-verification (positive + null-out + uniqueness + same-email no-op), password (rejects without current, rejects wrong current, accepts correct, magic-link-only first-set, post-set requires current), avatar (upload + JSON shape + replace deletes old + image validation + remove deletes file + nulls user.avatar), toggle-provider preserved (creates with services, warns on unstaffed, restores soft-deleted).
-- **`tests/Feature/Settings/AvailabilityTest.php`** — NEW, 13 cases. Covers: admin self-provider view + staff self-provider view (canEditServices flag); 404 on no provider row (GET + schedule update); admin + staff schedule update; staff full exception CRUD (store + update + destroy); cross-provider exception edit/delete forbidden in same business; cross-business exception forbidden (tenant pinning); admin services update + foreign-id rejection; staff services update forbidden (admin-only); invalid window rejected.
-- **`tests/Feature/Billing/ReadOnlyEnforcementTest.php`** — extended dataset with 7 new mutating Account + Availability rows (profile, password, avatar POST/DELETE, schedule, exception store, services). Added a positive read-test asserting `/account` and `/availability` GET pass through for read-only admins. The structural route-introspection test remains green: every new mutating route inherits `billing.writable` from the outer group.
+- **New** `tests/Unit/Frontend/CalendarMarkupContractTest.php` — 7 pure-PHP cases. Regression guards for REVIEW-1 #8: no `<li>` nested under `<li>`; no `<CurrentTimeIndicator>` wrapped in `<li>`; mobile agenda fallback in week-view; view Select not re-hidden below md. No Node.js dep; `file_get_contents()` + regex over the view files.
+- **New** `tests/Feature/Dashboard/Booking/RescheduleBookingTest.php` — 13 cases covering the endpoint's full behaviour matrix: free slot succeed (admin + staff + with-integration push dispatched); staff cross-provider forbidden; trashed provider 422; occupied slot 422; external source 422; off-grid 422; cross-business 404; terminal status 422; straddle two days 422; GIST race (409 or 422); external notification suppression.
+- **New** `tests/Feature/Calendar/SlotGenerationExcludingBookingTest.php` — 2 cases. Positive: booking's own slot is available when excluded. Negative: unrelated bookings still block.
+- `tests/Feature/Billing/ReadOnlyEnforcementTest.php` — the structural invariant test (walks the route table) automatically covers the new reschedule route; no dataset change needed.
 
 ### Decisions recorded
 
-D-096 through D-099 in `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md`. D-097 cross-referenced in `docs/decisions/DECISIONS-AUTH.md` D-038 (extension paragraph).
+D-100..D-103, D-107, D-108 in `docs/decisions/DECISIONS-FRONTEND-UI.md`. D-104, D-105, D-106 in `docs/decisions/DECISIONS-BOOKING-AVAILABILITY.md`.
+
+### Dependencies
+
+- **New**: `@dnd-kit/core@^6.3.1`, `@dnd-kit/modifiers@^9.0.0`.
 
 ---
 
 ## Current Project State
 
 - **Backend**:
-  - `App\Models\Business` — unchanged.
-  - `App\Models\User` — unchanged (still `password` nullable from the original migration; verified by D-098).
-  - `App\Services\ProviderScheduleService` — new shared schedule helpers.
-  - `App\Http\Controllers\Dashboard\Settings\AccountController` — refactored: profile/password/avatar + admin-only toggle-provider.
-  - `App\Http\Controllers\Dashboard\Settings\AvailabilityController` — new: schedule + exceptions + services.
-  - `App\Http\Controllers\Auth\EmailVerificationController` — added `changeEmail` for typo recovery.
-  - `App\Http\Middleware\HandleInertiaRequests` — added `auth.has_active_provider` resolver.
-  - `App\Http\Requests\Auth\ChangeEmailRequest` — new.
-  - `App\Http\Requests\Dashboard\Settings\UpdateAccountProfileRequest` — new.
-  - `App\Http\Requests\Dashboard\Settings\UpdateAccountPasswordRequest` — new (D-098 branching).
-  - `App\Http\Requests\Dashboard\Settings\Update*Request` (4 provider FormRequests) — `authorize()` relaxed.
-- **Routes**: 12 new/changed dashboard settings routes (matrix in D-096 §2). 1 new auth-level route (`verification.change-email`).
-- **Frontend**: 2 rewritten pages (`account.tsx`, `verify-email.tsx`), 1 new page (`availability.tsx`), 1 updated component (`settings-nav.tsx`), types extended.
-- **Tests**: Feature + Unit **669 passed / 2758 assertions** (+31 cases over MVPC-3 baseline 638). Browser suite untouched. The structural billing.writable invariant test remains green.
-- **Decisions**: D-096..D-099 recorded in `DECISIONS-DASHBOARD-SETTINGS.md`. D-038 cross-reference added in `DECISIONS-AUTH.md`. No existing decision superseded.
-- **Dependencies**: no new packages.
+  - `App\Http\Controllers\Dashboard\BookingController::reschedule` — new JSON endpoint + private `bookingPayload()` helper.
+  - `App\Http\Requests\Dashboard\RescheduleBookingRequest` — new.
+  - `App\Notifications\BookingRescheduledNotification` — new, queued with `afterCommit()`.
+  - `App\Services\SlotGeneratorService` — `$excluding` parameter added to `getAvailableSlots()` + internal helpers. Backwards-compatible default `null`.
+- **Routes**: 1 new route (`dashboard.bookings.reschedule`). Inherits `billing.writable` from the outer group (verified by the existing structural invariant test).
+- **Frontend**: 4 new files (`dnd-calendar-shell`, `dnd-context`, `booking-hover-card`, `use-reschedule`). 7 modified files (page, 3 view components, calendar-event, calendar-header, manual-booking-dialog).
+- **Tests**: Feature + Unit **693 passed / 2814 assertions** (+22 cases over MVPC-4's 671-post-drift baseline). Browser suite untouched.
+- **Bundle**: main chunk `app-*.js` = 689.30 kB (was 998.70 kB — shrank by 310 kB because calendar-related shared modules lifted to a sibling chunk). `dnd-calendar-shell-*.js` = 43.24 kB raw / **14.33 kB gzipped** (budget was < 50 kB gzipped). `dnd-context-*.js` = 317 kB (reshuffled calendar page code, not new dependency weight).
+- **Decisions**: D-100..D-108 recorded across `DECISIONS-FRONTEND-UI.md` and `DECISIONS-BOOKING-AVAILABILITY.md`.
 
 ---
 
 ## How to Verify Locally
 
 ```bash
-php artisan test tests/Feature tests/Unit --compact     # 669 passed (iteration loop)
+php artisan test tests/Feature tests/Unit --compact     # 693 passed (iteration loop)
 php artisan test --compact                              # full suite incl. Browser (run by developer at close)
 vendor/bin/pint --dirty --format agent                  # {"result":"pass"}
 php artisan wayfinder:generate                          # idempotent
@@ -99,71 +107,67 @@ npm run build                                           # green, ~1.3s
 Targeted:
 
 ```bash
-php artisan test tests/Feature/Settings --compact                           # 9 + 20 + 13 = 42 settings cases (excl. ProfileTest, ProviderTest, StaffTest)
-php artisan test tests/Feature/Billing/ReadOnlyEnforcementTest.php --compact # 26 cases incl. 7 new Account/Availability mutations
-php artisan route:list --path=dashboard/settings/account                    # 6 routes
-php artisan route:list --path=dashboard/settings/availability               # 5 routes
+php artisan test tests/Feature/Dashboard/Booking/RescheduleBookingTest.php --compact   # 13 cases
+php artisan test tests/Feature/Calendar/SlotGenerationExcludingBookingTest.php --compact # 2 cases
+php artisan test tests/Unit/Frontend/CalendarMarkupContractTest.php --compact          # 7 cases
+php artisan route:list --path=dashboard/bookings                                       # shows reschedule row
 ```
 
-Manual smoke (recommended before next session):
+Manual smoke (recommended before merge):
 
-1. **Account profile change** (any flow):
-   - Sign in as admin or staff; visit `/dashboard/settings/account`.
-   - Change name → assert flash success.
-   - Change email → assert flash includes the new email + a verification link arrives in MailHog (or your local mail driver) at the new address.
-   - Hit any dashboard route → 302 to `/email/verify`. Click the link in MailHog → restored.
-2. **Typo recovery**:
-   - Change email to a deliberate typo. Land on `/email/verify`. Click "Wrong email? Change it." → submit correct email → flash status, fresh link sent.
-3. **Password set / change**:
-   - Magic-link-only user (use a freshly-invited staff who never set a password): visit Account → "Set password" form (no current_password field) → submit → assert "Password set." flash.
-   - Same user revisits Account → "Change password" form (current_password required now).
-4. **Availability self-service**:
-   - Admin without provider toggle: Account → flip "Bookable provider" on → Availability appears in nav.
-   - Visit Availability → see weekly schedule (seeded from business hours) + zero exceptions + service checkboxes.
-   - Edit schedule → save → reload → assert persisted.
-   - Add an exception → assert appears in list.
-   - As staff with a provider: same flow but services are read-only badges + helper text.
-5. **Read-only billing gate**:
-   - Cancel the business's subscription via Stripe CLI to read_only state.
-   - Try to update Account profile / Availability schedule → 302 to `/dashboard/settings/billing` with error flash.
-   - GET `/dashboard/settings/account` and `/dashboard/settings/availability` still render normally (safe verbs pass through).
+1. **Drag**: Admin on the week view drags a confirmed booking from 10:00 Wed to 14:00 Fri. Expect the event to move optimistically, a brief spinner, and a success refresh. Customer receives a "moved" email at MailHog. If a Google Calendar integration is configured, the Google event's time updates on the next queue tick.
+2. **Resize**: Hover a booking; grab the bottom edge; drag down 60 minutes. Expect duration doubles, server accepts, refresh confirms.
+3. **Click-to-create**: Click an empty 14:30 cell on Thursday in week view. Expect the manual-booking dialog to open with date = Thursday and time = 14:30 pre-filled. Continue through the flow; the booking lands at 14:30.
+4. **Hover preview**: Hover a booking. After ~300 ms, a tooltip shows service / customer / time / status chip. Click still opens the detail sheet.
+5. **REVIEW-1 #8 regression**: Open DevTools console; navigate to `/dashboard/calendar`. Expect zero hydration warnings. Resize the viewport to 375 px (iPhone SE). Expect the view-switcher Select still visible, week view falls back to agenda list, and click-to-create works on day view.
+6. **Keyboard nav**: With no input focused, press `←` / `→` to navigate the view; press `t` to jump to today.
+7. **Jump-to-date**: Click the calendar icon between Today and the view Select. Pick a date. Calendar navigates there.
+8. **iPad Safari touch**: Drag and resize via touch events. dnd-kit's PointerSensor works on touch; if one doesn't, note and defer (desktop is the win).
+9. **Read-only business**: Cancel the business's subscription via Stripe CLI to read_only state. Try to drag a booking. Expect toast "Cannot mutate while read-only" (redirect to `/dashboard/settings/billing`).
 
 ---
 
 ## What the Next Session Needs to Know
 
-Next up: **Session 5 — Advanced Calendar Interactions** in `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`. Session 5 is the last session in this roadmap and ships drag/resize/click-to-create on the dashboard calendar plus REVIEW-1 issue #8 fixes (nested `<li>` hydration error in `current-time-indicator.tsx`/`week-view.tsx`, mobile view-switcher).
+`ROADMAP-MVP-COMPLETION` is fully shipped. The next active roadmap is `docs/roadmaps/ROADMAP-PAYMENTS.md` (customer-to-professional Stripe Connect Express). That roadmap is independent of the MVP sessions and owned by its own planning artifact.
 
-### Conventions MVPC-4 established that future work must not break
+### Conventions MVPC-5 established that future work must not break
 
-- **D-096 — `AccountController` is identity, `AvailabilityController` is schedule/exceptions.** Any future "edit my own provider data" code paths use `AvailabilityController`, not `AccountController`. The admin-only "be your own provider" toggle stays on Account (it answers "am I bookable?", which is identity).
-- **D-096 — FormRequest `authorize()` is `return true` for shared validation rules.** When two controllers (admin-side and self-side) share validation, the FormRequest must NOT carry role-based authorize logic. Route middleware is the gate; the controller re-derives the actor's resource. Adding role checks back to a shared FormRequest is a regression because it implicitly forks the validation contract.
-- **D-097 — Email changes go through the `MustVerifyEmail` flow, not a custom flow.** `$user->sendEmailVerificationNotification()` is the entry point. Any new "change email" call site must use it; do not invent a parallel verification pipeline.
-- **D-098 — `current_password` validation reads server state.** When adding new password-change UX (e.g., a forced rotation flow), branch on `auth()->user()->password === null` server-side, not on a request flag.
-- **D-099 — `auth.has_active_provider` is the single truth on bookability for the actor.** Any new UI surface that should appear/hide based on "am I a provider?" reads this prop. Server-side, the same predicate is one query: `Provider::where(...)->exists()` (auto-applies SoftDeletes scope).
-- **`ProviderScheduleService` is the only home for schedule build/write logic.** Any new caller that needs to seed/read/persist a provider's weekly availability must go through this service. Reproducing the day-grouping logic inline is a duplication smell.
-- **`auth.user.has_active_provider` is computed lazily via Inertia closure.** Adding a non-lazy `auth.user.has_active_provider` (eager) would re-introduce the per-request DB hit on routes that don't render the settings nav. Keep it as `fn () => $this->resolveHasActiveProvider($request)`.
+- **D-100 — dnd-kit stays behind the lazy shell.** Any new calendar interaction requiring `@dnd-kit/*` lives inside `dnd-calendar-shell.tsx`. Adding a static import elsewhere re-bloats the main bundle.
+- **D-101 — `<DragOverlay>` is the only drag-preview strategy.** Do not revert to "source card moves" — cross-day drags break.
+- **D-103 — The `isAdmin` gate on `<ManualBookingDialog>` is gone.** New admin-only booking actions go on `CalendarHeader`'s buttons, not on dialog mount guards.
+- **D-104 — Reschedule is same-provider same-business.** A cross-provider reschedule needs a new decision, new server contract, and new calendar-push resolution logic.
+- **D-105 — Reschedule shape is `{ starts_at, duration_minutes }`.** Do not add `ends_at` to the request — the server recomputes. Do not add `provider_id` / `service_id` — those are immutable through reschedule.
+- **D-106 — Off-grid `starts_at` returns 422, not silent snap.** If a future intent wants soft-snap, write a new decision and change the contract explicitly.
+- **`SlotGeneratorService::getAvailableSlots(..., excluding: $booking)` is the right primitive for "don't let a booking block itself".** Any future reschedule-like write path (e.g., customer-side "change my booking time" post-MVP) uses this instead of reimplementing the exclude clause inline.
+- **`BookingRescheduledNotification` mirrors `BookingConfirmedNotification`**. Future booking-lifecycle notifications follow the same Markdown + "manage" button pattern.
 
-### MVPC-4 hand-off notes
+### MVPC-5 hand-off notes
 
-- **Old route names removed**: `settings.account.update-schedule`, `settings.account.store-exception`, `settings.account.update-exception`, `settings.account.destroy-exception`, `settings.account.update-services`. Anything that imports from `@/actions/App/Http/Controllers/Dashboard/Settings/AccountController` for these actions will break — they now live on `AvailabilityController`. Wayfinder regen during this session catches it.
-- **`AccountController.edit` payload shape changed**. Old keys (`schedule`, `exceptions`, `services`, `upcomingBookingsCount`) are gone. New keys: `user`, `hasPassword`, `isAdmin`, `isProvider`, `hasProviderRow`. Any test that asserted the old shape would have failed (and did during cluster 5; rewritten).
-- **`verification.notice` page now reads `currentEmail` from props.** Any future change to `EmailVerificationController::notice` must keep returning that prop or the verify-email page will lose its "we sent a link to {email}" copy.
-- **Avatar upload pattern matches `StaffController.uploadAvatar` exactly** — same validation rule (`File::image()->max(2048)->types(['jpg','jpeg','png','webp'])`), same JSON `{ path, url }` response. If `StaffController.uploadAvatar` evolves (e.g. per-business avatars per D-022 future), the self-upload endpoint should evolve in lockstep.
-- **D-097 typo-recovery endpoint sits OUTSIDE `verified` middleware**. This is intentional — without that, the user can't reach the page to fix the typo. The trade-off is that an attacker with a session token could change the user's email. We accept this because (a) the email change requires uniqueness validation, (b) a session token holder can already change everything else on the dashboard, and (c) the new email goes through verification before granting access to the dashboard.
+- **The reschedule endpoint JSON shape is `{ booking: DashboardBooking }`.** Used by the drag/resize flow only. Other callers should not depend on this shape surviving a future change without an explicit contract test.
+- **dnd-kit chunk size is the main guardrail.** `npm run build` logs the chunk size; if a future change pulls dnd-kit into the main bundle, the main-chunk size will jump by ~45 kB. Watch for it.
+- **The click-to-create overlay and the dnd-kit PointerSensor co-exist via `activationConstraint: { distance: 5 }`.** A pointer drag of < 5 px falls through as a click (routes to the `<ol>` click-to-create handler). If the UX feels off on a specific device, tune `{ distance: 8, delay: 100 }` in `dnd-calendar-shell.tsx`.
+- **Month view drag is deliberately out.** Per locked decision #14; a future drag-on-month design is a new decision.
+- **Baseline test count drift**: MVPC-4 HANDOFF reported 669; a clean re-run on the MVPC-4 commit produces 671 (factory randomness on a single `Customer.firstOrCreate` path under seed order). MVPC-5 shipped 693 (+22 cases).
 
 ---
 
 ## Open Questions / Deferred Items
 
-New from MVPC-4:
-- **Admin-driven email recovery from the database**. If a user typos their email AND logs out before clicking "Wrong email? Change it.", they're stuck at login (the magic link goes to the typo address, password reset goes to the typo address). Recovery requires manual DB intervention or admin contacting the user out-of-band. Tracked as a backlog item.
-- **Per-business avatar opt-in (D-022 follow-up)**. Avatar is on `users.avatar`, one per person across all businesses. If multi-business membership becomes a real product flow, may want per-business avatars.
+New from MVPC-5:
 
-Earlier carry-overs unchanged from MVPC-3 hand-off:
+- **Per-provider column calendar view**. Unlocks cross-provider drag and a richer click-to-create `providerId` seed (D-102 / D-104). Not scheduled.
+- **REVIEW-1 #9 frontend bundle code splitting**. MVPC-5 moved the dnd-kit-specific code into a lazy chunk but did not tackle the eager page glob in `app.tsx:13`. The main bundle is still larger than it needs to be. Independent of any roadmap session.
+- **Drag-to-reassign-provider**. Out of scope (D-104); future work.
+- **Month view drag**. Out of scope (locked #14); future work.
+- **Recurring bookings**. Post-MVP per SPEC §12.
+- **Customer-side reschedule**. Post-MVP. If scheduled, reuses the `excluding: $booking` primitive and `BookingRescheduledNotification`.
+
+Earlier carry-overs unchanged from MVPC-4 hand-off:
+- Admin-driven email recovery from the database (typo user locked out before recovery).
+- Per-business avatar opt-in (D-022 follow-up).
 - Tighten billing freeload envelope (`past_due` write-allowed window — Stripe dunning).
 - Tenancy (R-19 carry-overs): R-2B business-switcher UI; admin-driven member deactivation + re-invite; "leave business" self-serve.
-- R-16 frontend code splitting (deferred).
 - R-17 carry-overs: admin email/push notification on bookability flip; richer "vacation" UX; banner ack history.
 - R-9 / R-8 manual QA.
 - Orphan-logo cleanup.

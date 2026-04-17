@@ -21,6 +21,11 @@ class SlotGeneratorService
     /**
      * Get available booking slots for a specific provider on a given date.
      *
+     * Pass `$excluding` to ignore a specific booking when computing conflicts —
+     * used by the reschedule flow so a booking does not block its own move
+     * (matches D-066: "the booking being rescheduled is the one we're freeing
+     * up"). Callers outside reschedule leave it null.
+     *
      * @return array<CarbonImmutable> Slot start times in business timezone
      */
     public function getAvailableSlots(
@@ -28,12 +33,13 @@ class SlotGeneratorService
         Service $service,
         CarbonImmutable $date,
         ?Provider $provider = null,
+        ?Booking $excluding = null,
     ): array {
         if ($provider) {
-            return $this->getSlotsForProvider($business, $service, $provider, $date);
+            return $this->getSlotsForProvider($business, $service, $provider, $date, $excluding);
         }
 
-        return $this->getSlotsForAnyProvider($business, $service, $date);
+        return $this->getSlotsForAnyProvider($business, $service, $date, $excluding);
     }
 
     /**
@@ -77,6 +83,7 @@ class SlotGeneratorService
         Service $service,
         Provider $provider,
         CarbonImmutable $date,
+        ?Booking $excluding = null,
     ): array {
         $windows = $this->availabilityService->getAvailableWindows($business, $provider, $date);
 
@@ -84,7 +91,7 @@ class SlotGeneratorService
             return [];
         }
 
-        $bookings = $this->getBlockingBookings($business, $provider, $date);
+        $bookings = $this->getBlockingBookings($business, $provider, $date, $excluding);
 
         $slots = [];
         foreach ($windows as $window) {
@@ -102,6 +109,7 @@ class SlotGeneratorService
         Business $business,
         Service $service,
         CarbonImmutable $date,
+        ?Booking $excluding = null,
     ): array {
         $eligible = $this->getEligibleProviders($business, $service);
 
@@ -109,7 +117,7 @@ class SlotGeneratorService
         $allSlots = [];
 
         foreach ($eligible as $provider) {
-            $slots = $this->getSlotsForProvider($business, $service, $provider, $date);
+            $slots = $this->getSlotsForProvider($business, $service, $provider, $date, $excluding);
 
             foreach ($slots as $slot) {
                 $key = $slot->format('H:i');
@@ -211,6 +219,7 @@ class SlotGeneratorService
         Business $business,
         Provider $provider,
         CarbonImmutable $date,
+        ?Booking $excluding = null,
     ): Collection {
         $dayStart = $date->startOfDay()->setTimezone('UTC');
         $dayEnd = $date->endOfDay()->setTimezone('UTC');
@@ -224,6 +233,7 @@ class SlotGeneratorService
             ->whereIn('status', [BookingStatus::Confirmed, BookingStatus::Pending])
             ->where('starts_at', '<', $dayEnd)
             ->where('ends_at', '>', $dayStart)
+            ->when($excluding, fn ($q) => $q->where('id', '!=', $excluding->id))
             ->get();
     }
 

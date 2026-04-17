@@ -27,11 +27,27 @@ import { Display } from '@/components/ui/display';
 import { formatDurationShort, formatPrice } from '@/lib/booking-format';
 import type { FilterOption, ServiceWithProviders } from '@/types';
 
+export interface ManualBookingDialogSeed {
+    /** YYYY-MM-DD in the business timezone. */
+    date?: string;
+    /** HH:mm in the business timezone (only if the user clicked a time-grid cell). */
+    time?: string;
+    /** Future extension (per-provider column view — D-102). */
+    providerId?: number;
+}
+
 interface ManualBookingDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     services: ServiceWithProviders[];
     timezone: string;
+    /**
+     * Seed values for click-to-create (D-102). When provided, the dialog
+     * pre-populates the date / time / provider so the user only fills
+     * customer + service + confirm. When undefined (header "New booking"
+     * button), the dialog behaves as before — no pre-population.
+     */
+    initial?: ManualBookingDialogSeed;
 }
 
 interface CustomerResult {
@@ -56,6 +72,7 @@ export default function ManualBookingDialog({
     onOpenChange,
     services,
     timezone: _timezone,
+    initial,
 }: ManualBookingDialogProps) {
     const { t } = useTrans();
     const [step, setStep] = useState<Step>('customer');
@@ -91,12 +108,23 @@ export default function ManualBookingDialog({
             setIsNewCustomer(false);
             setSelectedService(null);
             setSelectedProvider(null);
-            setSelectedDate(undefined);
-            setSelectedTime(null);
+            // Seed date / time from the click-to-create origin when present.
+            // Parsing local YYYY-MM-DD → Date without timezone drift: split
+            // and construct with numeric year/month/day (avoids UTC midnight).
+            if (initial?.date) {
+                const [y, m, d] = initial.date.split('-').map(Number);
+                setSelectedDate(new Date(y, m - 1, d));
+            } else {
+                setSelectedDate(undefined);
+            }
+            setSelectedTime(initial?.time ?? null);
             setAvailableDates({});
             setAvailableSlots([]);
             setNotes('');
         }
+        // intentionally read initial at open-transition time — later edits to
+        // initial while the dialog is open would surprise the user.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open]);
 
     const handleSearch = useCallback(
