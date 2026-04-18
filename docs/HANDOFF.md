@@ -1,11 +1,37 @@
+---
+name: HANDOFF
+description: "Current project state: what shipped last, what is active next, conventions future work must respect"
+type: handoff
+status: active
+created: 2026-04-15
+updated: 2026-04-17
+---
+
 # Handoff
 
-**State**: MVP fully shipped. Between roadmaps — `docs/roadmaps/ROADMAP-PAYMENTS.md` is the next active delivery plan; no session of it has started yet.
+**State**: MVP fully shipped + docs system restructured. `docs/roadmaps/ROADMAP-PAYMENTS.md` is the next active delivery plan; no session of it has started yet.
 
 **Date**: 2026-04-17
-**Branch**: main — latest commit `eae8051`
+**Branch**: main — latest commit `eae8051` (docs restructure is uncommitted at the time of this handoff; the developer will review + commit).
 **Tests**: Feature + Unit suite **693 passed / 2814 assertions** (iteration command `php artisan test tests/Feature tests/Unit --compact`). Browser/E2E suite under `tests/Browser` takes 2+ minutes and is the developer's pre-push / pre-release check, not part of the per-session iteration loop.
 **Tooling**: Pint clean. Vite build clean (main app chunk 689 kB after MVPC-5's code splitting). Wayfinder regenerated.
+
+---
+
+## Docs system (2026-04-17, refreshed 2026-04-18)
+
+The docs directory is driven by YAML frontmatter, indexed for discoverability, and does not move files on close. Headline rules:
+
+- Every roadmap / plan / review / handoff file carries a YAML frontmatter block with a `status:` field. The seven-status taxonomy is `draft | planning | active | review | shipped | superseded | abandoned`. Which statuses apply to which `type:` is defined in `docs/README.md` § "Status taxonomy".
+- **`docs/archive/` no longer exists.** Plans, roadmaps, and reviews live at their canonical paths for their full lifetime; `status:` flips on close rather than the file moving.
+- **Indices vs directory-only:** plans and roadmaps drive a row in `docs/PLANS.md` / `docs/ROADMAP.md` respectively. Reviews and handoff are frontmatter-only, not indexed — reviews are directory-scoped (cross-cutting audits only), handoff is a single file.
+- **Three-bucket indices.** Both `docs/PLANS.md` and `docs/ROADMAP.md` group rows into `## In flight` (anything pre-terminal), `## Shipped`, and `## Superseded` (plus `Abandoned` for PLANS.md). The index is a discoverability table, not the authoritative state store — `status:` in the file is the truth.
+- **Plan files hold the whole session lifecycle**: pre-impl sections (Purpose, Context, Scope, Implementation steps, …) plus five living sections appended during work (`## Progress`, `## Implementation log`, `## Surprises & discoveries`, `## Post-implementation review`, `## Close note / retrospective`). Which living sections are mandatory depends on session type — see `docs/README.md` § "Session lifecycle in a plan file".
+- **HANDOFF is conditional**: required for sessions that change shipped product / runtime state or the workflow itself; docs-only sessions that do neither may skip it.
+- **Mechanical consistency check**: `php artisan docs:check` (truth engine) and the `/riservo-status` skill (ergonomic wrapper) verify the frontmatter ↔ index contract. Run before commit on any docs-touching session.
+- **Four-layer work flow**: INTENT → ROADMAP (architect) → ORCHESTRATION (orchestrator) → IMPLEMENTATION (per-session implementer). Prompt templates live in `.claude/prompts/ROADMAP-ARCHITECT.md`, `.claude/prompts/ROADMAP-ORCHESTRATOR.md`, `.claude/prompts/SESSION-IMPLEMENTER.md`.
+
+Full story in `docs/plans/PLAN-DOCS-RESTRUCTURE.md`. Authoritative conventions in `docs/README.md`.
 
 ---
 
@@ -13,10 +39,10 @@
 
 The MVP is complete. Two roadmaps delivered, in order:
 
-### Original MVP roadmap (`docs/archive/roadmaps/ROADMAP-MVP.md`)
+### Original MVP roadmap (`docs/roadmaps/ROADMAP-MVP.md`)
 Sessions 1–11 shipped: data layer, scheduling engine, frontend foundation, authentication, onboarding wizard, public booking flow, business dashboard, settings, email notifications, calendar view. Sessions 12–13 were rescoped into the second roadmap below rather than shipped from the original.
 
-### MVP Completion roadmap (`docs/archive/roadmaps/ROADMAP-MVP-COMPLETION.md`)
+### MVP Completion roadmap (`docs/roadmaps/ROADMAP-MVP-COMPLETION.md`)
 All five sessions shipped:
 
 | Session | Commit | Outcome |
@@ -97,8 +123,8 @@ See `docs/BACKLOG.md`. Most relevant post-MVP carry-overs:
 
 ## For the next session agent
 
-1. Read this file, then `docs/README.md`.
+1. Read this file, then `docs/README.md` (note the new frontmatter + status convention).
 2. Read `docs/roadmaps/ROADMAP-PAYMENTS.md` in full (Cross-cutting decisions section + your assigned session).
 3. Read the relevant topical decision files per the session's read-first list.
-4. Follow the workflow: write your plan to `docs/plans/PLAN-PAYMENTS-N-{TITLE}.md`, STOP, wait for approval, implement, verify, close.
+4. Follow the workflow: write your plan to `docs/plans/PLAN-PAYMENTS-N-{TITLE}.md` with `status: draft`, STOP, wait for approval, implement, verify, close (flip `status:` to `shipped`, update `docs/PLANS.md`, keep the file in place).
 5. The next free decision ID is **D-109**.

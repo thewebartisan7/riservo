@@ -44,7 +44,7 @@ This is the shortest current-state architecture overview for riservo.ch. Read th
 
 ## Current Documentation Layout
 
-- `docs/ROADMAP.md` is the primary delivery roadmap.
+- `docs/ROADMAP.md` and `docs/PLANS.md` index the delivery roadmaps and session plans, bucketed by `status:` frontmatter (`draft | planning | active | review | shipped | superseded`).
 - `docs/DECISIONS.md` is the decision index, with detailed decisions split across `docs/decisions/`.
-- `docs/reviews/` holds the active review round only (empty between rounds). Closed rounds and their remediation roadmaps live under `docs/archive/reviews/`.
-- `docs/archive/plans/` contains completed plan history.
+- `docs/reviews/` is reserved for cross-cutting audits; per-session reviews live inside the plan file under `## Post-implementation review`.
+- `docs/plans/` holds every plan — draft through shipped — at stable paths; no physical move on close.

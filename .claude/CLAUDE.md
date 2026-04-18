@@ -18,20 +18,20 @@ This file is the scoped instruction entry point for work in this directory subtr
 
 ## Documentation Workflow
 
-- Start with `docs/README.md`. It is the source of truth for what to read first, what to read only when relevant, and what is historical.
-- Use `docs/DECISIONS.md` as the decision index. Read only the topical decision files relevant to the current task.
-- Active implementation plans live in `docs/plans/`.
-- Completed implementation plans live in `docs/archive/plans/`.
-- The active review round lives in `docs/reviews/` (empty between rounds). Closed rounds move to `docs/archive/reviews/`; the remediation roadmap is numbered on archive (`ROADMAP-REVIEW-{N}.md`).
-- Completed long-running documents follow the same pattern: `docs/archive/{plans|reviews|…}/` mirrors the active directory name.
+- Start with `docs/README.md`. It is the source of truth for what to read first, what to read only when relevant, and how the docs system works.
+- Use `docs/DECISIONS.md`, `docs/ROADMAP.md`, and `docs/PLANS.md` as stable indices. Open individual files only when their row matches the current task.
+- Every roadmap / plan / review / handoff file carries a YAML frontmatter block whose `status:` is the authoritative lifecycle state (`draft | planning | active | review | shipped | superseded | abandoned`). See `docs/README.md` § "Status taxonomy" for which statuses apply to which type.
+- Files **do not move** when they ship. Path stays stable; `status:` flips.
+- New architectural decisions go in the topical file listed in `docs/DECISIONS.md`. Never add a decision body directly to `DECISIONS.md`.
 
 ---
 
 ## Directories to Not Search by Default
 
-- `docs/archive/` — historical material; read only when explicitly asked or when a task depends on a specific archived file.
-- `docs/reviews/` — review findings and remediation roadmaps; read the specific review file when named, not the whole directory.
-- `docs/plans/` — read only the plan file relevant to the current task; do not scan the directory.
+- `docs/plans/` — do not bulk-read. Use `docs/PLANS.md` to find the plan relevant to the current task, then open only that file.
+- `docs/roadmaps/` — same: open via `docs/ROADMAP.md`.
+- `docs/reviews/` — cross-cutting audits only; open a specific file by name.
+- `docs/decisions/` — open via `docs/DECISIONS.md`.
 
 ---
 
@@ -40,14 +40,15 @@ This file is the scoped instruction entry point for work in this directory subtr
 1. The developer starts a new chat with the task or session context.
 2. The agent reads `docs/README.md`, then follows its read-first links before planning.
 3. The agent asks clarification questions before planning when intent is unclear.
-4. The agent writes a task plan in `docs/plans/` and waits for approval before coding.
+4. The agent writes a task plan in `docs/plans/PLAN-{ID}.md` (status: `draft` / `planning`) and waits for approval before coding.
    - `PLAN-SESSION-{N}.md` for main roadmap sessions
    - `PLAN-R-{N}-{SHORT-TITLE}.md` for review-remediation sessions
    - `PLAN-{TOPIC}.md` for one-off topics
-5. The agent implements the approved plan.
-6. The agent updates `docs/HANDOFF.md` (overwrite, not append) and any affected roadmap or checklist files.
-7. New architectural decisions are recorded in the appropriate topical file listed in `docs/DECISIONS.md`.
-8. When the session is complete, the agent moves its plan file from `docs/plans/` to `docs/archive/plans/`.
+5. On approval, the agent flips the plan's `status:` to `active` and implements it.
+6. During / after implementation, the agent maintains the living-document sections on the plan (`## Progress`, `## Implementation log`, `## Surprises & discoveries`) with deviations, surprises, and commit hashes.
+7. If the session changed shipped product / runtime state or changed the workflow itself, the agent rewrites `docs/HANDOFF.md` (overwrite, not append). Docs-only / workflow-only sessions that do neither may skip HANDOFF. Roadmap checklists always get updated when relevant.
+8. New architectural decisions are recorded in the appropriate topical file listed in `docs/DECISIONS.md`.
+9. At session close, the agent flips the plan's `status:` to `shipped` (or `review` if a codex pass is pending, `abandoned` if the session is stopped without a successor, `superseded` if a replacement plan takes over), moves its `docs/PLANS.md` row to the matching bucket, and the file stays in place — no move.
 
 **Never write code before the plan is approved by the developer.**
 
@@ -57,15 +58,18 @@ This file is the scoped instruction entry point for work in this directory subtr
 
 Before closing an implementation session, the agent verifies:
 
-- All tests pass: `php artisan test --compact`
-- Code style is clean: `vendor/bin/pint --dirty --format agent`
-- Frontend builds: `npm run build`
-- `docs/HANDOFF.md` is rewritten to reflect the new state
-- Affected roadmap checkboxes are updated
-- New decisions are recorded in the appropriate topical file under `docs/decisions/`
-- The completed plan file is moved from `docs/plans/` to `docs/archive/plans/`
+- All tests pass: `php artisan test --compact` (iteration loop uses `php artisan test tests/Feature tests/Unit --compact`).
+- Code style is clean: `vendor/bin/pint --dirty --format agent`.
+- Frontend builds: `npm run build`.
+- `docs/HANDOFF.md` is rewritten (overwrite, not append) **if** the session changed shipped product / runtime state or changed the workflow / canonical reading order. Docs-only sessions that do neither may skip HANDOFF. If HANDOFF exceeds 200 lines, split carry-over items to `docs/BACKLOG.md`.
+- Affected roadmap checklists are updated.
+- New decisions are recorded in the appropriate topical file under `docs/decisions/`. If the session introduced a brand-new `DECISIONS-*.md` topical file, its row is added to `docs/DECISIONS.md` in the same commit.
+- Plan file: `status:` flipped, `updated:` bumped, `commits: [...]` populated. Code-touching sessions have all five living sections populated (`## Progress`, `## Implementation log`, `## Surprises & discoveries`, `## Post-implementation review`, `## Close note / retrospective`); empty sections keep the heading plus a one-line "no X this session" note. Docs-only and hotfix sessions may omit `## Progress`, `## Surprises & discoveries`, and `## Post-implementation review`.
+- `docs/PLANS.md` row for this plan is moved from `## In flight` to `## Shipped` and its status column updated.
+- If a roadmap finished, `docs/ROADMAP.md` row reflects the new status.
+- Mechanical consistency between frontmatter and indices verified. See `docs/README.md` § "Mechanical consistency check" for the convention and the current checker (skill or script, whichever is live).
 
-Docs-only or workflow-only sessions may skip the HANDOFF update, but still move the completed plan to `docs/archive/plans/`.
+Docs-only or workflow-only sessions that do not change the workflow itself may skip the HANDOFF update, but still flip the plan's `status:` and move its `docs/PLANS.md` row.
 
 ---
 

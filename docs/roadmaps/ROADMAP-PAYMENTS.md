@@ -1,7 +1,16 @@
+---
+name: ROADMAP-PAYMENTS
+description: "Customer-to-professional Stripe Connect Express payments, TWINT-first, zero commission (6 sessions)"
+type: roadmap
+status: draft
+created: 2026-04-17
+updated: 2026-04-18
+---
+
 # riservo.ch — Customer-to-Professional Payments Roadmap
 
-> Version: 1.1 — Draft (post-review revision)
-> Status: Planning
+> Version: 1.1 (post-review revision; a further review round is underway).
+> Frontmatter `status:` is authoritative (see the YAML block above). Currently `draft` — this roadmap is being re-reviewed before Session 1 opens.
 > Scope: End-to-end online payment flow where the customer pays the professional at booking time. Stripe Connect Express, TWINT-first, zero riservo commission. Separate from MVPC-3 (riservo's own SaaS billing on the Business model).
 > Format: WHAT only. The HOW is decided per-session by the implementing agent in a dedicated plan document.
 > Each session is a focused, reviewable unit handed to a single agent. Sessions are mostly sequential; Session 4 (payouts) may run in parallel with Sessions 2b/3 once Session 2a lands. Prerequisites are listed per-session below.
@@ -39,7 +48,7 @@ The SaaS-side billing work (MVPC-3, active in `docs/plans/PLAN-MVPC-3-CASHIER-BI
 
 ## Cross-cutting decisions locked in this roadmap
 
-These are the decisions the implementing agents must not re-evaluate. Each must be recorded with a fresh decision ID (next available after D-095 is **D-096**) in the appropriate topical file under `docs/decisions/` — likely a new `DECISIONS-PAYMENTS.md` created in Session 1, since the concern is distinct from the SaaS billing file.
+These are the decisions the implementing agents must not re-evaluate. Each must be recorded with a fresh decision ID in `docs/decisions/DECISIONS-PAYMENTS.md`. The next available `D-NNN` is whatever `docs/HANDOFF.md` states at session time (the authoritative counter lives there, not in this roadmap body).
 
 ### Commercial model and PSP selection
 

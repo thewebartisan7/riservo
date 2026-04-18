@@ -19,7 +19,7 @@ This file captures unscheduled follow-up work, UX ideas, and deferred engineerin
 - A signed per-user `.ics` feed URL that any calendar app can subscribe to (Google, Apple, Outlook). Read-only, poll-based (1–24h refresh depending on the client), zero OAuth.
 - Deferred on 2026-04-16 in favour of going straight to the bidirectional Google integration (Session 2 of `ROADMAP-MVP-COMPLETION.md`). The OAuth integration covers the full set of users who would want a feed plus the bidirectional flow that ICS cannot deliver.
 - Revisit only if user research surfaces a real demand from providers who refuse to grant Google OAuth scopes but still want their riservo bookings on their personal calendar.
-- Implementation sketch lives in `docs/archive/roadmaps/ROADMAP-CALENDAR.md §Phase 1 — Session C1` — keep that file as the recoverable reference if this lands later.
+- Implementation sketch lives in `docs/roadmaps/ROADMAP-CALENDAR.md §Phase 1 — Session C1` — keep that file as the recoverable reference if this lands later.
 
 ## Technical Debt / Deferred Engineering Cleanup
 
@@ -45,18 +45,18 @@ This file captures unscheduled follow-up work, UX ideas, and deferred engineerin
 - Not a launch blocker: the bundle is cached after first load, and public booking / auth are the only surfaces where first-paint latency materially matters.
 - Revisit if post-launch real-user metrics show meaningful FCP regression on those surfaces, or as a follow-up optimisation pass.
 - Implementation sketch: switch to `import.meta.glob(..., { eager: false })` and let Vite split per page boundary; verify no Inertia `resolveComponent` adjustment is required; re-measure bundle output.
-- Source: `docs/archive/reviews/REVIEW-1.md` §9 / `docs/archive/reviews/ROADMAP-REVIEW-1.md` §R-16.
+- Source: `docs/reviews/REVIEW-1.md` §9 / `docs/reviews/ROADMAP-REVIEW-1.md` §R-16.
 
 ## Bookability (R-17 carry-overs)
 
 - Admin email / push notification when a service crosses into structurally-unbookable post-launch (the in-app banner is MVP; out-of-band alerting is deferred).
 - Richer "provider is on vacation" UX on the public page — today a legitimately temporarily-unavailable provider just produces zero slots; a date-aware "back on X" caption is post-MVP.
 - Banner per-user dismiss / ack history — current banner auto-clears on fix; a "remind me later" UX is deferred.
-- Source: `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md` D-078, `docs/archive/reviews/ROADMAP-REVIEW-2.md` §R-17.
+- Source: `docs/decisions/DECISIONS-DASHBOARD-SETTINGS.md` D-078, `docs/reviews/ROADMAP-REVIEW-2.md` §R-17.
 
 ## Tenancy (R-19 carry-overs)
 
-- **R-2B — Business-switcher UI in the dashboard header**. Multi-business membership is a data-model capability (D-063) and, post-R-19 (D-079), is now reachable through the invite flow. A user who belongs to more than one business today defaults to the oldest active membership with no in-app way to switch. Add a header dropdown that writes the chosen business id into `current_business_id`; `ResolveTenantContext` already handles the rest. Source: `docs/archive/reviews/ROADMAP-REVIEW-1.md` §R-2 carry-over + `docs/archive/reviews/ROADMAP-REVIEW-2.md` §R-19.
+- **R-2B — Business-switcher UI in the dashboard header**. Multi-business membership is a data-model capability (D-063) and, post-R-19 (D-079), is now reachable through the invite flow. A user who belongs to more than one business today defaults to the oldest active membership with no in-app way to switch. Add a header dropdown that writes the chosen business id into `current_business_id`; `ResolveTenantContext` already handles the rest. Source: `docs/reviews/ROADMAP-REVIEW-1.md` §R-2 carry-over + `docs/reviews/ROADMAP-REVIEW-2.md` §R-19.
 - **Admin-driven member deactivation + re-invite flow**. D-079 lands the restore-or-create helper and the new uniqueness index that allow re-entry after soft-delete, but no UI path soft-deletes a `business_members` row today. Post-MVP admin UX for "deactivate this member" + "re-invite this email" (which would naturally hit the restored row) is deferred.
 - **"Leave business" member UX**. Today a staff member has no self-serve way to remove themselves from a business — only admins can do it (and only once the deactivation UX above ships). Deferred.
 
