@@ -41,7 +41,7 @@ Parked in `docs/roadmaps/`: `ROADMAP-E2E.md` (ongoing coverage, ticks up with ea
 1. Developer briefs an architect agent to review / revise `docs/ROADMAP.md`.
 2. Developer briefs a planning agent for a single session. The agent reads `SPEC.md` + `HANDOFF.md` + `ROADMAP.md` + the relevant code, writes `docs/PLAN.md`, stops for developer approval.
 3. On approval, the same agent (or a fresh one) implements the plan, keeps `## Progress` current in `docs/PLAN.md`, runs tests, stages the work. Never commits.
-4. Developer reviews the diff and commits. Developer may also run codex review (`/codex:review` or the companion script) and paste findings back; the agent applies fixes under a `## Review` section in `docs/PLAN.md`. Second commit.
+4. Developer reviews the diff. May also run codex review (`/codex:review` or the companion script) against the staged state — if run inside the plan+exec chat, the agent sees findings directly in the transcript; otherwise developer pastes them back. Agent applies fixes under a `## Review` section in `docs/PLAN.md` on the same uncommitted diff. Developer commits once at the end (single commit bundles exec + review fixes).
 5. Agent rewrites `HANDOFF.md` if the session changed shipped state, promotes any new `D-NNN` into the matching `docs/decisions/DECISIONS-*.md` file, stages close artifacts. Developer commits.
 6. At the start of the next session, `docs/PLAN.md` gets overwritten. Git keeps the previous plan.
 

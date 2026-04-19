@@ -83,7 +83,7 @@ Prefer additive changes followed by subtractions that keep tests green at every 
 
 ## Codex review findings
 
-When the developer runs codex review against the staged / working-tree state and pastes the findings back for action, apply the fixes under a dedicated `## Review` section in the plan, structured one subsection per round:
+When the developer runs codex review against the staged / working-tree state, the findings are made available to the agent in one of two ways: (a) the review is run inside the plan+exec session's own chat via `/codex:review` or `/codex:adversarial-review` — the agent reads the output directly from the transcript; or (b) the review is run in a separate chat or terminal and the developer pastes the findings back. Either way, the agent applies the fixes under a dedicated `## Review` section in the plan, structured one subsection per round:
 
 ```
 ## Review — Round N

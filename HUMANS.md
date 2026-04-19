@@ -49,7 +49,7 @@ The references are loaded only when I cite them, so agents doing quick fixes or 
 3. The agent reads, then **writes `docs/PLAN.md`** (overwriting whatever the previous session left).
 4. I review the plan. Push back until it's right.
 5. On approval, the agent implements. It maintains `## Progress` and `## Decision Log` inside `docs/PLAN.md` as it works.
-6. When work is staged and iteration-loop tests green, **I run codex review on the working tree** (`/codex:review` or companion script). Findings go to the agent; the agent applies fixes on the same uncommitted diff under a `## Review` section in `PLAN.md`.
+6. When work is staged and iteration-loop tests green, **I run codex review on the working tree** (`/codex:review` or companion script). If I run it inside the plan+exec chat itself, the agent sees the findings in the transcript directly — no paste needed. If I run it from a separate chat or terminal, I paste the findings back. Either way, the agent applies fixes on the same uncommitted diff under a `## Review` section in `PLAN.md`.
 7. **I commit once at the end** with everything bundled — exec + review fixes together. The sequence is plan → approve → exec → review → commit, not plan → approve → exec → commit → review → commit.
 8. At session close, the agent:
    - Rewrites `docs/HANDOFF.md` if the session changed shipped state.
