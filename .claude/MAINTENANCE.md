@@ -8,8 +8,6 @@ Codex (`AGENTS.md`) and Claude (`CLAUDE.md`) share scoped project instructions a
 - `.claude/CLAUDE.md` ↔ `.agents/AGENTS.md` (project rules)
 - `resources/js/CLAUDE.md` ↔ `resources/js/AGENTS.md` (frontend rules)
 - `resources/js/components/ui/CLAUDE.md` ↔ `resources/js/components/ui/AGENTS.md` (COSS UI primitives rules)
-- `docs/plans/CLAUDE.md` ↔ `docs/plans/AGENTS.md` (plans guardrail)
-- `docs/reviews/CLAUDE.md` ↔ `docs/reviews/AGENTS.md` (reviews guardrail)
 
 ## Ownership split at the repository root
 

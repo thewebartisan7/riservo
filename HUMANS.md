@@ -6,142 +6,98 @@ This file is for me, the human maintainer. It is a reminder of how I intend to w
 
 ## Mental model
 
-The canonical workflow has four layers (see `docs/README.md` § "The four-layer work flow"):
+Four layers, in order:
 
 1. **INTENT** — I say what I want.
-2. **ROADMAP** — an architect agent turns intent into a roadmap.
-3. **ORCHESTRATION** — an orchestrator agent coordinates the roadmap's sessions.
-4. **IMPLEMENTATION** — a per-session implementer agent plans, codes, and closes.
+2. **ROADMAP** — an architect agent turns intent into `docs/ROADMAP.md`. Full project context.
+3. **PLAN** — an agent reads the active roadmap + the relevant code and writes `docs/PLAN.md` for one session. Session-scoped context.
+4. **EXECUTE** — an agent (same or fresh) implements the plan, keeps `## Progress` alive inside `docs/PLAN.md`, runs tests, stages. I commit.
 
-For quick mental bookkeeping I sometimes compress these into three: **WHAT** (layers 1–2: roadmap defines outcomes), **HOW** (layer 4: the plan before code), **CODE** (the implementation). Same pipeline, fewer labels.
-
-Each layer is a separate step. I never let an agent jump from a roadmap bullet straight to code.
+Two gates per session: plan approval, commit/push. Agents never commit.
 
 ---
 
 ## Docs system at a glance
 
-Three indices sit at `docs/`:
+**Four live files**:
 
-- `docs/ROADMAP.md` — every delivery roadmap, bucketed by status.
-- `docs/PLANS.md` — every session plan, bucketed by status.
-- `docs/DECISIONS.md` — every architectural decision topic, pointing at topical files.
+- `docs/SPEC.md` — product scope + domain + rules.
+- `docs/ROADMAP.md` — the active roadmap. Overwritten when a new one starts.
+- `docs/PLAN.md` — the current session plan. Overwritten at the start of every new session. Codex review findings go in a `## Review` section inside the same file.
+- `docs/HANDOFF.md` — state between sessions. Rewritten (not appended) at each close.
 
-Every roadmap / plan / review / handoff file has a YAML frontmatter block at the top. The authoritative lifecycle state is its `status:` field: `draft | planning | active | review | shipped | superseded | abandoned`. See `docs/README.md` § "Status taxonomy" for which statuses apply to which type.
+Plus reference material I don't touch often: `DEPLOYMENT.md`, `UI-CUSTOMIZATIONS.md`, `TESTS.md`, `BACKLOG.md`, the `docs/decisions/DECISIONS-*.md` topical files, and `docs/roadmaps/` as a parking lot for future-work roadmaps (E2E, GROUP-BOOKINGS).
 
-**Files do not move when they ship.** `docs/archive/` does not exist any more. A plan stays in `docs/plans/` forever; only its `status:` flips as the session progresses.
-
----
-
-## What agents already know (baseline context)
-
-The repository instruction files (`CLAUDE.md`, `AGENTS.md`, `.claude/CLAUDE.md`, `.agents/AGENTS.md`) point every new agent session at `docs/README.md`, which describes the indices, status taxonomy, and reading order.
-
-Because of that, the following docs are already part of the agent's loading flow. **I do not need to restate them in prompts:**
-
-- `docs/README.md` — reading order, frontmatter convention, status taxonomy
-- `docs/HANDOFF.md` — last implementation state
-- `docs/ROADMAP.md` — roadmap index
-- `docs/PLANS.md` — plan index
-- `docs/SPEC.md` — product scope and domain model
-- `docs/DECISIONS.md` — decision index
-- `docs/ARCHITECTURE-SUMMARY.md` — current-state architecture digest
-- `docs/UI-CUSTOMIZATIONS.md` — COSS UI / theming deviations
-- `docs/DEPLOYMENT.md` — server / queue / mail / cron setup
-
-When I brief an agent I only need to describe the *specific* task. The project context comes in for free.
+**Git is the history.** No `PLANS.md` index, no `DECISIONS.md` index, no `docs/archive/`, no frontmatter-status contract, no `docs:check`. If I want a prior plan, `git log --follow docs/PLAN.md`.
 
 ---
 
-## Roadmaps — the WHAT
+## Session types
 
-Roadmaps define outcomes, **not** implementation details.
+Three shapes. I pick one per session by how I brief the agent:
 
-- `docs/roadmaps/` — all roadmaps, active or shipped or superseded. Status lives in frontmatter.
-- `docs/ROADMAP.md` — the index across them.
+- **Roadmap session** — architect / brainstorming. Output: `docs/ROADMAP.md`. Brief cites `.claude/references/ROADMAP.md`.
+- **Plan + exec session** — standard implementation. Output: `docs/PLAN.md` + staged code + final commit. Brief cites `.claude/references/PLAN.md`.
+- **Quick fix session** — small change, no plan file, no ceremony. No reference file. Brief is freestyle: *"quick fix: X"*.
 
-Every roadmap item is a session-sized unit of work. Agents are expected to reason about the HOW themselves at plan time.
+The references are loaded only when I cite them, so agents doing quick fixes or roadmap work don't pay the token cost of the plan+exec template.
 
----
+## Plan + exec session flow (the main one)
 
-## Plans — the HOW
+1. I pick one session from `docs/ROADMAP.md`.
+2. I brief an agent, pointing at `docs/SPEC.md`, `docs/HANDOFF.md`, the relevant roadmap section, the code files in scope, and `.claude/references/PLAN.md`.
+3. The agent reads, then **writes `docs/PLAN.md`** (overwriting whatever the previous session left).
+4. I review the plan. Push back until it's right.
+5. On approval, the agent implements. It maintains `## Progress` and `## Decision Log` inside `docs/PLAN.md` as it works.
+6. When work is staged and iteration-loop tests green, **I run codex review on the working tree** (`/codex:review` or companion script). Findings go to the agent; the agent applies fixes on the same uncommitted diff under a `## Review` section in `PLAN.md`.
+7. **I commit once at the end** with everything bundled — exec + review fixes together. The sequence is plan → approve → exec → review → commit, not plan → approve → exec → commit → review → commit.
+8. At session close, the agent:
+   - Rewrites `docs/HANDOFF.md` if the session changed shipped state.
+   - Promotes any new `D-NNN` into `docs/decisions/DECISIONS-{TOPIC}.md` (BEFORE the next session overwrites `PLAN.md`).
+   - Stages close artifacts; I commit.
 
-A plan is a session-scoped implementation document.
+## Roadmap session flow (when I'm architecting)
 
-- Plans live in `docs/plans/`. They stay there forever.
-- Naming conventions:
-  - `PLAN-SESSION-{N}.md` for main roadmap sessions
-  - `PLAN-R-{N}-{SHORT-TITLE}.md` for review-remediation sessions
-  - `PLAN-PAYMENTS-{N}-{TITLE}.md` for roadmap-scoped sessions (e.g. PAYMENTS)
-  - `PLAN-{TOPIC}.md` for one-off topics
-- A plan is written **before** implementation. I review and approve it. Only then does the agent code.
-- Plans list: context, goal, scope, decisions to record, step-by-step implementation, testing plan, files to create/modify, verification steps.
-- As the session progresses, the plan grows with five living sections: `## Progress`, `## Implementation log`, `## Surprises & discoveries`, `## Post-implementation review`, `## Close note / retrospective`. Which are mandatory depends on session type — see `docs/README.md` § "Session lifecycle in a plan file".
-- When the session ships, the plan's `status:` flips to `shipped`. The file stays put.
+1. I brief an architect agent, pointing at `.claude/references/ROADMAP.md`.
+2. The agent interviews me (2–5 shaping questions on scope / acceptance / out-of-scope / localisation / failure modes).
+3. The agent reads `SPEC.md`, `HANDOFF.md`, the relevant topical decisions files, the code the roadmap will touch.
+4. The agent either drafts `docs/ROADMAP.md` from scratch (Mode A) or produces a stress-test report on the existing `docs/ROADMAP.md` (Mode B) and revises in-session once I sign off.
+5. I commit.
 
----
+## Quick fix flow (when ceremony costs more than the fix)
 
-## Reviews
-
-Per-session codex reviews live **inside the plan file** under `## Post-implementation review`. That is where the durable trace of bugs-caught-by-codex lives.
-
-`docs/reviews/` is reserved for cross-cutting audits (security review, accessibility audit, full-suite perf audit, compliance sweep). The closed round-based reviews (REVIEW-1, REVIEW-2) stay there with `status: shipped` for historical reference.
+1. I describe the fix in one sentence. No reference file cited.
+2. The agent makes the change, runs affected tests + Pint, stages, reports the diff.
+3. I commit.
+4. If the "quick fix" turns out to touch more than ~3 files or crosses a domain boundary, the agent is supposed to stop and propose a plan + exec session.
 
 ---
 
 ## Decisions
 
-- `docs/DECISIONS.md` is the stable index. It never bloats — it just points at topical files.
-- Topical decisions live in `docs/decisions/DECISIONS-{TOPIC}.md`.
-- Decision IDs (`D-001`, `D-002`, …) never get renumbered or recycled.
-- Superseded / resolved decisions move to `docs/decisions/DECISIONS-HISTORY.md`.
-- When an agent introduces a new architectural decision during a plan or implementation, it records it in the appropriate topical file.
+- Live in `docs/decisions/DECISIONS-{TOPIC}.md`. One file per domain.
+- Read by roadmap-drafting agents. NOT needed by plan+execute agents unless the session brief points at one.
+- Directory listing is the index. No `DECISIONS.md` index file.
+- Prune obsolete entries whenever I feel like it — no ceremony.
 
 ---
 
-## Top-level state docs
+## BACKLOG and parked roadmaps
 
-These three capture *current state* that shifts between sessions:
+- `docs/BACKLOG.md` — deferred features, UX ideas, tech debt. I ask the agent to add an entry when something comes up mid-session.
+- `docs/roadmaps/ROADMAP-E2E.md` — ongoing browser coverage. Ticks up with each feature.
+- `docs/roadmaps/ROADMAP-GROUP-BOOKINGS.md` — post-MVP, not scheduled.
 
-- `docs/HANDOFF.md` — what the last implementation session produced; the next session's starting point. Rewritten fresh (overwrite, not append) when a session changes shipped product / runtime state or changes the workflow / canonical reading order. Docs-only sessions that do neither may skip HANDOFF. If HANDOFF exceeds 200 lines, split carry-overs into `docs/BACKLOG.md`.
-- `docs/DEPLOYMENT.md` — operational information agents add for me during implementation. I use it when I deploy.
-- `docs/BACKLOG.md` — unscheduled follow-up, UX ideas, deferred engineering cleanup. Informal; items graduate to the roadmap when I decide to schedule them.
+When a parked roadmap becomes the next delivery target, its body replaces `docs/ROADMAP.md` and the draft file gets deleted.
 
 ---
 
-## Session flow (how I actually work)
+## The one discipline rule
 
-With the codex plugin installed and Claude Code's `Agent` tool available, I now spin up one orchestrator per roadmap and let it do the coordination legwork. The orchestrator spawns the implementer sub-agent via `Agent`, continues it across plan → implementation → codex-fix rounds via `SendMessage`, invokes codex via `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review` through `Bash` (the plugin's `/codex:*` slash commands declare `disable-model-invocation: true`, so agents can't self-invoke them — the companion script is the canonical machine path), and routes clear-bug codex findings back to the implementer without asking me. I stay in the loop at exactly two gates: plan approval and commit/push.
-
-The plan file's frontmatter `status:` is the serial-execution lock. `active` means the implementer is working and codex must not run; `review` means codex is running and the implementer is frozen. The sub-agent flips `active → review` once after each of my commits; only the orchestrator flips `review → active` for codex-fix rounds — never the sub-agent, never me. One implementer sub-agent at a time, one codex job in flight at a time — unless the roadmap explicitly names sessions in `parallel_sessions:` frontmatter (rare; session-scoped, not roadmap-global; see Appendix A of `.claude/skills/riservo-brief-orchestrator/assets/ROADMAP-ORCHESTRATOR.md`).
-
-In practice I do not copy either template by hand. Two skills fill them from disk and emit a ready-to-paste prompt block:
-
-- `/riservo-brief-architect` — run this first, at the start of a new roadmap. It asks 2–4 shaping questions (intent, surface area, probing areas) and emits the filled architect prompt. If a matching draft roadmap already exists in `docs/roadmaps/`, it offers the Mode-B stress-test variant instead.
-- `/riservo-brief-orchestrator` — run this at the end of the architect session (or cold later). It reads the now-active roadmap, pulls baseline commit + test count from `docs/HANDOFF.md`, pre-flight-checks the codex plugin, and emits the filled orchestrator prompt — no questions unless multiple roadmaps are active.
-
-For a one-off implementer session I read `.claude/skills/riservo-brief-orchestrator/assets/SESSION-IMPLEMENTER.md` directly; no skill wraps it, since briefing the implementer without an architect-and-orchestrator chain is rare.
-
-1. I pick one unit of work: a roadmap session, an `R-N` review session, or a specific task.
-2. I open a new chat and paste a short prompt that names the identifier (e.g. `PAYMENTS-1 — Stripe Connect Express Onboarding`). Baseline context loads on its own.
-3. The agent reads the relevant section and the current code, then writes a plan at `docs/plans/PLAN-*.md` with `status: draft` or `planning`.
-4. I review the plan. I push back until it's right.
-5. On approval, the plan's `status:` flips to `active` and the agent implements.
-6. The agent updates `docs/HANDOFF.md`, any affected roadmap checkboxes, the plan's `## Implementation log`, and records new decisions in the appropriate topical file.
-7. When the session is complete, the plan's `status:` flips to `shipped` (or `review` if codex is still running). The file stays in place.
-8. The matching row in `docs/PLANS.md` (or `docs/ROADMAP.md`) is updated to reflect the new status.
+Before the next session overwrites `docs/PLAN.md`, make sure any new architectural decisions have been promoted into `docs/decisions/DECISIONS-{TOPIC}.md`. Otherwise they disappear. (Better: the agent writes them straight into the topical file during implementation.)
 
 ---
 
 ## Mirrored instruction files
 
-Codex (`AGENTS.md`) and Claude (`CLAUDE.md`) pairs must stay identical. The canonical list of pairs and the ownership split between root and scoped files lives in `.claude/MAINTENANCE.md`.
-
----
-
-## Possible future improvements (not committed)
-
-- **Light `scripts/docs-check.sh`** — a 30-line bash sanity check that greps frontmatter and cross-references the indices. Add only if drift shows up in practice.
-- **Hybrid GitHub Issues + Milestones** — for bug tracking post-launch and release-tagging respectively. Evaluated separately; not in scope of the current docs system.
-- **`docs/baseline/` for foundational docs.** Move `SPEC.md`, `ARCHITECTURE-SUMMARY.md`, `UI-CUSTOMIZATIONS.md` into a `baseline/` subdirectory to make their "foundational" status explicit through path, not just through `README.md` categorization.
-- **`docs/decisions/README.md`.** Move the decision index inside `docs/decisions/` so the directory is self-contained.
+Codex (`AGENTS.md`) and Claude (`CLAUDE.md`) pairs must stay byte-identical in body. See `.claude/MAINTENANCE.md` for the canonical list.

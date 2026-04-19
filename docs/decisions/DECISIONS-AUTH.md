@@ -320,7 +320,7 @@ This file contains live decisions about auth boundaries, roles, invitations, ver
   `business_members` carried `UNIQUE(business_id, user_id)` while
   `providers` carried `UNIQUE(business_id, user_id, deleted_at)` — the
   two tables that together define membership disagreed on the re-entry
-  shape described in D-061, SPEC, and ARCHITECTURE-SUMMARY. REVIEW-2
+  shape described in D-061 and SPEC. REVIEW-2
   flagged both as MEDIUM-1 and INFO-1.
 - **Decision**:
   1. **`business_members` uniqueness is `(business_id, user_id, deleted_at)`**,

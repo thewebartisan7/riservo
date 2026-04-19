@@ -1,16 +1,6 @@
----
-name: ROADMAP-GROUP-BOOKINGS
-description: Multi-customer-per-slot bookings (group events, classes, workshops). Post-MVP.
-type: roadmap
-status: planning
-created: 2026-04-15
-updated: 2026-04-15
----
-
 # riservo.ch — Group Bookings Roadmap
 
-> Version: 0.1
-> Frontmatter `status:` is authoritative (see the YAML block above). This roadmap is currently in `planning` (post-MVP — not yet scheduled for delivery).
+> Status: post-MVP draft — not yet scheduled for delivery.
 > Scope: Multi-customer bookings per slot (group events, courses, workshops)
 
 ---

@@ -1,16 +1,6 @@
----
-name: ROADMAP-E2E
-description: "Pest 4 browser end-to-end coverage. E2E-1..6 shipped; stays active for new features. Live status: tests/Browser/route-coverage.md"
-type: roadmap
-status: active
-created: 2026-04-16
-updated: 2026-04-17
----
-
 # riservo.ch — End-to-End Testing Roadmap (Pest 4 Browser)
 
-> Version: 0.2 — Reviewed & restructured against the current codebase (2026-04-16)
-> Status: Active — E2E-1..6 shipped (2026-04-16); roadmap stays open for new features (PAYMENTS, Calendar Integration UI).
+> E2E-1..6 shipped (2026-04-16); roadmap stays open for new features (PAYMENTS, Calendar Integration UI).
 > Scope: Full end-to-end browser test coverage across all user-facing flows.
 > Tooling: **Pest 4 native browser testing** via `pestphp/pest-plugin-browser` (Playwright under the hood, PHP test authoring).
 > Format: WHAT is defined here. HOW is decided by the agent at plan time.
@@ -944,7 +934,7 @@ Explanation of the parallelisation:
 
 ---
 
-*This roadmap defines the WHAT. The HOW — specific browser-interaction strategy, helper internals, CI matrix sharding — is decided by the agent at plan time. Session plans live in `docs/plans/` with `status:` frontmatter that tracks their lifecycle.*
+*This roadmap defines the WHAT. The HOW — specific browser-interaction strategy, helper internals, CI matrix sharding — is decided by the agent at plan time in `docs/PLAN.md` (one live file, overwritten each session).*
 
 ---
 
