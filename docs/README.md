@@ -24,9 +24,9 @@ Start here before reading any other project documentation. This file is the sour
 Work happens in four layers, in this order. Each is owned by a different role, and the boundaries are hard — an agent in one layer does not cross into another.
 
 1. **INTENT** — the developer expresses a direction.
-2. **ROADMAP** — a senior architect agent turns intent into a roadmap (WHAT, split into sessions, cross-cutting decisions locked). Template: `.claude/prompts/ROADMAP-ARCHITECT.md`.
-3. **ORCHESTRATION** — an orchestrator agent coordinates the sessions of one roadmap from start to finish: drafts per-session prompts, reviews plans, relays codex findings, maintains state. Template: `.claude/prompts/ROADMAP-ORCHESTRATOR.md`.
-4. **IMPLEMENTATION** — a per-session implementer agent writes an execution plan, gets approval, implements, keeps the plan alive as a living document, and closes by flipping status + updating indices. Template: `.claude/prompts/SESSION-IMPLEMENTER.md`.
+2. **ROADMAP** — a senior architect agent turns intent into a roadmap (WHAT, split into sessions, cross-cutting decisions locked). Template: `.claude/skills/riservo-brief-architect/assets/ROADMAP-ARCHITECT.md`; entry skill: `/riservo-brief-architect`.
+3. **ORCHESTRATION** — an orchestrator agent coordinates the sessions of one roadmap from start to finish: spawns the implementer sub-agent, reviews plans, invokes codex, maintains state. Template: `.claude/skills/riservo-brief-orchestrator/assets/ROADMAP-ORCHESTRATOR.md`; entry skill: `/riservo-brief-orchestrator`.
+4. **IMPLEMENTATION** — a per-session implementer agent writes an execution plan, gets approval, implements, keeps the plan alive as a living document, and closes by flipping status + updating indices. Template: `.claude/skills/riservo-brief-orchestrator/assets/SESSION-IMPLEMENTER.md` (the orchestrator fills it when spawning the sub-agent; the developer reads it directly only for rare one-off briefs).
 
 `HUMANS.md` at the repo root is the developer's personal map of this same pipeline; it maps the four layers onto a simpler WHAT / HOW / CODE mental shorthand.
 
@@ -110,7 +110,7 @@ The lower five sections are **living-document** sections — they grow as the se
 - **Docs-only and workflow-only sessions**: `## Implementation log` + `## Close note / retrospective` are still mandatory. `## Progress`, `## Surprises & discoveries`, and `## Post-implementation review` may be omitted entirely if the session is linear and does not accumulate real progress/surprise/review traffic.
 - **Hotfix / rollback sessions**: use the implementer template with a `PLAN-HOTFIX-{TOPIC}.md` (or `PLAN-ROLLBACK-{TOPIC}.md`) filename. Living sections may be abbreviated; a single-paragraph `Implementation log` + `Close note` is acceptable for a hotfix under an hour of work.
 
-For the full prompt that drives an implementing-agent session against this shape, see `.claude/prompts/SESSION-IMPLEMENTER.md`.
+For the full prompt that drives an implementing-agent session against this shape, see `.claude/skills/riservo-brief-orchestrator/assets/SESSION-IMPLEMENTER.md`.
 
 ## Working rules
 

@@ -15,6 +15,14 @@ Stable entrypoint for every session plan in this project. Each row links to a fi
 
 ## Shipped
 
+### Workflow
+
+| File | Status | Scope | Updated |
+|---|---|---|---|
+| [PLAN-WORKFLOW-BRIEF-SKILLS-FIX](plans/PLAN-WORKFLOW-BRIEF-SKILLS-FIX.md) | shipped | Codex-review follow-up: fix six findings against orchestrator + implementer + brief-skill templates | 2026-04-19 |
+| [PLAN-WORKFLOW-BRIEF-SKILLS](plans/PLAN-WORKFLOW-BRIEF-SKILLS.md) | shipped | Two prompt-prep skills (riservo-brief-architect / riservo-brief-orchestrator) + move prompt templates into skill assets/ | 2026-04-18 |
+| [PLAN-WORKFLOW-AGENTIC-ORCHESTRATOR](plans/PLAN-WORKFLOW-AGENTIC-ORCHESTRATOR.md) | shipped | Evolve orchestrator template to active sub-agent spawner + direct codex plugin integration | 2026-04-18 |
+
 ### Docs system
 
 | File | Status | Scope | Updated |

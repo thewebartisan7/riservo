@@ -2,7 +2,7 @@
 
 > **Purpose**: a reusable prompt for spinning up an agent whose job is to turn the developer's intent into a locked roadmap — or, when a draft already exists, to stress-test it until it is ready to hand off to the orchestrator.
 > **How to use**: copy the block below into a fresh chat, fill in every `[BRACKETED]` placeholder, delete sections you do not need, and send.
-> **What to do with the output**: the architect produces either (A) a draft roadmap file on disk, or (B) a stress-test report as text. The developer reviews. Once the roadmap is approved and its `status:` is flipped from `planning` to `active`, the architect's job is done — the orchestrator (see `.claude/prompts/ROADMAP-ORCHESTRATOR.md`) takes over.
+> **What to do with the output**: the architect produces either (A) a draft roadmap file on disk, or (B) a stress-test report as text. The developer reviews. Once the roadmap is approved and its `status:` is flipped from `planning` to `active`, the architect's job is done — the orchestrator (see `.claude/skills/riservo-brief-orchestrator/assets/ROADMAP-ORCHESTRATOR.md`) takes over.
 
 ---
 
@@ -48,8 +48,9 @@ The developer hands you a draft roadmap already on disk. You:
 
 1. Read the required docs.
 2. Read the draft in full.
-3. Produce a **stress-test report** (format below) — text only, no file writes.
-4. The developer iterates on the draft with you until it is ready to lock. During iteration you may propose concrete edits in text, but the actual file edits are made by the developer or by a subsequent Mode-A pass — not silently by you inside the stress-test turn.
+3. Produce a **stress-test report** (format below) — text only, no file writes in this turn.
+4. The developer iterates on the draft with you. During iteration you may propose concrete edits in text, but the actual file edits wait for the next step — do NOT silently edit the file inside a stress-test turn.
+5. **Post-signoff activation (in-session, architect-owned).** When the developer explicitly signs off on the stress-test revisions ("approved, apply them"), you — the architect — apply the agreed edits to the roadmap file in that same turn, flip `status: draft → planning → active`, bump `updated:`, update the matching row in `docs/ROADMAP.md` (keep it under `## In flight`, sync the status column), and run `php artisan docs:check`. This is the only agent-driven activation path for a reviewed draft; it closes the manual-activation hole that otherwise forces the developer into two-file surgery between the architect and orchestrator layers. If the developer has NOT signed off explicitly — still iterating, or wants to think about it — do not flip anything; stay in stress-test mode.
 
 ---
 
@@ -140,6 +141,8 @@ Quote string values whenever they contain a colon-space, `#`, or other YAML-ambi
 Body — match the shape of existing roadmaps (e.g. `docs/roadmaps/ROADMAP-PAYMENTS.md`, `docs/roadmaps/ROADMAP-MVP-COMPLETION.md`):
 
 - `## Overview` — the problem, the scope, the deliverable, and a session-summary table (# | session | prerequisites | outcome).
+
+Parallel-sub-agent exception — **session-scoped**, not roadmap-global. If a subset of this roadmap's sessions are genuinely independent (no shared files, no shared model changes, no shared routes, no shared migrations) AND their acceptance is "tests pass" rather than "code pattern review", name those specific sessions in a frontmatter `parallel_sessions:` list. Example: `parallel_sessions: [E2E-auth, E2E-booking, E2E-settings]`. Sessions NOT named in the list run strictly serial regardless; a roadmap with mostly-independent sessions mixed with shared-surface sessions names only the parallel ones. Justify the declaration in the Overview (one paragraph: which independence claim, which acceptance shape, why the non-listed sessions are excluded). Absent the key entirely, every session is serial per Appendix A of `.claude/skills/riservo-brief-orchestrator/assets/ROADMAP-ORCHESTRATOR.md`. `ROADMAP-E2E.md`'s per-route browser-test sessions are the canonical fit for the entire list; product-feature roadmaps like `ROADMAP-PAYMENTS.md` typically leave the key absent.
 - `## Cross-cutting decisions locked in this roadmap` — numbered list of product / architectural decisions binding every session. Reference the invariants the roadmap must honour.
 - `## Alternatives considered` — briefly name and reject the alternatives you weighed. One short paragraph per alternative, no essay.
 - `## Sessions` — one subsection per session. For each:
@@ -208,7 +211,7 @@ When the developer approves the draft (Mode A) or signs off on the stress-test r
 2. The `docs/ROADMAP.md` row stays under `## In flight` — no bucket move on approval.
 3. If the roadmap introduces a new decision domain, make sure the matching `docs/decisions/DECISIONS-[TOPIC].md` exists (create an empty skeleton if needed) and appears in the `docs/DECISIONS.md` index.
 4. Run `php artisan docs:check` to confirm the frontmatter / index contract is intact.
-5. Tell the developer the roadmap is ready. Point them at `.claude/prompts/ROADMAP-ORCHESTRATOR.md` as the next step.
+5. Tell the developer the roadmap is ready. Point them at the `/riservo-brief-orchestrator` skill (which emits the filled orchestrator prompt) or, for direct use, `.claude/skills/riservo-brief-orchestrator/assets/ROADMAP-ORCHESTRATOR.md`.
 
 Your job ends here. The orchestrator takes the roadmap through its sessions.
 

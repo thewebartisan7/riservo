@@ -7,13 +7,14 @@ created: 2026-04-17
 updated: 2026-04-18
 ---
 
+
 # riservo.ch — Customer-to-Professional Payments Roadmap
 
 > Version: 1.1 (post-review revision; a further review round is underway).
 > Frontmatter `status:` is authoritative (see the YAML block above). Currently `draft` — this roadmap is being re-reviewed before Session 1 opens.
 > Scope: End-to-end online payment flow where the customer pays the professional at booking time. Stripe Connect Express, TWINT-first, zero riservo commission. Separate from MVPC-3 (riservo's own SaaS billing on the Business model).
 > Format: WHAT only. The HOW is decided per-session by the implementing agent in a dedicated plan document.
-> Each session is a focused, reviewable unit handed to a single agent. Sessions are mostly sequential; Session 4 (payouts) may run in parallel with Sessions 2b/3 once Session 2a lands. Prerequisites are listed per-session below.
+> Each session is a focused, reviewable unit handed to a single agent. Sessions run strictly sequentially (no `parallel_sessions:` declaration in frontmatter; per Appendix A of `.claude/skills/riservo-brief-orchestrator/assets/ROADMAP-ORCHESTRATOR.md`, absence of the key means every session is serial). Prerequisites are listed per-session below.
 
 ---
 
@@ -31,7 +32,7 @@ The new sequence is six sessions (Session 2 split post-review into a happy-path 
 | 2a | Payment at Booking — Happy Path | Session 1 | Public booking flow creates `pending + awaiting_payment` booking; hosted Stripe Checkout (card + TWINT) opens; `checkout.session.completed` webhook + synchronous success-page retrieve promote the booking |
 | 2b | Payment at Booking — Failure Branching + Admin Surface | Session 2a | Expired / failed / abandoned Checkout handled per `payment_mode_at_creation`; expiry reaper with defense-in-depth (pre-flight + grace buffer + late-webhook refund); admin booking-detail payment panel; `unpaid` badge and filters |
 | 3 | Refunds (Customer Cancel, Admin Manual, Business Cancel) + Disputes | Session 2b | Refund flow wired three ways; automatic refunds on in-window customer cancels and business-side cancels; admin-initiated manual refund; dispute webhook surfaces a Pending Action |
-| 4 | Payout Surface + Connected Account Health | Session 2a (may run in parallel with 2b and 3) | Dashboard section showing connected-account status, next payout ETA, recent payouts, deep-link to Stripe Express dashboard |
+| 4 | Payout Surface + Connected Account Health | Session 3 | Dashboard section showing connected-account status, next payout ETA, recent payouts, deep-link to Stripe Express dashboard |
 | 5 | `payment_mode` Toggle Activation + UI Polish | Sessions 1, 2a, 2b, 3, 4 | Lift the hide-the-options ban in Settings → Booking; `online` and `customer_choice` become user-facing; settle the copy, empty states, and error banners; gate non-CH connected accounts out of online modes |
 
 Alternatives considered briefly before Session 1 is planned:
@@ -326,9 +327,9 @@ Wire every refund trigger and the dispute-awareness surface. Four distinct refun
 
 ## Session 4 — Payout Surface + Connected Account Health
 
-**Owner**: single agent. **Prerequisites**: Session 2a. **May run in parallel with Session 2b and Session 3**. **Unblocks**: Session 5.
+**Owner**: single agent. **Prerequisites**: Session 3. **Unblocks**: Session 5.
 
-Give the Business visibility into their money after it leaves the customer. Read-only, Stripe-sourced, no riservo-side payout orchestration. This session only requires that real Stripe balances and payouts exist on a connected account (Session 2a delivers that); it does not depend on the failure-branching or refund paths and can ship concurrently with Sessions 2b and 3.
+Give the Business visibility into their money after it leaves the customer. Read-only, Stripe-sourced, no riservo-side payout orchestration.
 
 ### Data layer
 - [ ] No new tables. Payout data is fetched live from Stripe on-demand and cached briefly in Laravel's cache (TTL decided at plan time, likely 60s). Persisting payout history locally is out of scope — Stripe is the source of truth.

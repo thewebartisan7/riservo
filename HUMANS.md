@@ -111,6 +111,17 @@ These three capture *current state* that shifts between sessions:
 
 ## Session flow (how I actually work)
 
+With the codex plugin installed and Claude Code's `Agent` tool available, I now spin up one orchestrator per roadmap and let it do the coordination legwork. The orchestrator spawns the implementer sub-agent via `Agent`, continues it across plan → implementation → codex-fix rounds via `SendMessage`, invokes codex via `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review` through `Bash` (the plugin's `/codex:*` slash commands declare `disable-model-invocation: true`, so agents can't self-invoke them — the companion script is the canonical machine path), and routes clear-bug codex findings back to the implementer without asking me. I stay in the loop at exactly two gates: plan approval and commit/push.
+
+The plan file's frontmatter `status:` is the serial-execution lock. `active` means the implementer is working and codex must not run; `review` means codex is running and the implementer is frozen. The sub-agent flips `active → review` once after each of my commits; only the orchestrator flips `review → active` for codex-fix rounds — never the sub-agent, never me. One implementer sub-agent at a time, one codex job in flight at a time — unless the roadmap explicitly names sessions in `parallel_sessions:` frontmatter (rare; session-scoped, not roadmap-global; see Appendix A of `.claude/skills/riservo-brief-orchestrator/assets/ROADMAP-ORCHESTRATOR.md`).
+
+In practice I do not copy either template by hand. Two skills fill them from disk and emit a ready-to-paste prompt block:
+
+- `/riservo-brief-architect` — run this first, at the start of a new roadmap. It asks 2–4 shaping questions (intent, surface area, probing areas) and emits the filled architect prompt. If a matching draft roadmap already exists in `docs/roadmaps/`, it offers the Mode-B stress-test variant instead.
+- `/riservo-brief-orchestrator` — run this at the end of the architect session (or cold later). It reads the now-active roadmap, pulls baseline commit + test count from `docs/HANDOFF.md`, pre-flight-checks the codex plugin, and emits the filled orchestrator prompt — no questions unless multiple roadmaps are active.
+
+For a one-off implementer session I read `.claude/skills/riservo-brief-orchestrator/assets/SESSION-IMPLEMENTER.md` directly; no skill wraps it, since briefing the implementer without an architect-and-orchestrator chain is rare.
+
 1. I pick one unit of work: a roadmap session, an `R-N` review session, or a specific task.
 2. I open a new chat and paste a short prompt that names the identifier (e.g. `PAYMENTS-1 — Stripe Connect Express Onboarding`). Baseline context loads on its own.
 3. The agent reads the relevant section and the current code, then writes a plan at `docs/plans/PLAN-*.md` with `status: draft` or `planning`.

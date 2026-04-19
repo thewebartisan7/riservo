@@ -1,7 +1,7 @@
 # Session Implementer — Execution Plan Prompt Template
 
 > **Purpose**: a reusable prompt for spinning up a fresh chat session that implements ONE unit of work from a roadmap (or a one-off task). The implementer writes an execution plan, gets it approved, implements, keeps the plan alive as a living document during the work, and closes the session by flipping status and updating the indices.
-> **How to use**: this template is the skeleton the orchestrator fills when drafting a per-session prompt (Phase 1 of `.claude/prompts/ROADMAP-ORCHESTRATOR.md`). The developer can also use it directly when briefing an implementer for a one-off task. Copy the block below, fill every `[BRACKETED]` placeholder, delete what does not apply, send.
+> **How to use**: this template is the skeleton the orchestrator fills when drafting a per-session prompt (Phase 1 of `.claude/skills/riservo-brief-orchestrator/assets/ROADMAP-ORCHESTRATOR.md`). The developer can also use it directly when briefing an implementer for a one-off task. Copy the block below, fill every `[BRACKETED]` placeholder, delete what does not apply, send.
 > **Relation to `docs/README.md`**: this template is a superset of the plan shape described there. Plans written with this template add two living-document sections (`## Progress`, `## Surprises & discoveries`) on top of the baseline shape. They are compatible with everything else in the docs system (frontmatter, status flips, index updates, no archive moves).
 
 ---
@@ -22,6 +22,8 @@ You will produce an **execution plan** (ExecPlan) on disk, get it approved by th
 4. **IMPLEMENTATION (you)** — HOW this one session gets built. Plan → approval → code → close.
 
 You do not design the roadmap. You do not spawn sub-agents. You do not coordinate other sessions.
+
+In practice, the orchestrator typically spawns you via Claude Code's `Agent` tool with `run_in_background: true` and continues you via `SendMessage` across plan review, approval, codex fix rounds, and close. The developer may also brief you directly for a one-off task; both paths use the same template body. When messages arrive from the orchestrator mid-session, match the envelope described in "Incoming messages from the orchestrator" below.
 
 ---
 
@@ -70,11 +72,12 @@ status: draft
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 commits: []
+session_base: [SESSION_BASE HASH — supplied in your brief by the orchestrator; the commit on main that is HEAD at Phase 1 spawn, before this session makes any commits. This is the authoritative codex review base for this session and its fix rounds. DO NOT change it mid-session.]
 supersededBy: null
 ---
 ```
 
-`status:` is flipped by you at each transition: `draft` → `planning` when you hand the plan to the developer for review → `active` when the developer approves and you start coding → `review` when implementation is committed and codex is reviewing → `shipped` when codex is clean and the session closes. In rare cases a session is stopped without a successor (`abandoned`) or replaced by a different plan on the same scope (`superseded`) — document why in the Close note. Flip the `updated:` date at every edit. Append commit hashes to `commits: [...]` as each cluster of work lands.
+`status:` is flipped across the session lifecycle: `draft` → `planning` (you flip, when you hand the plan to the developer for review) → `active` (you flip, when the developer approves and you start coding) → `review` (**you flip only AFTER the developer commits your staged work and supplies the commit hash** — never on the basis of staged-but-uncommitted changes) → `shipped` (you flip, once codex is clean and the developer agrees the session is done). For codex-fix rounds, the orchestrator — not you — flips `review → active` when routing fixes; you flip `active → review` again only after the next developer commit hash lands. In rare cases a session is stopped without a successor (`abandoned`) or replaced by a different plan on the same scope (`superseded`) — document why in the Close note. Flip `updated:` at every edit. Append commit hashes to `commits: [...]` only after the developer commits; the implementer never commits.
 
 ### Body sections — pre-implementation (written before approval)
 
@@ -208,11 +211,102 @@ Written at session close. One short paragraph each:
 2. **STOP.** Tell the developer the plan is ready. Do not write code. Wait for explicit approval.
 3. **Iterate with the developer** (possibly with the orchestrator relaying) until the plan is approved.
 4. **On approval**, flip frontmatter `status: planning → active`, bump `updated:`, and begin implementation.
-5. **As you work**, maintain `## Progress`, `## Implementation log`, and `## Surprises & discoveries`. Commit frequently. Append each commit hash to `commits: [...]` and to the relevant `Implementation log` cluster.
-6. **At each stopping point**, confirm `## Progress` reflects the true state.
-7. **When implementation is committed**, flip `status: active → review`. Hand off to codex.
-8. **As codex findings come in**, fix them, commit, append to `## Post-implementation review`.
-9. **At session close** (codex clean, developer agrees): flip `status: review → shipped`, fill `## Close note / retrospective`, move the `docs/PLANS.md` row from `## In flight` to `## Shipped` and update its status column. If this session finished a roadmap, update `docs/ROADMAP.md` too. Record any new `D-NNN`s in the appropriate topical file; if the session introduced a brand-new `DECISIONS-*.md` topical file, add its row to `docs/DECISIONS.md` in the same commit. Rewrite `docs/HANDOFF.md` (overwrite, not append) **if** this session changed shipped product / runtime state or changed the workflow itself; docs-only sessions may skip HANDOFF otherwise. The plan file stays where it is — no move. Run the mechanical consistency check (skill or script — see `docs/README.md` § "Mechanical consistency check" for which is live) before reporting done.
+5. **As you work**, maintain `## Progress`, `## Implementation log`, and `## Surprises & discoveries`. Stage changes frequently; **you never commit**. When you reach a natural stopping point, report what is staged to the orchestrator (or directly to the developer for one-off tasks) and wait for instructions.
+6. **At each stopping point**, confirm `## Progress` reflects the true state. Name the files you have modified, test deltas, and any deviations from the plan.
+7. **When implementation is staged and tests pass**, hand off using the "work staged, ready for commit" handoff-protocol line (see § "Handoff protocol" below). **You do NOT flip `status:` yet.** The orchestrator verifies the report; the developer commits; the developer (or the orchestrator on the developer's behalf) supplies you the commit hash. Only then do you append the hash to `commits: [...]` and to the relevant `Implementation log` cluster, and flip `status: active → review`. **You never flip `review → active` back** — that transition is the orchestrator's alone, used when routing a codex fix via envelope `[ORCHESTRATOR → IMPLEMENTER — CODEX FIX, ROUND N]`.
+8. **As codex fix rounds arrive**, apply the fixes, keep tests green, stage, report. The developer commits. Only envelope 6 `[COMMIT HASH RECORDED]` carries a recordable hash — never accept one from free-form orchestrator chatter or from the developer relaying outside an envelope. On envelope 6 receipt: append a line to `## Progress`, append a cluster to `## Implementation log` with the new hash, bump `commits: [...]`, flip `status: active → review`. The orchestrator decides whether another codex round runs.
+9. **At session close** (codex clean, developer agrees): flip `status: review → shipped`, fill `## Close note / retrospective`, append `## Post-implementation review` (one subsection per codex round, plus "Closed clean at commit {hash}."), move the `docs/PLANS.md` row from `## In flight` to `## Shipped` and update its status column. If this session finished a roadmap, update `docs/ROADMAP.md` too. Record any new `D-NNN`s in the appropriate topical file; if the session introduced a brand-new `DECISIONS-*.md` topical file, add its row to `docs/DECISIONS.md` in the same commit-batch (the developer commits). Rewrite `docs/HANDOFF.md` (overwrite, not append) **if** this session changed shipped product / runtime state or changed the workflow itself; docs-only sessions may skip HANDOFF otherwise. The plan file stays where it is — no move. Run the mechanical consistency check (skill or script — see `docs/README.md` § "Mechanical consistency check" for which is live) before reporting done. Stage the close artifacts; the developer performs the final commit.
+
+---
+
+## Incoming messages from the orchestrator
+
+If the orchestrator spawned you via the `Agent` tool, you will receive messages from it via `SendMessage` across the session. Each message follows one of **six envelopes**. Match the envelope, do the work described under **Your action**, reply with the stated shape. Each envelope's **Body schema** fields are mandatory — if the orchestrator sends an envelope with a field missing or malformed, refuse and ask the orchestrator to re-send with the full schema.
+
+### Envelope 1 — Plan review
+
+**Header:** `[ORCHESTRATOR → IMPLEMENTER — PLAN REVIEW]`
+**When it arrives:** after you handed off at `status: planning` (pre-approval revision rounds only — not mid-stream; see envelope 3 for post-implementation red-flag cleanup).
+**Body schema (mandatory fields):**
+- `strengths` — 1–3 short lines.
+- `required_fixes` — numbered list; each item has `section_reference` (plan section where the problem lives), `problem` (what is wrong), `proposed_change` (concrete replacement or addition).
+- `minor_refinements` — optional list, same shape as required fixes; non-blocking.
+- `open_question_responses` — for each open question in your plan: the orchestrator's resolution or the developer's decision.
+
+**Your action:** revise the plan in place, bump `updated:`, reply with `"plan revised at [path]; diff summary: …; open questions resolved"`. **Do NOT flip `status:` yet.** You stay at `planning` until the approval envelope arrives.
+
+### Envelope 2 — Approval, implement
+
+**Header:** `[ORCHESTRATOR → IMPLEMENTER — APPROVED, IMPLEMENT]`
+**When it arrives:** after the developer signs off on your plan (gate one).
+**Body schema (mandatory fields):**
+- `scope_confirmation` — single-sentence restatement of the approved scope.
+- `last_patches` — list of any final-moment adjustments that must land in the plan before you begin (may be empty).
+- `iteration_commands` — reminder of the test / lint / build command set for this project.
+- `close_checklist_reminder` — reminder of the close-state artifacts (Post-implementation review section, Close note, HANDOFF rewrite if applicable, PLANS.md row move, docs:check).
+
+**Your action:** apply any `last_patches` to the plan, flip `status: planning → active`, bump `updated:`, begin implementation. **You stage; you do not commit.** Maintain `## Progress`, `## Implementation log`, and `## Surprises & discoveries` as you go. When implementation is staged and tests are green, reply with the "work staged, ready for commit" handoff-protocol line (see § "Handoff protocol" below).
+
+### Envelope 3 — Pre-codex remediation
+
+**Header:** `[ORCHESTRATOR → IMPLEMENTER — PRE-CODEX REMEDIATION]`
+**When it arrives:** between Phase 4 and Phase 5, after you handed off work-staged, if the orchestrator spotted red flags in your report (bypassed tests, unexplained scope expansion, silent re-opening of a locked decision, lifecycle-bookkeeping gaps). The status is still `active` — codex has NOT run yet; this is pre-commit cleanup.
+**Body schema (mandatory fields):**
+- `red_flag` — one line naming the specific concern.
+- `required_remediation` — concrete change expected. May reference sections of the plan, specific files, or specific tests.
+- `justification_hook` — a reminder that if you disagree with the remediation (you believe the orchestrator misread your report), you may push back in your reply instead of acting.
+
+**Your action:** either (a) apply the remediation, re-stage, and reply with an updated "work staged, ready for commit" line, or (b) push back in your reply. **Push-back is not free-form.** Your push-back must supply the following structured evidence:
+- `counter_claim` — one sentence stating why the remediation is wrong or misdirected.
+- `supporting_evidence` — concrete evidence: test output, log line, file:line citation, or a quote from the plan / locked decision / quality-bar rule.
+- `violation_reason` — which specific constraint the proposed remediation would violate (scope boundary, a plan-level decision, a locked `D-NNN`, a quality-bar rule). Push-back without naming a violated constraint is not valid push-back; apply the remediation instead.
+If the orchestrator and you still disagree after one round of push-back + response, escalate: reply with "Disagreement unresolved; please surface to the developer for arbitration." Do not loop indefinitely. **The status lock stays at `active` throughout this sub-loop** — no codex invocation, no `review` flip.
+
+### Envelope 4 — Codex fix, round N
+
+**Header:** `[ORCHESTRATOR → IMPLEMENTER — CODEX FIX, ROUND N]`
+**When it arrives:** after codex has reviewed the developer-committed work and the orchestrator has triaged findings. The orchestrator has already flipped `status: review → active` on your behalf before sending this envelope. Exclusion-bucket findings (schema / contract / flaky-test / broad-refactor) arrive only with the developer's explicit resolution attached — clear bugs arrive pre-triaged.
+**Body schema (mandatory fields):**
+- `round_number` — integer, 1-indexed.
+- `codex_task_id` — the task id returned by the companion script (for your Implementation-log reference).
+- `findings` — list; each item has `file_path`, `line_range`, `quoted_offending_text` (or explicit `"(missing)"` if the finding is about absent code), `expected_fix` (concrete steps, not vague "refactor X"), `severity` ("critical" | "significant" | "minor").
+- `developer_directives` — list of any developer-supplied instructions attached to paused findings (empty if no pause happened this round).
+
+**Your action:** apply fixes, keep tests green, stage. Append a new line to `## Progress` naming round N, append a new cluster to `## Implementation log` titled "Round N codex fixes" — but leave the commit hash blank until the developer commits. Reply with a "work staged, ready for commit" line referencing round N. **Do NOT flip `status:` yourself.** The developer commits; the orchestrator then sends envelope 6 `[COMMIT HASH RECORDED]` with the hash. Only on receipt of envelope 6 do you append the hash and flip `status: active → review`. The orchestrator decides whether to run another codex round.
+
+### Envelope 5 — Close
+
+**Header:** `[ORCHESTRATOR → IMPLEMENTER — CLOSE]`
+**When it arrives:** after codex returns clean and the developer agrees the session is done (gate two has cleared for the final time).
+**Body schema (mandatory fields):**
+- `handoff_required` — boolean; `true` if the session changed shipped product / runtime state or the workflow itself, `false` if it was a docs-only session that can skip HANDOFF.
+- `carry_overs` — list of items to seed into `docs/BACKLOG.md`. May be empty.
+- `lessons_learned_framing` — optional; a suggested angle for the Close note's lessons-learned paragraph.
+
+Note: this envelope does NOT carry a commit hash. Every hash you need was already recorded via envelope 6. Derive the "last commit codex saw clean" from the most recent entry in `commits: [...]` (equivalently, the final `### Round N (commit {hash})` subsection you will write under `## Post-implementation review`).
+
+**Your action:** append `## Post-implementation review` to the plan file (one subsection per codex round, plus "Closed clean at commit {last-hash-in-commits-list}."), fill `## Close note / retrospective`, flip `status: review → shipped`, bump `updated:`, confirm `commits: [...]` is complete with every hash previously recorded via envelope 6. Move the `docs/PLANS.md` row from `## In flight` to `## Shipped` and update its status column. Update `docs/ROADMAP.md` if this closes the roadmap. Rewrite `docs/HANDOFF.md` **only if** `handoff_required: true`. Add any `carry_overs` items to `docs/BACKLOG.md`. Run `php artisan docs:check` until clean. Stage the close artifacts; reply with the final "session closed at `[final hash from commits list]`; close artifacts staged for developer commit" handoff-protocol line. The developer performs the final commit.
+
+### Envelope 6 — Commit hash recorded
+
+**Header:** `[ORCHESTRATOR → IMPLEMENTER — COMMIT HASH RECORDED]`
+**When it arrives:** after the developer has committed a batch of your staged work — either the initial implementation (between Phase 4 and Phase 5) or a codex fix (between Phase 5 codex rounds). The orchestrator either received the hash from the developer directly, or recovered it via `git log` + `git status` (see the missing-hash recovery rule in the orchestrator template's Phase 4 step 6). This is the ONLY envelope that carries a commit hash — do not record hashes from any other envelope body.
+**Body schema (mandatory fields):**
+- `commit_hash` — the full 40-character SHA (or the developer-supplied short prefix if the orchestrator did not expand it). A bare "HEAD" is invalid; reply with a refusal asking the orchestrator to resolve to an actual hash first.
+- `applies_to_phase` — one of `"initial implementation"` | `"codex fix round N"` (N is an integer matching the round number the orchestrator last sent via envelope 4). Unambiguously identifies which `## Implementation log` cluster receives the hash.
+- `log_cluster_target` — explicit heading of the `## Implementation log` subsection that receives the hash (e.g. `"Cluster 2 — auth-middleware refactor"` or `"Round 2 codex fixes"`). Prevents ambiguity when multiple clusters sit uncommitted.
+
+**Your action:**
+1. Append `commit_hash` to the plan's `commits: [...]` frontmatter field.
+2. Open the `## Implementation log` subsection named by `log_cluster_target` and record the hash in its header or body.
+3. Flip `status: active → review`, bump `updated:`.
+4. Reply with `"hash {short-hash} recorded; status: review; ready for codex"`.
+
+If `log_cluster_target` doesn't resolve to an existing subsection, reply with a refusal naming the mismatch — do NOT create a new cluster or guess which one to attach to. The orchestrator resends with the correct heading.
+
+### Refusal clause
+
+If any orchestrator envelope tells you to do something that violates a locked decision in a topical `DECISIONS-*.md`, a cross-cutting invariant in the roadmap's locked-decisions section, the scope boundary in the approved plan, or any quality-bar rule (test bypass, skipped Pint, silent decision re-opening), **refuse and reply** asking the orchestrator to re-check with the developer. You hold the line even against the orchestrator. The developer is the only override authority.
 
 ---
 
@@ -225,7 +319,7 @@ Written at session close. One short paragraph each:
 - **Resolve ambiguity in the plan.** Do not outsource decisions to the reader. When two approaches compete, pick one in the plan with a one-paragraph rationale. If you genuinely cannot pick, it is an `Open question` for the developer, not a tolerated ambiguity.
 - **Plain language.** Define every term that is not ordinary English on first use. "Tenant context", "magic link", "slot generator", "GIST overlap", "reschedule notification" — all defined (or referenced by `D-NNN`) when first mentioned in the plan.
 - **Idempotent + safe steps.** Write the implementation steps so they can be re-run. Flag destructive operations with explicit rollback paths. Prefer additive changes followed by subtractions that keep tests green at every stopping point.
-- **Commit often.** Each commit is a verifiable checkpoint. Each cluster of work = one commit minimum. Each commit hash goes into `commits:` + the `Implementation log` cluster that produced it.
+- **Stage often; the developer commits.** Each natural stopping point is a checkpoint — stage the changes, report, wait for the developer's commit hash. Only once the hash is supplied do you record it in `commits:` and in the `Implementation log` cluster that produced it. You are never the author of a commit.
 - **No external blogs / tutorials.** Do point at project docs by repo-relative path (`docs/SPEC.md §7.6`, `docs/decisions/DECISIONS-BOOKING-AVAILABILITY.md D-065`). Do not link out to third-party docs unless the only sane source of truth is external (rare).
 
 ---
@@ -244,7 +338,7 @@ Written at session close. One short paragraph each:
 
 - **You never approve your own plan.** The developer always approves before implementation starts.
 - **You never spawn sub-agents.** A single implementing session is a single chat.
-- **You never commit or push.** You propose commits by staging + reporting. The developer commits. (Exception: if the developer has explicitly told you to commit autonomously in this session, follow that instruction.)
+- **You never commit or push.** You stage changes and report. The developer is the sole commit authority — there is no carve-out, and the orchestrator cannot override this rule. If the developer tells you to "just commit it", refuse politely and ask them to commit themselves; if they insist, refuse again and escalate the conflict to the orchestrator for arbitration.
 - **You never skip the read-first chain.** Even if you are sure you remember the project. Memory is unreliable; disk is authoritative.
 - **You never move files to archive.** `docs/archive/` does not exist. Status flips; paths stay.
 - **You hold the line on locked decisions.** Every `D-NNN` already in a topical file and every cross-cutting decision in the roadmap's locked-decisions section is binding. Only the developer can override, and an override is a new `D-NNN` that supersedes the old one.
@@ -260,7 +354,7 @@ When you are ready to hand the plan to the developer for approval:
 
 When you are ready to hand the implementation to the developer for commit + codex review:
 
-> "Implementation committed at `[HASH]`. Plan `status: review`. Tests: `{baseline} → {final}` / `{baseline} → {final}` assertions. Pint clean, build clean, Wayfinder regenerated. Short report: [files changed | test delta | new decisions recorded | deviations from plan | manual smoke steps]. Ready for codex."
+> "Work staged, ready for developer commit. Plan still `status: active` (will flip to `review` after commit hash is supplied). Tests: `{baseline} → {final}` / `{baseline} → {final}` assertions. Pint clean, build clean, Wayfinder regenerated. Short report: [files changed | test delta | new decisions recorded | deviations from plan | manual smoke steps]. Please commit and paste the commit hash back so I can record it."
 
 When you close the session:
 
