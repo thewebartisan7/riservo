@@ -100,7 +100,8 @@ it('cancels an upcoming booking from the list when within the cancellation windo
 
     $page->assertPathIs('/my-bookings')
         ->assertSee($service->name)
-        ->press('Cancel');
+        ->pressAndWaitFor('Cancel', 2)
+        ->assertSee('Booking cancelled successfully.');
 
     expect($booking->fresh()->status)->toBe(BookingStatus::Cancelled);
 });
