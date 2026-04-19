@@ -13,9 +13,9 @@ use App\Models\Service;
 use App\Models\User;
 use Tests\Browser\Support\BusinessSetup;
 
-// Covers: settings.account, settings.account.toggle-provider, settings.account.update-schedule,
-// settings.account.store-exception, settings.account.update-exception, settings.account.destroy-exception,
-// settings.account.update-services (E2E-5, D-062).
+// Covers: settings.account, settings.account.toggle-provider, settings.availability.update-schedule,
+// settings.availability.store-exception, settings.availability.update-exception, settings.availability.destroy-exception,
+// settings.availability.update-services (E2E-5, D-062, D-096).
 //
 // HTTP-only tests precede browser tests to avoid RefreshDatabase flakiness
 // in the Pest Browser suite — see BookingSettingsTest.php for details.
@@ -55,8 +55,8 @@ it('updates own weekly schedule via update-schedule', function () {
     })->all();
 
     $this->actingAs($admin)
-        ->put('/dashboard/settings/account/schedule', ['rules' => $rules])
-        ->assertRedirect('/dashboard/settings/account');
+        ->put('/dashboard/settings/availability/schedule', ['rules' => $rules])
+        ->assertRedirect('/dashboard/settings/availability');
 
     $ruleRows = AvailabilityRule::where('provider_id', $provider->id)->get();
     expect($ruleRows)->toHaveCount(1)
@@ -67,13 +67,13 @@ it('adds an own exception via store-exception', function () {
     ['business' => $business, 'admin' => $admin, 'provider' => $provider] = BusinessSetup::createLaunchedBusiness();
 
     $this->actingAs($admin)
-        ->post('/dashboard/settings/account/exceptions', [
+        ->post('/dashboard/settings/availability/exceptions', [
             'start_date' => now()->addDays(2)->format('Y-m-d'),
             'end_date' => now()->addDays(2)->format('Y-m-d'),
             'type' => 'block',
             'reason' => 'Personal day',
         ])
-        ->assertRedirect('/dashboard/settings/account');
+        ->assertRedirect('/dashboard/settings/availability');
 
     expect(AvailabilityException::where('business_id', $business->id)
         ->where('provider_id', $provider->id)
@@ -92,13 +92,13 @@ it('updates an own exception', function () {
         ]);
 
     $this->actingAs($admin)
-        ->put("/dashboard/settings/account/exceptions/{$exception->id}", [
+        ->put("/dashboard/settings/availability/exceptions/{$exception->id}", [
             'start_date' => $exception->start_date->format('Y-m-d'),
             'end_date' => $exception->end_date->format('Y-m-d'),
             'type' => 'block',
             'reason' => 'Edited',
         ])
-        ->assertRedirect('/dashboard/settings/account');
+        ->assertRedirect('/dashboard/settings/availability');
 
     expect($exception->fresh()->reason)->toBe('Edited');
 });
@@ -111,8 +111,8 @@ it('deletes an own exception', function () {
         ->create(['provider_id' => $provider->id]);
 
     $this->actingAs($admin)
-        ->delete("/dashboard/settings/account/exceptions/{$exception->id}")
-        ->assertRedirect('/dashboard/settings/account');
+        ->delete("/dashboard/settings/availability/exceptions/{$exception->id}")
+        ->assertRedirect('/dashboard/settings/availability');
 
     expect(AvailabilityException::find($exception->id))->toBeNull();
 });
@@ -125,10 +125,10 @@ it('syncs own services via update-services', function () {
     expect($provider->services()->count())->toBe(0);
 
     $this->actingAs($admin)
-        ->put('/dashboard/settings/account/services', [
+        ->put('/dashboard/settings/availability/services', [
             'service_ids' => [$service->id],
         ])
-        ->assertRedirect('/dashboard/settings/account');
+        ->assertRedirect('/dashboard/settings/availability');
 
     expect($provider->services()->count())->toBe(1);
 });
@@ -153,14 +153,14 @@ it('toggles provider off and soft-deletes the Provider row (historical bookings 
         ->and(Booking::find($booking->id))->not->toBeNull();
 });
 
-it('denies staff members with a 403 on the account page', function () {
+it('allows staff members on the account page', function () {
     ['staff' => $staffCollection] = BusinessSetup::createBusinessWithStaff(
         1,
         ['onboarding_step' => 5, 'onboarding_completed_at' => now()],
     );
     $staff = $staffCollection->first();
 
-    $this->actingAs($staff)->get('/dashboard/settings/account')->assertForbidden();
+    $this->actingAs($staff)->get('/dashboard/settings/account')->assertOk();
 });
 
 it('renders the account settings page for an admin', function () {
@@ -171,8 +171,8 @@ it('renders the account settings page for an admin', function () {
     $page = visit('/dashboard/settings/account');
     $page->assertPathIs('/dashboard/settings/account')
         ->assertSee('Your account')
-        ->assertSee($admin->name)
-        ->assertSee($admin->email)
+        ->assertValue('input[name="name"]', $admin->name)
+        ->assertValue('input[name="email"]', $admin->email)
         ->assertNoJavaScriptErrors();
 });
 
