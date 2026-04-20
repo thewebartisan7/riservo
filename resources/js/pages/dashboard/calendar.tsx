@@ -15,6 +15,7 @@ import BookingDetailSheet from '@/components/dashboard/booking-detail-sheet';
 import ManualBookingDialog, {
     type ManualBookingDialogSeed,
 } from '@/components/dashboard/manual-booking-dialog';
+import { toastManager } from '@/components/ui/toast';
 import type { PageProps, DashboardBooking, CalendarProvider, ServiceWithProviders } from '@/types';
 
 // D-100: dnd-kit lives only inside this lazy-loaded shell so it lands in a
@@ -42,7 +43,6 @@ export default function CalendarPage() {
     const [sheetOpen, setSheetOpen] = useState(false);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [dialogSeed, setDialogSeed] = useState<ManualBookingDialogSeed | undefined>();
-    const [rescheduleError, setRescheduleError] = useState<string | null>(null);
     const gridContainerRef = useRef<HTMLElement | null>(null);
 
     const [visibleIds, setVisibleIds] = useState<Set<number>>(
@@ -70,11 +70,16 @@ export default function CalendarPage() {
         setDialogOpen(true);
     }, []);
 
-    const handleRescheduleError = useCallback((message: string) => {
-        setRescheduleError(message);
-        // Auto-clear after 6s so the banner doesn't linger forever.
-        window.setTimeout(() => setRescheduleError(null), 6000);
-    }, []);
+    const handleRescheduleError = useCallback(
+        (message: string) => {
+            toastManager.add({
+                type: 'error',
+                title: t('Reschedule failed'),
+                description: message,
+            });
+        },
+        [t],
+    );
 
     const registerGridContainer = useCallback((el: HTMLElement | null) => {
         gridContainerRef.current = el;
@@ -196,15 +201,6 @@ export default function CalendarPage() {
                     </div>
                 )}
 
-                {rescheduleError && (
-                    <div
-                        role="alert"
-                        className="flex-none border-b border-destructive/40 bg-destructive/10 px-5 py-2 text-sm text-destructive sm:px-7"
-                    >
-                        {rescheduleError}
-                    </div>
-                )}
-
                 <div className="relative flex min-h-0 flex-1 flex-col">
                     {navLoading && (
                         <div
@@ -232,6 +228,8 @@ export default function CalendarPage() {
                         <DndCalendarShell
                             bookings={filteredBookings}
                             view={view}
+                            date={date}
+                            timezone={timezone}
                             onErrorMessage={handleRescheduleError}
                             registerGridContainer={registerGridContainer}
                             gridContainerRef={gridContainerRef}

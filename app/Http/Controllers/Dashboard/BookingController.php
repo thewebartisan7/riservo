@@ -30,6 +30,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -270,9 +271,9 @@ class BookingController extends Controller
         }
 
         if ($booking->source === BookingSource::GoogleCalendar) {
-            return response()->json([
-                'message' => __('External calendar events cannot be rescheduled from riservo.'),
-            ], 422);
+            throw ValidationException::withMessages([
+                'booking' => __('External calendar events cannot be rescheduled from riservo.'),
+            ]);
         }
 
         if (! $booking->status->canTransitionTo($booking->status) && ! in_array(
@@ -282,22 +283,22 @@ class BookingController extends Controller
         )) {
             // Pending/Confirmed are the only statuses that block availability
             // (D-031) and therefore the only statuses it makes sense to move.
-            return response()->json([
-                'message' => __('Only pending or confirmed bookings can be rescheduled.'),
-            ], 422);
+            throw ValidationException::withMessages([
+                'booking' => __('Only pending or confirmed bookings can be rescheduled.'),
+            ]);
         }
 
         if ($booking->provider?->trashed()) {
-            return response()->json([
-                'message' => __('This booking belongs to a deactivated provider and cannot be rescheduled.'),
-            ], 422);
+            throw ValidationException::withMessages([
+                'booking' => __('This booking belongs to a deactivated provider and cannot be rescheduled.'),
+            ]);
         }
 
         $service = $booking->service;
         if ($service === null) {
-            return response()->json([
-                'message' => __('This booking has no service attached and cannot be rescheduled.'),
-            ], 422);
+            throw ValidationException::withMessages([
+                'booking' => __('This booking has no service attached and cannot be rescheduled.'),
+            ]);
         }
 
         $durationMinutes = (int) $request->validated('duration_minutes');
@@ -308,25 +309,25 @@ class BookingController extends Controller
 
         $interval = $service->slot_interval_minutes;
         if ($startsAtLocal->minute % $interval !== 0 || $startsAtLocal->second !== 0) {
-            return response()->json([
-                'message' => __('Start time must align with the :minutes-minute grid.', [
+            throw ValidationException::withMessages([
+                'starts_at' => __('Start time must align with the :minutes-minute grid.', [
                     'minutes' => $interval,
                 ]),
-            ], 422);
+            ]);
         }
 
         if ($durationMinutes % $interval !== 0) {
-            return response()->json([
-                'message' => __('Duration must be a multiple of :minutes minutes.', [
+            throw ValidationException::withMessages([
+                'duration_minutes' => __('Duration must be a multiple of :minutes minutes.', [
                     'minutes' => $interval,
                 ]),
-            ], 422);
+            ]);
         }
 
         if (! $startsAtLocal->isSameDay($endsAtLocal->subSecond())) {
-            return response()->json([
-                'message' => __('A booking cannot straddle two days.'),
-            ], 422);
+            throw ValidationException::withMessages([
+                'booking' => __('A booking cannot straddle two days.'),
+            ]);
         }
 
         $endsAtUtc = $startsAtUtc->addMinutes($durationMinutes);
@@ -352,9 +353,9 @@ class BookingController extends Controller
                 );
 
                 if (! $fits) {
-                    abort(response()->json([
-                        'message' => __('That slot is not available. Pick another time.'),
-                    ], 422));
+                    throw ValidationException::withMessages([
+                        'booking' => __('That slot is not available. Pick another time.'),
+                    ]);
                 }
 
                 $booking->forceFill([
@@ -368,9 +369,9 @@ class BookingController extends Controller
             // confuses useHttp clients — translate the race to 422 matching
             // the pre-check's response path. UX surfaces one kind of error.
             if (($e->getPrevious()?->getCode() ?? $e->getCode()) === '23P01') {
-                return response()->json([
-                    'message' => __('This slot was just taken. Pick another time.'),
-                ], 422);
+                throw ValidationException::withMessages([
+                    'booking' => __('This slot was just taken. Pick another time.'),
+                ]);
             }
             throw $e;
         }

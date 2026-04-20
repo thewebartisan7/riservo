@@ -12,6 +12,12 @@ interface ReschedulePayload {
 interface RescheduleResult {
     /** True when the PATCH was accepted and the booking actually moved. */
     success: boolean;
+    /**
+     * True when the request was aborted client-side before a definitive
+     * response. Server state is indeterminate — caller should stay silent
+     * (no toast, no reload) rather than guess an outcome.
+     */
+    cancelled?: boolean;
     /** Authoritative server response shape. */
     booking?: DashboardBooking;
     /** Human-readable error reason, when success === false. */
@@ -34,12 +40,22 @@ export function useReschedule(): {
     reschedule: (payload: ReschedulePayload) => Promise<RescheduleResult>;
     pendingIds: Set<number>;
 } {
-    const http = useHttp({});
+    // `useHttp` reads the request body from its form state. The reschedule
+    // payload is fully dynamic per call (a different booking + delta on every
+    // drag), so we seed the hook with a placeholder shape and swap in the
+    // real values right before each PATCH via `transform()` — Inertia's
+    // canonical sync-before-submit hook.
+    const http = useHttp({ starts_at: '', duration_minutes: 0 });
     const [pendingIds, setPendingIds] = useState<Set<number>>(new Set());
 
     const reschedule = useCallback(
         async ({ bookingId, startsAtUtc, durationMinutes }: ReschedulePayload): Promise<RescheduleResult> => {
             setPendingIds((prev) => new Set(prev).add(bookingId));
+
+            http.transform(() => ({
+                starts_at: startsAtUtc,
+                duration_minutes: durationMinutes,
+            }));
 
             try {
                 const result = await new Promise<RescheduleResult>((resolve) => {
@@ -50,54 +66,55 @@ export function useReschedule(): {
                         resolve(value);
                     };
 
-                    http.patch(
-                        rescheduleAction.url({ booking: bookingId }),
-                        {
-                            starts_at: startsAtUtc,
-                            duration_minutes: durationMinutes,
+                    http.patch(rescheduleAction.url({ booking: bookingId }), {
+                        onSuccess: (resp: unknown) => {
+                            const data = resp as { booking: DashboardBooking };
+                            settle({ success: true, booking: data.booking });
                         },
-                        {
-                            onSuccess: (resp: unknown) => {
-                                const data = resp as { booking: DashboardBooking };
-                                settle({ success: true, booking: data.booking });
-                            },
-                            // 422 lands here with the controller's JSON
-                            // `message` mapped to a single-field errors object.
-                            onError: (errors: Record<string, string>) => {
-                                const msg =
-                                    (errors as unknown as { message?: string }).message ??
-                                    Object.values(errors)[0] ??
-                                    'Reschedule failed.';
-                                settle({ success: false, message: msg });
-                            },
-                            // Non-422 4xx/5xx (403, 500, and — if the
-                            // controller's error path ever returns one — a
-                            // stray 409) route here in Inertia v3. Returning
-                            // `false` keeps Inertia from navigating to an
-                            // error page so the calendar stays mounted.
-                            onHttpException: (response: Response | { status: number; data?: unknown }) => {
-                                const status = (response as { status: number }).status;
-                                const body = (response as { data?: unknown }).data;
-                                const msg =
-                                    (body as { message?: string } | undefined)?.message ??
-                                    (status === 403
-                                        ? 'You cannot reschedule this booking.'
-                                        : status >= 500
-                                            ? 'Something went wrong. Please try again.'
-                                            : 'Reschedule failed.');
-                                settle({ success: false, message: msg });
-                                return false;
-                            },
-                            // Connection drop / offline. Resolve so the UI
-                            // reverts rather than hanging.
-                            onNetworkError: () => {
-                                settle({
-                                    success: false,
-                                    message: 'Network error. Please check your connection and try again.',
-                                });
-                            },
+                        // 422 validation errors. The controller throws
+                        // ValidationException::withMessages(['booking' => $msg])
+                        // so `errors` always carries a keyed message for us.
+                        onError: (errors: Record<string, string>) => {
+                            const msg = Object.values(errors)[0] ?? 'Reschedule failed.';
+                            settle({ success: false, message: msg });
                         },
-                    );
+                        // Non-422 4xx/5xx (403, 500). Returning `false` keeps
+                        // Inertia from routing to an error page so the calendar
+                        // stays mounted.
+                        onHttpException: (response: { status: number }) => {
+                            const status = response.status;
+                            const msg =
+                                status === 403
+                                    ? 'You cannot reschedule this booking.'
+                                    : status >= 500
+                                        ? 'Something went wrong. Please try again.'
+                                        : 'Reschedule failed.';
+                            settle({ success: false, message: msg });
+                            return false;
+                        },
+                        onNetworkError: () => {
+                            settle({
+                                success: false,
+                                message: 'Network error. Please check your connection and try again.',
+                            });
+                        },
+                        // Inertia fires this when the in-flight request is
+                        // aborted (navigation / unmount / explicit cancel).
+                        // Abort means "client stopped waiting" — the server
+                        // may or may not have committed. We can't claim
+                        // success and can't claim failure without lying. Mark
+                        // `cancelled` so the caller stays silent (no toast,
+                        // no reload that could run against a page the user
+                        // just navigated away from).
+                        onCancel: () => {
+                            settle({ success: false, cancelled: true });
+                        },
+                    })
+                        // `.patch()` also rejects on non-2xx in addition to
+                        // invoking the callbacks above. Swallow here so the
+                        // rejection doesn't surface as an unhandledrejection —
+                        // our callbacks have already resolved `settle()`.
+                        .catch(() => undefined);
                 });
                 // Reload the calendar's booking list on success so the
                 // server is the source of truth (optimistic revert at the

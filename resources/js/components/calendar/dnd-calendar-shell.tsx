@@ -1,22 +1,29 @@
 import {
     type ReactNode,
     useCallback,
+    useEffect,
     useMemo,
+    useRef,
     useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
     DndContext,
-    DragOverlay,
     PointerSensor,
     type DragEndEvent,
+    type DragMoveEvent,
     type DragStartEvent,
     useDraggable,
     useSensor,
     useSensors,
 } from '@dnd-kit/core';
 import { restrictToWindowEdges } from '@dnd-kit/modifiers';
+import { differenceInCalendarDays, parseISO, startOfWeek } from 'date-fns';
+import { fromZonedTime } from 'date-fns-tz';
 import type { DashboardBooking } from '@/types';
 import { useReschedule } from '@/hooks/use-reschedule';
+import { getBookingGridPosition, getDateInTimezone } from './calendar-event';
+import { formatTimeShort } from '@/lib/datetime-format';
 import {
     DndCalendarContext,
     type DndCalendarContextValue,
@@ -36,7 +43,10 @@ import {
  *     from DndCalendarContext and wraps its button with the draggable refs.
  *   - A `ResizeHandle` component via context — rendered at the bottom edge
  *     of CalendarEvent; drag updates the booking's duration.
- *   - A `DragOverlay` rendering a faded copy of the dragged card (D-101).
+ *   - A ghost rectangle (portalled to `document.body` to escape any
+ *     ancestor with a `transform` that would break `position: fixed`) that
+ *     highlights the snapped target slot and carries the booking title plus
+ *     the projected new start time.
  *
  * Drag math (no droppables — keeps the grid clean for click-to-create):
  *   - vertical delta → time delta via container.height / 288 rows × 5 min.
@@ -56,6 +66,10 @@ interface DndCalendarShellProps {
     children: ReactNode;
     bookings: DashboardBooking[];
     view: 'day' | 'week' | 'month';
+    /** yyyy-MM-dd of the page's reference date. Used to pick the week start for ghost column math. */
+    date: string;
+    /** Business timezone. Needed to place the ghost slot at the correct local hour. */
+    timezone: string;
     onErrorMessage: (message: string) => void;
     /**
      * Ref to the time-grid container (the <ol> in week/day view). Passed by
@@ -66,6 +80,31 @@ interface DndCalendarShellProps {
     gridContainerRef: { current: HTMLElement | null };
     /** Kept for API symmetry; registration actually happens via the page. */
     registerGridContainer?: (el: HTMLElement | null) => void;
+}
+
+interface DragGhost {
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+    /** Snapped new start time, localised. */
+    label: string;
+    /** Booking title shown inside the ghost. */
+    title: string;
+}
+
+interface ReschedulePreview {
+    /** Visual ghost — derived from the same clamped math as the payload. */
+    ghost: DragGhost;
+    /** UTC ISO string of the snapped new start time. */
+    startsAtUtc: string;
+    /** Snapped new duration. For `move` drags, equals the original duration. */
+    durationMinutes: number;
+    /**
+     * True when the preview differs from the booking's current state.
+     * `handleDragEnd` short-circuits when false so we don't fire a no-op PATCH.
+     */
+    changed: boolean;
 }
 
 const MIN_DURATION_MINUTES = 15;
@@ -138,11 +177,25 @@ export default function DndCalendarShell({
     children,
     bookings,
     view,
+    date,
+    timezone,
     onErrorMessage,
     gridContainerRef,
 }: DndCalendarShellProps) {
     const { reschedule, pendingIds } = useReschedule();
-    const [draggingBooking, setDraggingBooking] = useState<DashboardBooking | null>(null);
+    const [ghost, setGhost] = useState<DragGhost | null>(null);
+    // onDragMove fires at pointer rate; we coalesce to one update per frame
+    // and stash the latest pending ghost so we never block the drag thread.
+    const ghostRafRef = useRef<number | null>(null);
+    const pendingGhostRef = useRef<DragGhost | null>(null);
+
+    useEffect(() => {
+        return () => {
+            if (ghostRafRef.current !== null) {
+                cancelAnimationFrame(ghostRafRef.current);
+            }
+        };
+    }, []);
 
     const sensors = useSensors(
         useSensor(PointerSensor, {
@@ -150,78 +203,196 @@ export default function DndCalendarShell({
         }),
     );
 
-    const handleDragStart = useCallback(
-        (event: DragStartEvent) => {
-            const data = event.active.data.current as DragData | undefined;
-            if (!data) return;
-            const booking = bookings.find((b) => b.id === data.bookingId);
-            setDraggingBooking(booking ?? null);
-        },
-        [bookings],
-    );
-
-    const handleDragEnd = useCallback(
-        async (event: DragEndEvent) => {
-            setDraggingBooking(null);
-
-            const data = event.active.data.current as DragData | undefined;
-            if (!data) return;
-
+    /**
+     * Single source of truth for drag snapping + clamping. Produces both the
+     * ghost visual and the exact payload the PATCH will send, so the preview
+     * and the commit can never diverge — if the UI shows "12:00 PM Monday",
+     * that is what the server receives.
+     */
+    const computePreview = useCallback(
+        (data: DragData, deltaX: number, deltaY: number): ReschedulePreview | null => {
             const container = gridContainerRef.current;
-            if (!container) return;
+            if (!container) return null;
+            const booking = bookings.find((b) => b.id === data.bookingId);
+            const title =
+                booking?.service?.name ?? booking?.external_title ?? '—';
 
             const rect = container.getBoundingClientRect();
             const HEADER_PX = 28; // 1.75rem offset at the top of the grid
             const gridHeight = rect.height - HEADER_PX;
-            if (gridHeight <= 0) return;
+            if (gridHeight <= 0) return null;
 
             const minutesPerPixel = (24 * 60) / gridHeight;
             const deltaMinutes =
-                Math.round((event.delta.y * minutesPerPixel) / SNAP_MINUTES) * SNAP_MINUTES;
+                Math.round((deltaY * minutesPerPixel) / SNAP_MINUTES) * SNAP_MINUTES;
+
+            const { gridRow, gridSpan } = getBookingGridPosition(
+                data.startsAtUtc,
+                data.endsAtUtc,
+                timezone,
+            );
+            const originalStartMinutes = (gridRow - 2) * 5; // row 2 = 00:00
+            const originalDurationMinutes = gridSpan * 5;
+
+            let newStartMinutes = originalStartMinutes;
+            let newDurationMinutes = originalDurationMinutes;
 
             if (data.kind === 'resize') {
-                const newDuration = Math.max(
+                newDurationMinutes = Math.max(
                     MIN_DURATION_MINUTES,
                     Math.round((data.durationMinutes + deltaMinutes) / SNAP_MINUTES) * SNAP_MINUTES,
                 );
-                if (newDuration === data.durationMinutes) return;
-
-                const result = await reschedule({
-                    bookingId: data.bookingId,
-                    startsAtUtc: data.startsAtUtc,
-                    durationMinutes: newDuration,
-                });
-                if (!result.success) {
-                    onErrorMessage(result.message ?? 'Resize failed.');
-                }
-                return;
+            } else {
+                newStartMinutes = originalStartMinutes + deltaMinutes;
             }
 
-            let deltaDays = 0;
+            // Clamp inside the 24h grid.
+            //   - `move`: pin the start so the full (unchanged) duration still
+            //     fits before midnight. Otherwise the ghost would show a
+            //     truncated slot while the PATCH would ask the server to
+            //     straddle two days.
+            //   - `resize`: the start is fixed (the user is dragging the
+            //     bottom edge, not the whole card), so clampedStart must be
+            //     the ORIGINAL start — not 24h-SNAP, which would paint the
+            //     ghost at 23:45 for bookings that legitimately start later.
+            const clampedStart =
+                data.kind === 'resize'
+                    ? originalStartMinutes
+                    : Math.max(
+                        0,
+                        Math.min(newStartMinutes, Math.max(0, 24 * 60 - originalDurationMinutes)),
+                    );
+            const clampedDuration = Math.max(
+                MIN_DURATION_MINUTES,
+                Math.min(newDurationMinutes, 24 * 60 - clampedStart),
+            );
+
+            // Column math — week view snaps horizontally by whole days.
+            let originalColumn = 0;
+            let columns = 1;
+            let columnWidth = rect.width;
             if (view === 'week') {
-                const columnWidth = rect.width / 7;
-                if (columnWidth > 0) {
-                    deltaDays = Math.round(event.delta.x / columnWidth);
-                }
+                columns = 7;
+                columnWidth = rect.width / columns;
+                const bookingDay = parseISO(getDateInTimezone(data.startsAtUtc, timezone));
+                const weekStart = startOfWeek(parseISO(date), { weekStartsOn: 1 });
+                originalColumn = Math.max(
+                    0,
+                    Math.min(6, differenceInCalendarDays(bookingDay, weekStart)),
+                );
+            }
+            let newColumn = originalColumn;
+            if (data.kind === 'move' && view === 'week' && columnWidth > 0) {
+                const deltaDays = Math.round(deltaX / columnWidth);
+                newColumn = Math.max(0, Math.min(columns - 1, originalColumn + deltaDays));
             }
 
-            if (deltaMinutes === 0 && deltaDays === 0) return;
+            const top = rect.top + HEADER_PX + (clampedStart / (24 * 60)) * gridHeight;
+            const left = rect.left + newColumn * columnWidth;
+            const width = columnWidth;
+            const height = (clampedDuration / (24 * 60)) * gridHeight;
 
-            const originalStart = new Date(data.startsAtUtc);
-            const newStart = new Date(originalStart);
-            newStart.setUTCDate(newStart.getUTCDate() + deltaDays);
-            newStart.setUTCMinutes(newStart.getUTCMinutes() + deltaMinutes);
+            // Build the UTC instant for the clamped wall-clock slot via the
+            // target local date + local minutes in the business tz, then
+            // convert to UTC with `fromZonedTime`. DST-safe: the offset is
+            // resolved at the target instant, so dragging across a DST
+            // transition keeps the local hour the user saw in the ghost.
+            const originalLocalKey = getDateInTimezone(data.startsAtUtc, timezone);
+            const [origYear, origMonth, origDay] = originalLocalKey.split('-').map(Number);
+            // Advance the calendar day via UTC arithmetic (DST-free) to land
+            // on the right day-of-month without browser-tz interference.
+            const localBase = new Date(Date.UTC(origYear, origMonth - 1, origDay));
+            localBase.setUTCDate(localBase.getUTCDate() + (newColumn - originalColumn));
+            const targetYear = localBase.getUTCFullYear();
+            const targetMonth = String(localBase.getUTCMonth() + 1).padStart(2, '0');
+            const targetDay = String(localBase.getUTCDate()).padStart(2, '0');
+            const targetHour = String(Math.floor(clampedStart / 60)).padStart(2, '0');
+            const targetMinute = String(clampedStart % 60).padStart(2, '0');
+            const newStartUtc =
+                data.kind === 'resize'
+                    ? new Date(data.startsAtUtc)
+                    : fromZonedTime(
+                        `${targetYear}-${targetMonth}-${targetDay}T${targetHour}:${targetMinute}:00`,
+                        timezone,
+                    );
+
+            const startsAtUtc = newStartUtc.toISOString();
+            const durationMinutes =
+                data.kind === 'resize' ? clampedDuration : data.durationMinutes;
+            const changed =
+                data.kind === 'resize'
+                    ? clampedDuration !== data.durationMinutes
+                    : clampedStart !== originalStartMinutes || newColumn !== originalColumn;
+
+            return {
+                ghost: {
+                    top,
+                    left,
+                    width,
+                    height,
+                    label: formatTimeShort(startsAtUtc, timezone),
+                    title,
+                },
+                startsAtUtc,
+                durationMinutes,
+                changed,
+            };
+        },
+        [bookings, date, gridContainerRef, timezone, view],
+    );
+
+    const handleDragStart = useCallback(
+        (event: DragStartEvent) => {
+            const data = event.active.data.current as DragData | undefined;
+            if (!data) return;
+            // Seed the ghost at the original position so it appears immediately.
+            const preview = computePreview(data, 0, 0);
+            setGhost(preview?.ghost ?? null);
+        },
+        [computePreview],
+    );
+
+    const handleDragMove = useCallback(
+        (event: DragMoveEvent) => {
+            const data = event.active.data.current as DragData | undefined;
+            if (!data) return;
+            const preview = computePreview(data, event.delta.x, event.delta.y);
+            pendingGhostRef.current = preview?.ghost ?? null;
+            if (ghostRafRef.current !== null) return;
+            ghostRafRef.current = requestAnimationFrame(() => {
+                ghostRafRef.current = null;
+                setGhost(pendingGhostRef.current);
+            });
+        },
+        [computePreview],
+    );
+
+    const handleDragEnd = useCallback(
+        async (event: DragEndEvent) => {
+            setGhost(null);
+            if (ghostRafRef.current !== null) {
+                cancelAnimationFrame(ghostRafRef.current);
+                ghostRafRef.current = null;
+            }
+
+            const data = event.active.data.current as DragData | undefined;
+            if (!data) return;
+
+            const preview = computePreview(data, event.delta.x, event.delta.y);
+            if (!preview || !preview.changed) return;
 
             const result = await reschedule({
                 bookingId: data.bookingId,
-                startsAtUtc: newStart.toISOString(),
-                durationMinutes: data.durationMinutes,
+                startsAtUtc: preview.startsAtUtc,
+                durationMinutes: preview.durationMinutes,
             });
-            if (!result.success) {
+            // `cancelled` means client-abort (navigation/unmount): indeterminate
+            // server state, stay silent. Real failures still surface a toast.
+            if (!result.success && !result.cancelled) {
                 onErrorMessage(result.message ?? 'Reschedule failed.');
             }
         },
-        [reschedule, onErrorMessage, view, gridContainerRef],
+        [computePreview, reschedule, onErrorMessage],
     );
 
     const ctxValue = useMemo<DndCalendarContextValue>(
@@ -233,24 +404,44 @@ export default function DndCalendarShell({
         [pendingIds],
     );
 
+    const handleDragCancel = useCallback(() => {
+        setGhost(null);
+        if (ghostRafRef.current !== null) {
+            cancelAnimationFrame(ghostRafRef.current);
+            ghostRafRef.current = null;
+        }
+    }, []);
+
     return (
         <DndCalendarContext.Provider value={ctxValue}>
             <DndContext
                 sensors={sensors}
                 onDragStart={handleDragStart}
+                onDragMove={handleDragMove}
                 onDragEnd={handleDragEnd}
+                onDragCancel={handleDragCancel}
                 modifiers={[restrictToWindowEdges]}
             >
                 {children}
-                <DragOverlay dropAnimation={null}>
-                    {draggingBooking ? (
-                        <div className="pointer-events-none rounded-md border-2 border-primary bg-background/90 px-2 py-1 text-[11px] font-semibold text-foreground shadow-lg ring-2 ring-primary/30">
-                            {draggingBooking.service?.name ??
-                                draggingBooking.external_title ??
-                                '—'}
-                        </div>
-                    ) : null}
-                </DragOverlay>
+                {ghost &&
+                    createPortal(
+                        <div
+                            aria-hidden="true"
+                            className="pointer-events-none fixed z-50 flex flex-col gap-0.5 overflow-hidden rounded-md border-2 border-primary/70 bg-primary/10 px-1.5 py-1 text-[11px] font-semibold text-foreground shadow-lg"
+                            style={{
+                                top: ghost.top,
+                                left: ghost.left,
+                                width: ghost.width,
+                                height: ghost.height,
+                            }}
+                        >
+                            <span className="truncate">{ghost.title}</span>
+                            <span className="font-normal tabular-nums text-muted-foreground">
+                                {ghost.label}
+                            </span>
+                        </div>,
+                        document.body,
+                    )}
             </DndContext>
         </DndCalendarContext.Provider>
     );

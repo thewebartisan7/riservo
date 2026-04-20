@@ -5,7 +5,7 @@
       "name": "dev",
       "runtimeExecutable": "composer",
       "runtimeArgs": ["run", "dev"],
-      "port": 8001
+      "port": 8002
     }
   ]
 }

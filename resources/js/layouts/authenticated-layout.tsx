@@ -26,6 +26,7 @@ import {
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Display } from '@/components/ui/display';
+import { ToastProvider } from '@/components/ui/toast';
 import { useTrans } from '@/hooks/use-trans';
 import { getInitials } from '@/lib/booking-format';
 import { billing as settingsBilling, services as settingsServices } from '@/routes/settings';
@@ -86,7 +87,7 @@ export default function AuthenticatedLayout({
     ];
 
     return (
-        <>
+        <ToastProvider>
             {title && <Head title={title} />}
             <SidebarProvider>
                 <Sidebar>
@@ -302,7 +303,7 @@ export default function AuthenticatedLayout({
                     </main>
                 </SidebarInset>
             </SidebarProvider>
-        </>
+        </ToastProvider>
     );
 }
 
