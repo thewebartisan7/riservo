@@ -74,7 +74,7 @@ class DashboardController extends Controller
                     : null,
                 'provider' => [
                     'id' => $booking->provider->id,
-                    'name' => $booking->provider->user?->name ?? '',
+                    'name' => $booking->provider->user->name ?? '',
                     'is_active' => ! $booking->provider->trashed(),
                 ],
                 'customer' => $booking->customer

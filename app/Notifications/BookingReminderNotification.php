@@ -39,7 +39,7 @@ class BookingReminderNotification extends Notification implements ShouldQueue
             ->markdown('mail.booking-reminder', [
                 'businessName' => $business->name,
                 'serviceName' => $this->booking->service->name,
-                'providerName' => $this->booking->provider->user?->name ?? '',
+                'providerName' => $this->booking->provider->user->name ?? '',
                 'date' => $startsAt->format('d.m.Y'),
                 'time' => $startsAt->format('H:i'),
                 'viewUrl' => route('bookings.show', $this->booking->cancellation_token),

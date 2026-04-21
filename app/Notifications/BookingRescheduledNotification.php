@@ -51,8 +51,8 @@ class BookingRescheduledNotification extends Notification implements ShouldQueue
             ]))
             ->markdown('mail.booking-rescheduled', [
                 'businessName' => $business->name,
-                'serviceName' => $this->booking->service?->name ?? '',
-                'providerName' => $this->booking->provider->user?->name ?? '',
+                'serviceName' => $this->booking->service->name ?? '',
+                'providerName' => $this->booking->provider->user->name ?? '',
                 'previousDate' => $previous->format('d.m.Y'),
                 'previousTime' => $previous->format('H:i'),
                 'newDate' => $current->format('d.m.Y'),

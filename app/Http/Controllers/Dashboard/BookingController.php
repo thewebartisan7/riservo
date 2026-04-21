@@ -136,7 +136,7 @@ class BookingController extends Controller
                     : null,
                 'provider' => [
                     'id' => $booking->provider->id,
-                    'name' => $booking->provider->user?->name ?? '',
+                    'name' => $booking->provider->user->name ?? '',
                     'avatar_url' => $booking->provider->user?->avatar
                         ? Storage::disk('public')->url($booking->provider->user->avatar)
                         : null,
@@ -158,12 +158,12 @@ class BookingController extends Controller
                 'price' => $service->price,
                 'providers' => $service->providers->map(fn (Provider $p) => [
                     'id' => $p->id,
-                    'name' => $p->user?->name ?? '',
+                    'name' => $p->user->name ?? '',
                 ])->values(),
             ])->values(),
             'providers' => $providers->map(fn (Provider $p) => [
                 'id' => $p->id,
-                'name' => $p->user?->name ?? '',
+                'name' => $p->user->name ?? '',
             ])->values(),
             'filters' => [
                 'status' => $request->string('status', ''),
@@ -430,7 +430,7 @@ class BookingController extends Controller
                 : null,
             'provider' => [
                 'id' => $booking->provider->id,
-                'name' => $booking->provider->user?->name ?? '',
+                'name' => $booking->provider->user->name ?? '',
                 'avatar_url' => $booking->provider->user?->avatar
                     ? Storage::disk('public')->url($booking->provider->user->avatar)
                     : null,

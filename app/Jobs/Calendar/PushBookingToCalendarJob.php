@@ -29,6 +29,9 @@ class PushBookingToCalendarJob implements ShouldQueue
 
     public int $tries = 3;
 
+    /**
+     * @param  'create'|'update'|'delete'  $action
+     */
     public function __construct(
         public readonly int $bookingId,
         public readonly string $action,

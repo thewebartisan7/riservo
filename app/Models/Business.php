@@ -21,6 +21,7 @@ use Laravel\Cashier\Billable;
  * @property ConfirmationMode $confirmation_mode
  * @property AssignmentStrategy $assignment_strategy
  * @property Carbon|null $onboarding_completed_at
+ * @property array<int, int>|null $reminder_hours
  * @property string|null $stripe_id
  * @property string|null $pm_type
  * @property string|null $pm_last_four
@@ -205,8 +206,9 @@ class Business extends Model
      * `subscriptions` relation when present (HandleInertiaRequests warms it)
      * to avoid an extra query on the hot Inertia path.
      */
-    public function onTrial($name = 'default', $price = null): bool
+    public function onTrial(string $type = 'default', $price = null): bool
     {
+        // TODO we must remember about this, or better not to override but add long trial e.g. 3-6 months
         return $this->subscriptions->isEmpty();
     }
 

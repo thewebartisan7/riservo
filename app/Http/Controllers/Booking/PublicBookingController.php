@@ -114,7 +114,7 @@ class PublicBookingController extends Controller
             ->get()
             ->map(fn (Provider $provider) => [
                 'id' => $provider->id,
-                'name' => $provider->user?->name ?? '',
+                'name' => $provider->user->name ?? '',
                 'avatar_url' => $provider->user?->avatar
                     ? Storage::disk('public')->url($provider->user->avatar)
                     : null,

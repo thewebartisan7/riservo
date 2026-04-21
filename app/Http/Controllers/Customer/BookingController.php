@@ -98,7 +98,7 @@ class BookingController extends Controller
                 'name' => $booking->service->name,
             ],
             'provider' => [
-                'name' => $booking->provider->user?->name ?? '',
+                'name' => $booking->provider->user->name ?? '',
                 'is_active' => ! $booking->provider->trashed(),
             ],
             'business' => [

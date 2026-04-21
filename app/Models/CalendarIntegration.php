@@ -9,7 +9,17 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property Carbon|null $token_expires_at
+ * @property Carbon|null $webhook_expiry
+ * @property Carbon|null $last_synced_at
+ * @property Carbon|null $last_pushed_at
+ * @property Carbon|null $sync_error_at
+ * @property Carbon|null $push_error_at
+ * @property array<int, string>|null $conflict_calendar_ids
+ */
 #[Fillable([
     'user_id',
     'business_id',

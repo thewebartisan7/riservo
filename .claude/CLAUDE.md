@@ -74,6 +74,7 @@ riservo has three session shapes. The developer picks which one by how they brie
 - Iteration-loop tests pass: `php artisan test tests/Feature tests/Unit --compact`.
 - Code style is clean: `vendor/bin/pint --dirty --format agent`.
 - Wayfinder regenerated: `php artisan wayfinder:generate`.
+- Static analysis is clean: `./vendor/bin/phpstan`.
 - Frontend builds: `npm run build`.
 - `docs/HANDOFF.md` rewritten (overwrite, not append) if the session changed shipped product / runtime state. Docs-only sessions may skip.
 - Any new architectural decisions promoted into the matching topical file under `docs/decisions/`.

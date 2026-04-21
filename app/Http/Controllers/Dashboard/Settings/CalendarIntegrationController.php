@@ -15,6 +15,8 @@ use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 use Laravel\Socialite\Facades\Socialite;
+use Laravel\Socialite\Two\AbstractProvider;
+use Laravel\Socialite\Two\User as SocialiteUser;
 use Symfony\Component\HttpFoundation\Response as HttpResponse;
 use Throwable;
 
@@ -72,7 +74,13 @@ class CalendarIntegrationController extends Controller
 
     public function connect(Request $request): HttpResponse
     {
-        $redirect = Socialite::driver('google')
+        $driver = Socialite::driver('google');
+
+        if (! $driver instanceof AbstractProvider) {
+            throw new \LogicException('Google Socialite driver must be an OAuth2 AbstractProvider.');
+        }
+
+        $redirect = $driver
             ->scopes(self::GOOGLE_SCOPES)
             ->with(['access_type' => 'offline', 'prompt' => 'consent'])
             ->redirect();
@@ -100,6 +108,10 @@ class CalendarIntegrationController extends Controller
             return redirect()
                 ->route('settings.calendar-integration')
                 ->with('error', __('Could not complete the Google Calendar connection. Please try again.'));
+        }
+
+        if (! $googleUser instanceof SocialiteUser) {
+            throw new \LogicException('Google Socialite user must be an OAuth2 user.');
         }
 
         $existing = $request->user()->calendarIntegration;

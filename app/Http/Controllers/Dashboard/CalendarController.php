@@ -95,7 +95,7 @@ class CalendarController extends Controller
                     : null,
                 'provider' => [
                     'id' => $booking->provider->id,
-                    'name' => $booking->provider->user?->name ?? '',
+                    'name' => $booking->provider->user->name ?? '',
                     'avatar_url' => $booking->provider->user?->avatar
                         ? Storage::disk('public')->url($booking->provider->user->avatar)
                         : null,
@@ -112,7 +112,7 @@ class CalendarController extends Controller
             ]),
             'providers' => $providers->map(fn (Provider $p) => [
                 'id' => $p->id,
-                'name' => $p->user?->name ?? '',
+                'name' => $p->user->name ?? '',
                 'avatar_url' => $p->user?->avatar ? Storage::disk('public')->url($p->user->avatar) : null,
             ])->values(),
             'services' => $services->map(fn (Service $service) => [
@@ -122,7 +122,7 @@ class CalendarController extends Controller
                 'price' => $service->price,
                 'providers' => $service->providers->map(fn (Provider $p) => [
                     'id' => $p->id,
-                    'name' => $p->user?->name ?? '',
+                    'name' => $p->user->name ?? '',
                 ])->values(),
             ])->values(),
             'view' => $view,

@@ -69,7 +69,7 @@ class GoogleCalendarProvider implements CalendarProvider
 
         $calendar = new CalendarResource;
         $calendar->setSummary($name);
-        $calendar->setTimeZone($integration->business?->timezone ?? 'UTC');
+        $calendar->setTimeZone($integration->business->timezone ?? 'UTC');
 
         $created = $service->calendars->insert($calendar);
 
@@ -237,8 +237,8 @@ class GoogleCalendarProvider implements CalendarProvider
 
         $event = new Event;
 
-        $serviceName = $booking->service?->name ?? __('Appointment');
-        $customerName = $booking->customer?->name ?? __('Customer');
+        $serviceName = $booking->service->name ?? __('Appointment');
+        $customerName = $booking->customer->name ?? __('Customer');
         $event->setSummary("[{$serviceName}] — {$customerName}");
 
         $description = [];
@@ -290,12 +290,12 @@ class GoogleCalendarProvider implements CalendarProvider
             }
         }
 
+        // Google PHP SDK declares $private as string[] but leaves it null when
+        // the event has no private extended properties. Coerce to array so
+        // foreach never receives null at runtime.
         $extended = [];
-        $props = $event->getExtendedProperties();
-        if ($props && is_array($props->getPrivate())) {
-            foreach ($props->getPrivate() as $key => $value) {
-                $extended[$key] = (string) $value;
-            }
+        foreach ((array) $event->getExtendedProperties()->private as $key => $value) {
+            $extended[$key] = (string) $value;
         }
 
         return new ExternalEvent(
@@ -309,7 +309,7 @@ class GoogleCalendarProvider implements CalendarProvider
             attendeeEmails: $attendees,
             htmlLink: $event->getHtmlLink(),
             extendedProperties: $extended,
-            creatorEmail: $event->getCreator()?->getEmail(),
+            creatorEmail: $event->getCreator()->getEmail(),
         );
     }
 

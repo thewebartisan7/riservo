@@ -59,7 +59,7 @@ class Provider extends Model
     protected function displayName(): Attribute
     {
         return Attribute::make(
-            get: fn () => $this->user?->name ?? '',
+            get: fn () => $this->user->name ?? '',
         );
     }
 }

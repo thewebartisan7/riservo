@@ -218,7 +218,7 @@ class PullCalendarEventsJob implements ShouldQueue
             'external_title' => $event->summary,
             'external_html_link' => $event->htmlLink,
             'payment_status' => 'pending',
-            'cancellation_token' => $existing?->cancellation_token ?? (string) Str::uuid(),
+            'cancellation_token' => $existing->cancellation_token ?? (string) Str::uuid(),
         ];
 
         try {

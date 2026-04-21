@@ -49,7 +49,7 @@ class BookingReceivedNotification extends Notification implements ShouldQueue
                 'businessName' => $business->name,
                 'customerName' => $this->booking->customer->name,
                 'serviceName' => $this->booking->service->name,
-                'providerName' => $this->booking->provider->user?->name ?? '',
+                'providerName' => $this->booking->provider->user->name ?? '',
                 'date' => $startsAt->format('d.m.Y'),
                 'time' => $startsAt->format('H:i'),
                 'status' => $this->booking->status->label(),

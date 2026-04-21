@@ -130,7 +130,7 @@ class Booking extends Model
      */
     public function serviceLabel(): string
     {
-        return $this->service?->name
+        return $this->service->name
             ?? $this->external_title
             ?? __('External event');
     }

@@ -34,7 +34,7 @@ class ServiceController extends Controller
                 'bookings_count' => $s->bookings_count,
                 'providers' => $s->providers->map(fn (Provider $p) => [
                     'id' => $p->id,
-                    'name' => $p->user?->name ?? '',
+                    'name' => $p->user->name ?? '',
                 ])->values(),
             ]);
 
@@ -51,7 +51,7 @@ class ServiceController extends Controller
             ->with('user:id,name')
             ->orderBy('id')
             ->get()
-            ->map(fn (Provider $p) => ['id' => $p->id, 'name' => $p->user?->name ?? '']);
+            ->map(fn (Provider $p) => ['id' => $p->id, 'name' => $p->user->name ?? '']);
 
         return Inertia::render('dashboard/settings/services/create', [
             'providers' => $providers,
@@ -89,7 +89,7 @@ class ServiceController extends Controller
             ->with('user:id,name')
             ->orderBy('id')
             ->get()
-            ->map(fn (Provider $p) => ['id' => $p->id, 'name' => $p->user?->name ?? '']);
+            ->map(fn (Provider $p) => ['id' => $p->id, 'name' => $p->user->name ?? '']);
 
         return Inertia::render('dashboard/settings/services/edit', [
             'service' => [
