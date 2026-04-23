@@ -8,6 +8,7 @@ use App\Http\Controllers\Auth\MagicLinkController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Booking\BookingManagementController;
+use App\Http\Controllers\Booking\BookingPaymentReturnController;
 use App\Http\Controllers\Booking\PublicBookingController;
 use App\Http\Controllers\Customer\BookingController as CustomerBookingController;
 use App\Http\Controllers\Dashboard\BookingController as DashboardBookingController;
@@ -323,6 +324,18 @@ Route::post('/webhooks/stripe-connect', StripeConnectWebhookController::class)
 // Guest booking management (no auth, via cancellation token)
 Route::get('/bookings/{token}', [BookingManagementController::class, 'show'])->name('bookings.show');
 Route::post('/bookings/{token}/cancel', [BookingManagementController::class, 'cancel'])->name('bookings.cancel');
+
+// PAYMENTS Session 2a return URLs for the hosted Checkout flow. Token-based
+// auth (the cancellation_token is the bearer secret for this booking row,
+// same as bookings.show / bookings.cancel). The success handler additionally
+// cross-checks the query session_id against the booking's persisted
+// stripe_checkout_session_id to reject session substitution.
+Route::get('/bookings/{token}/payment-success', [BookingPaymentReturnController::class, 'success'])
+    ->middleware('throttle:booking-api')
+    ->name('bookings.payment-success');
+Route::get('/bookings/{token}/payment-cancel', [BookingPaymentReturnController::class, 'cancel'])
+    ->middleware('throttle:booking-api')
+    ->name('bookings.payment-cancel');
 
 // Public booking API (JSON) — rate limited
 Route::prefix('booking/{slug}')->middleware('throttle:booking-api')->group(function () {

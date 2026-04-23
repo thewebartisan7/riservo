@@ -19,6 +19,20 @@ use Illuminate\Support\Carbon;
  * @property PaymentStatus $payment_status
  * @property Carbon $starts_at
  * @property Carbon $ends_at
+ * @property string|null $stripe_checkout_session_id
+ * @property string|null $stripe_payment_intent_id
+ * @property string|null $stripe_charge_id
+ * @property string|null $stripe_connected_account_id The acct_… the Checkout session was minted on. Codex Round 2 (D-158):
+ *                                                    pinned on the booking at creation time so late webhooks after disconnect+reconnect cycles can
+ *                                                    cross-check against the ORIGINAL minting account rather than the business's current active row.
+ * @property int|null $paid_amount_cents
+ * @property string|null $currency
+ * @property Carbon|null $paid_at
+ * @property string $payment_mode_at_creation PAYMENTS Session 2a snapshot (locked decision #14).
+ *                                            Plain string (not an enum cast) — value-equal to a PaymentMode enum case at write time,
+ *                                            but the snapshot is immutable and must not be silently reinterpreted if the enum ever grows.
+ *                                            Literal string compares against 'offline' / 'online' / 'customer_choice' are deliberate.
+ * @property Carbon|null $expires_at
  */
 #[Fillable([
     'business_id',
@@ -36,6 +50,15 @@ use Illuminate\Support\Carbon;
     'external_title',
     'external_html_link',
     'payment_status',
+    'stripe_checkout_session_id',
+    'stripe_payment_intent_id',
+    'stripe_charge_id',
+    'stripe_connected_account_id',
+    'paid_amount_cents',
+    'currency',
+    'paid_at',
+    'payment_mode_at_creation',
+    'expires_at',
     'notes',
     'internal_notes',
     'cancellation_token',
@@ -53,6 +76,8 @@ class Booking extends Model
             'status' => BookingStatus::class,
             'source' => BookingSource::class,
             'payment_status' => PaymentStatus::class,
+            'paid_at' => 'datetime',
+            'expires_at' => 'datetime',
         ];
     }
 
@@ -133,5 +158,39 @@ class Booking extends Model
         return $this->service->name
             ?? $this->external_title
             ?? __('External event');
+    }
+
+    /**
+     * PAYMENTS Session 2a: true iff this booking was created via the online-
+     * payment branch of PublicBookingController::store. Distinct from
+     * `wasCustomerChoice()` in that a customer_choice+pay-on-site booking
+     * correctly reports false here — no Checkout session was created.
+     */
+    public function isOnlinePayment(): bool
+    {
+        return $this->payment_mode_at_creation !== 'offline'
+            && $this->stripe_checkout_session_id !== null;
+    }
+
+    /**
+     * PAYMENTS Session 2a: true iff the Business's payment_mode at booking
+     * creation was 'customer_choice'. The value is the immutable snapshot
+     * per locked decision #14, NOT a re-read of Business.payment_mode.
+     */
+    public function wasCustomerChoice(): bool
+    {
+        return $this->payment_mode_at_creation === 'customer_choice';
+    }
+
+    /**
+     * Refund clamp per locked decision #37: refunds are always computed from
+     * `paid_amount_cents`, never from `Service.price`. Session 2a returns
+     * the raw column; Session 2b expands to subtract
+     * SUM(booking_refunds.amount_cents WHERE status IN (pending, succeeded))
+     * once that table lands.
+     */
+    public function remainingRefundableCents(): int
+    {
+        return $this->paid_amount_cents ?? 0;
     }
 }

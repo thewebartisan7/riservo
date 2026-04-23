@@ -74,6 +74,34 @@ export default function BookingShow() {
                             <span>{booking.notes}</span>
                         </div>
                     )}
+
+                    {booking.payment.status !== 'not_applicable' && (
+                        <div className="mt-2 border-t border-border pt-3 text-sm">
+                            <div className="flex items-center justify-between">
+                                <span className="text-muted-foreground">{t('Payment')}</span>
+                                <span className="font-medium capitalize">
+                                    {booking.payment.status.replace(/_/g, ' ')}
+                                </span>
+                            </div>
+                            {booking.payment.status === 'paid' &&
+                                booking.payment.paid_amount_cents !== null &&
+                                booking.payment.currency !== null && (
+                                    <div className="mt-1 flex items-center justify-between">
+                                        <span className="text-muted-foreground">{t('Amount paid')}</span>
+                                        <span className="tabular-nums">
+                                            {booking.payment.currency.toUpperCase()}{' '}
+                                            {(booking.payment.paid_amount_cents / 100).toFixed(2)}
+                                        </span>
+                                    </div>
+                                )}
+                            {booking.payment.status === 'awaiting_payment' &&
+                                booking.payment.stripe_checkout_session_id !== null && (
+                                    <p className="mt-2 text-xs text-muted-foreground">
+                                        {t("We're waiting for your payment to complete. Check your email for the Stripe receipt; your booking will confirm automatically once payment settles.")}
+                                    </p>
+                                )}
+                        </div>
+                    )}
                 </CardPanel>
                 {booking.can_cancel && (
                     <CardFooter>

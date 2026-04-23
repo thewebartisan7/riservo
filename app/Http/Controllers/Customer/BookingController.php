@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Customer;
 
 use App\Enums\BookingStatus;
+use App\Enums\PaymentStatus;
 use App\Http\Controllers\Controller;
 use App\Jobs\Calendar\PushBookingToCalendarJob;
 use App\Models\Booking;
@@ -56,6 +57,17 @@ class BookingController extends Controller
 
         if ($windowHours > 0 && now()->diffInHours($booking->starts_at, false) < $windowHours) {
             return back()->with('error', __('This booking can no longer be cancelled. The cancellation window has passed.'));
+        }
+
+        // Codex Round 2 (D-159): paid bookings cannot be self-cancelled via
+        // any customer-facing path until Session 3 ships `RefundService`.
+        // Mirror the same guard as `BookingManagementController::cancel`
+        // (D-157) — authenticated-customer path would otherwise leave
+        // `cancelled + paid` rows with no refund path.
+        if ($booking->payment_status === PaymentStatus::Paid) {
+            return back()->with('error', __('Please contact :business to cancel this booking — refunds are handled directly with the business for now.', [
+                'business' => $booking->business->name,
+            ]));
         }
 
         $booking->update(['status' => BookingStatus::Cancelled]);

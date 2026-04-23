@@ -301,16 +301,21 @@ the "Account" tab that hosts the subscription webhook).
 1. Create a new endpoint pointing at `https://<your-domain>/webhooks/stripe-connect`.
    For local development, an ngrok tunnel works the same as the subscription
    webhook (`https://<random>.ngrok.app/webhooks/stripe-connect`).
-2. Subscribe to the following events. Sessions 1's controller log-and-200's
-   any unhandled type, so configuring all of them now is forward-compatible.
-   - **Session 1 handles**: `account.updated`, `account.application.deauthorized`.
-   - **Session 1 stubs (log-and-200; Session 3 wires the body)**:
-     `charge.dispute.created`, `charge.dispute.updated`, `charge.dispute.closed`.
-   - **Sessions 2a / 2b / 3 will add**: `checkout.session.completed`,
-     `checkout.session.expired`, `checkout.session.async_payment_succeeded`,
+2. Subscribe to the following events. The controller log-and-200's any
+   unhandled type, so configuring all of them now is forward-compatible.
+   - **Session 1 handles**: `account.updated`, `account.application.deauthorized`,
+     `charge.dispute.created`, `charge.dispute.updated`, `charge.dispute.closed`
+     (dispute events persist a Pending Action per D-123; Session 3 wires the
+     admin email + dashboard deep-link).
+   - **Session 2a handles (live as of this session)**: `checkout.session.completed`,
+     `checkout.session.async_payment_succeeded`. Both route to the same
+     `CheckoutPromoter` service (shared with the success-page return flow);
+     the handler branches on `$session->payment_status` per locked decision
+     #41, so a future Stripe flip of TWINT to async won't regress the path.
+   - **Sessions 2b / 3 will add**: `checkout.session.expired`,
      `checkout.session.async_payment_failed`, `payment_intent.payment_failed`,
      `payment_intent.succeeded`, `charge.refunded`, `charge.refund.updated`,
-     `refund.updated`. Configuring them at Session 1 time is harmless.
+     `refund.updated`. Configuring them at Session 2a time is harmless.
 3. Copy the signing secret into `STRIPE_CONNECT_WEBHOOK_SECRET` (env). This is
    DISTINCT from `STRIPE_WEBHOOK_SECRET` (Cashier's subscription webhook,
    above). Per locked roadmap decision #38 the two endpoints use different
@@ -336,6 +341,29 @@ PAYMENTS_TWINT_COUNTRIES=CH
 
 `config/payments.php` reads the three `PAYMENTS_*` keys; comma-separated lists
 are parsed into arrays.
+
+### Testing the Checkout flow (Session 2a)
+
+Stripe's test mode supports TWINT on CH connected accounts. To exercise the
+full customer-pays round-trip end-to-end against a real Stripe sandbox:
+
+1. Seed a business with `payment_mode = online` and a test-verified connected
+   account (the `StripeConnectedAccount::factory()->active()` state produces
+   the correct shape; onboarding it via the Session 1 flow also works).
+2. In a second terminal, forward Connect events to local dev:
+   ```
+   stripe listen --forward-to http://localhost:8000/webhooks/stripe-connect --connect
+   ```
+3. Book a service on `http://localhost:8000/{slug}`. Click "Continue to payment".
+4. On Stripe Checkout:
+   - **Card**: use `4242 4242 4242 4242` + any future expiry + any CVC.
+   - **TWINT** (CH accounts only): the hosted page short-circuits the mobile
+     redirect in test mode and offers "Succeed" / "Fail" buttons.
+5. On return the success page redirects to `/bookings/{token}` showing
+   status=Confirmed + payment_status=Paid. Check the `stripe listen` output —
+   the `checkout.session.completed` webhook fires second (the success-page's
+   synchronous retrieve already promoted the booking; the webhook 200s
+   via the outcome-level idempotency guard).
 
 ### Webhook endpoint
 

@@ -6,6 +6,7 @@ use App\Models\Business;
 use App\Models\Provider;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StorePublicBookingRequest extends FormRequest
 {
@@ -55,6 +56,11 @@ class StorePublicBookingRequest extends FormRequest
             'phone' => ['required', 'string', 'max:50'],
             'notes' => ['nullable', 'string', 'max:1000'],
             'website' => ['nullable', 'string'],
+            // PAYMENTS Session 2a: only meaningful when the Business's
+            // payment_mode = 'customer_choice'. Absent or null means the
+            // Business's own payment_mode decides the branch (the online /
+            // offline fork happens server-side in PublicBookingController).
+            'payment_choice' => ['sometimes', 'nullable', Rule::in(['online', 'offline'])],
         ];
     }
 }

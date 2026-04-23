@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { useHttp } from '@inertiajs/react';
 import { store } from '@/actions/App/Http/Controllers/Booking/PublicBookingController';
 import { useTrans } from '@/hooks/use-trans';
-import type { BookingStoreResponse, PublicProvider, PublicService } from '@/types';
+import type { BookingStoreResponse, PublicBusiness, PublicProvider, PublicService } from '@/types';
 import type { CustomerData } from './customer-form';
 import { Button } from '@/components/ui/button';
 import { Card, CardPanel } from '@/components/ui/card';
@@ -12,8 +13,11 @@ import {
     formatPrice,
 } from '@/lib/booking-format';
 
+type PaymentChoice = 'online' | 'offline';
+
 interface BookingSummaryProps {
     slug: string;
+    business: PublicBusiness;
     service: PublicService;
     provider: PublicProvider | null;
     date: string;
@@ -25,6 +29,7 @@ interface BookingSummaryProps {
 
 export default function BookingSummary({
     slug,
+    business,
     service,
     provider,
     date,
@@ -33,6 +38,28 @@ export default function BookingSummary({
     onSuccess,
 }: BookingSummaryProps) {
     const { t } = useTrans();
+
+    // PAYMENTS Session 2a: online-payment eligibility (locked decision #8).
+    // Price null / 0 always falls through to the offline path regardless
+    // of Business.payment_mode. `can_accept_online_payments` also folds in
+    // Stripe capability + country (D-127, D-138).
+    const servicePriceEligible = service.price !== null && Number(service.price) > 0;
+    const onlinePaymentAvailable =
+        business.can_accept_online_payments && servicePriceEligible;
+
+    const isOnlineMode = onlinePaymentAvailable && business.payment_mode === 'online';
+    const isCustomerChoiceMode =
+        onlinePaymentAvailable && business.payment_mode === 'customer_choice';
+
+    // customer_choice default pick = 'online' per the roadmap UX — the
+    // typical commercial intent of enabling customer_choice is to steer
+    // customers toward prepaying while keeping the pay-on-site door open.
+    const [paymentChoice, setPaymentChoice] = useState<PaymentChoice>('online');
+
+    // Which branch the server will take, mirrored client-side so the CTA
+    // copy + caption match the actual outcome.
+    const willRedirectToStripe =
+        isOnlineMode || (isCustomerChoiceMode && paymentChoice === 'online');
 
     const getHoneypotValue = () => {
         const el = document.getElementById('booking-hp') as HTMLInputElement | null;
@@ -49,6 +76,10 @@ export default function BookingSummary({
         phone: customer.phone,
         notes: customer.notes || '',
         website: '',
+        // `payment_choice` is only forwarded in customer_choice mode.
+        // Pure-online and pure-offline businesses ignore the field
+        // server-side, but sending it anyway is harmless.
+        payment_choice: isCustomerChoiceMode ? paymentChoice : (null as PaymentChoice | null),
     });
 
     function handleConfirm() {
@@ -56,6 +87,17 @@ export default function BookingSummary({
         http.post(store.url(slug), {
             onSuccess: (response: unknown) => {
                 const result = response as BookingStoreResponse;
+
+                // Codex Round 2 (D-161): dispatch on the explicit
+                // `external_redirect` boolean the server sends. An earlier
+                // `https://` prefix heuristic would match HTTPS-deployed
+                // riservo internal URLs too — skipping the confirmation
+                // step and hard-navigating for every booking.
+                if (result.external_redirect) {
+                    window.location.href = result.redirect_url;
+                    return;
+                }
+
                 onSuccess(result);
             },
         });
@@ -135,6 +177,48 @@ export default function BookingSummary({
                 </CardPanel>
             </Card>
 
+            {isCustomerChoiceMode && (
+                <Card>
+                    <CardPanel className="p-5">
+                        <p className="text-xs uppercase tracking-widest text-muted-foreground">
+                            {t('Payment')}
+                        </p>
+                        <div
+                            className="mt-3 grid grid-cols-2 gap-2"
+                            role="radiogroup"
+                            aria-label={t('Choose how to pay')}
+                        >
+                            <button
+                                type="button"
+                                role="radio"
+                                aria-checked={paymentChoice === 'online'}
+                                onClick={() => setPaymentChoice('online')}
+                                className={`rounded-lg border px-3 py-2.5 text-sm transition-colors ${
+                                    paymentChoice === 'online'
+                                        ? 'border-primary bg-primary text-primary-foreground'
+                                        : 'border-border bg-background text-foreground hover:bg-muted'
+                                }`}
+                            >
+                                {t('Pay now')}
+                            </button>
+                            <button
+                                type="button"
+                                role="radio"
+                                aria-checked={paymentChoice === 'offline'}
+                                onClick={() => setPaymentChoice('offline')}
+                                className={`rounded-lg border px-3 py-2.5 text-sm transition-colors ${
+                                    paymentChoice === 'offline'
+                                        ? 'border-primary bg-primary text-primary-foreground'
+                                        : 'border-border bg-background text-foreground hover:bg-muted'
+                                }`}
+                            >
+                                {t('Pay on site')}
+                            </button>
+                        </div>
+                    </CardPanel>
+                </Card>
+            )}
+
             {http.hasErrors && (
                 <div className="rounded-lg border border-primary bg-honey-soft px-4 py-3 text-sm text-primary-foreground">
                     {t('This time slot is no longer available. Please select another time.')}
@@ -148,11 +232,15 @@ export default function BookingSummary({
                 loading={http.processing}
                 onClick={handleConfirm}
             >
-                <Display className="tracking-tight">{t('Confirm booking')} →</Display>
+                <Display className="tracking-tight">
+                    {willRedirectToStripe ? t('Continue to payment') : t('Confirm booking')} →
+                </Display>
             </Button>
 
             <p className="text-center text-xs leading-normal text-muted-foreground">
-                {t('You will receive a confirmation by email. You can reschedule or cancel from that message.')}
+                {willRedirectToStripe
+                    ? t('You will be redirected to a secure Stripe page to complete payment.')
+                    : t('You will receive a confirmation by email. You can reschedule or cancel from that message.')}
             </p>
         </div>
     );

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Dashboard;
 
 use App\Enums\BookingSource;
 use App\Enums\BookingStatus;
+use App\Enums\PaymentStatus;
 use App\Exceptions\Booking\NoProviderAvailableException;
 use App\Exceptions\Booking\SlotNoLongerAvailableException;
 use App\Http\Controllers\Controller;
@@ -199,6 +200,19 @@ class BookingController extends Controller
                 'from' => $booking->status->label(),
                 'to' => $newStatus->label(),
             ]));
+        }
+
+        // Codex Round 2 (D-159): admin-side cancellation of paid bookings
+        // also stands the system at `cancelled + paid` until Session 3's
+        // `RefundService` wires the automatic-full-refund path (locked
+        // roadmap decision #17). Until Session 3 ships, block the
+        // transition at the dashboard edge too — mirroring the customer-
+        // facing guards on `BookingManagementController::cancel` (D-157)
+        // and `Customer\BookingController::cancel` (this session). Admins
+        // who truly need to cancel can refund manually in the Stripe
+        // dashboard first, then use Session 3's flow when it lands.
+        if ($newStatus === BookingStatus::Cancelled && $booking->payment_status === PaymentStatus::Paid) {
+            return back()->with('error', __('This booking has been paid online. Automatic refunds ship in a later release — until then, refund the customer in the Stripe dashboard first, then cancel.'));
         }
 
         $booking->update(['status' => $newStatus]);
@@ -554,7 +568,12 @@ class BookingController extends Controller
                     'buffer_after_minutes' => $service->buffer_after ?? 0,
                     'status' => BookingStatus::Confirmed,
                     'source' => BookingSource::Manual,
-                    'payment_status' => 'pending',
+                    // Locked roadmap decision #30: manual bookings are ALWAYS
+                    // offline regardless of Business.payment_mode — the customer
+                    // is not in front of the staff member to authorise a charge.
+                    // Post-hoc online payment links are tracked in BACKLOG.
+                    'payment_status' => PaymentStatus::NotApplicable,
+                    'payment_mode_at_creation' => 'offline',
                     'notes' => $validated['notes'] ?? null,
                     'cancellation_token' => Str::uuid()->toString(),
                 ]);

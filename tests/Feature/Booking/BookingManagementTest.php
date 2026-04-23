@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\BookingStatus;
+use App\Enums\PaymentStatus;
 use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Customer;
@@ -148,4 +149,27 @@ test('booking management page passes business.timezone through to the page', fun
             ->component('bookings/show')
             ->where('booking.business.timezone', 'Asia/Tokyo')
         );
+});
+
+test('codex round 1 F3: paid booking cannot be cancelled via customer token until Session 3 ships refund executor', function () {
+    $business = Business::factory()->create(['cancellation_window_hours' => 0]);
+    $staff = User::factory()->create();
+    $provider = attachProvider($business, $staff);
+    $service = Service::factory()->create(['business_id' => $business->id]);
+    $customer = Customer::factory()->create();
+
+    $booking = Booking::factory()->paid()->create([
+        'business_id' => $business->id,
+        'provider_id' => $provider->id,
+        'service_id' => $service->id,
+        'customer_id' => $customer->id,
+        'cancellation_token' => 'paid-token-123',
+    ]);
+
+    $response = $this->post('/bookings/paid-token-123/cancel');
+
+    // Redirect back with the "contact the business" error flash.
+    $response->assertRedirect();
+    expect($booking->fresh()->status)->toBe(BookingStatus::Confirmed);
+    expect($booking->fresh()->payment_status)->toBe(PaymentStatus::Paid);
 });

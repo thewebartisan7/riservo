@@ -16,7 +16,11 @@ test('it creates a booking with factory defaults', function () {
     expect($booking)->toBeInstanceOf(Booking::class)
         ->and($booking->status)->toBe(BookingStatus::Confirmed)
         ->and($booking->source)->toBe(BookingSource::Riservo)
-        ->and($booking->payment_status)->toBe(PaymentStatus::Pending);
+        // PAYMENTS Session 2a: the pre-2a `Pending` case was retired per
+        // locked decision #28; the factory default reflects the intent
+        // (offline-from-the-start booking, no payment expected).
+        ->and($booking->payment_status)->toBe(PaymentStatus::NotApplicable)
+        ->and($booking->payment_mode_at_creation)->toBe('offline');
 });
 
 test('it belongs to a business', function () {

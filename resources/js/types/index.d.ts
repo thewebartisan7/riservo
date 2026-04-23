@@ -38,6 +38,23 @@ export interface BookingDetail {
     business: { name: string; timezone: string; cancellation_window_hours: number };
     customer: { name: string };
     can_cancel: boolean;
+    // PAYMENTS Session 2a — the bookings/show page renders a payment badge,
+    // paid-amount row, and a resume-link for awaiting-payment bookings.
+    payment: {
+        status:
+            | 'not_applicable'
+            | 'awaiting_payment'
+            | 'paid'
+            | 'unpaid'
+            | 'refunded'
+            | 'partially_refunded'
+            | 'refund_failed';
+        paid_amount_cents: number | null;
+        currency: string | null;
+        paid_at: string | null;
+        expires_at: string | null;
+        stripe_checkout_session_id: string | null;
+    };
 }
 
 export interface BookingSummary {
@@ -70,6 +87,12 @@ export interface PublicBusiness {
     timezone: string;
     allow_provider_choice: boolean;
     confirmation_mode: 'auto' | 'manual';
+    // PAYMENTS Session 2a — public booking UI branches on these three to
+    // render the "Continue to payment" CTA and the customer_choice
+    // pay-now / pay-on-site pill.
+    payment_mode: 'offline' | 'online' | 'customer_choice';
+    can_accept_online_payments: boolean;
+    currency: string | null;
 }
 
 export interface PublicService {
@@ -205,6 +228,13 @@ export interface AvailableSlotsResponse {
 export interface BookingStoreResponse {
     token: string;
     status: string;
+    // PAYMENTS Session 2a: internal URL on the offline path; absolute
+    // Stripe Checkout URL on the online path. The summary component
+    // dispatches on `external_redirect` (Codex Round 2, D-161) —
+    // a `https://` prefix heuristic would match HTTPS-deployed riservo
+    // internal URLs too.
+    redirect_url: string;
+    external_redirect: boolean;
 }
 
 export interface CustomerSearchResponse {

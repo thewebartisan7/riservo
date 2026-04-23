@@ -626,3 +626,161 @@ Distinct from `DECISIONS-FOUNDATIONS.md`, which carries the SaaS subscription bi
 - **Context**: Per locked roadmap decision #44, Sessions 2b and 3 are the writers for `payment.dispute_opened`, `payment.refund_failed`, and `payment.cancelled_after_payment` Pending Actions. Adding the enum cases when their writers land is one option; pre-adding them in Session 1 (alongside the table generalisation) is the other.
 - **Decision**: Pre-add all three cases to `PendingActionType` now. The matching `PendingActionType::calendarValues()` static helper excludes them, so calendar-aware readers (D-113) stay correct. Sessions 2b / 3 land their writers without a cross-session enum edit.
 - **Consequences**: Negligible cost, removes a coupling between schema-touching and code-only sessions. The unused enum cases in Session 1 are harmless — PHPStan's exhaustiveness checks on `match` statements over `PendingActionType` did surface the addition (forced `CalendarPendingActionController` to add a `default` arm + a calendar-bucket guard at the top), which is exactly the kind of compile-time signal we want.
+
+---
+
+### D-151 — `CheckoutPromoter` is the single source of truth for Checkout-session → paid-booking promotion
+
+- **Date**: 2026-04-23 (PAYMENTS Session 2a)
+- **Status**: accepted
+- **Context**: Two code paths trigger promotion of a `pending + awaiting_payment` booking to `confirmed/pending + paid`: (a) the `checkout.session.completed` (and `.async_payment_succeeded`) webhook arm on `StripeConnectWebhookController`, (b) the synchronous `checkout.sessions.retrieve` performed by `BookingPaymentReturnController::success` per locked roadmap decision #32. Keeping two copies of the DB-state guard, the lockForUpdate, the notification dispatch, and the manual-confirmation `ConfirmationMode` branch would guarantee drift on maintenance.
+- **Decision**: New service `App\Services\Payments\CheckoutPromoter` with one public method `promote(Booking $booking, Stripe\Checkout\Session $session): 'paid'|'already_paid'|'not_paid'`. Both callers invoke it. The service wraps the state transition in `DB::transaction` + `lockForUpdate` on the booking row (same concurrency shape D-148 uses on `ConnectedAccountController`), performs the outcome-level `PaymentStatus::Paid` guard inside the lock (locked roadmap decision #33), and dispatches the customer + staff notifications in the `confirmed`-branch or the paid-awaiting-confirmation branch (locked decision #29) depending on the Business's `confirmation_mode`. Return shape is deliberately scalar — PHPStan level-5 cannot infer array-shape returns from `DB::transaction` callbacks (same workaround D-148 accepted).
+- **Consequences**:
+  - Webhook-vs-success-page races converge: whoever acquires the row lock first promotes; the other path re-reads and no-ops at the guard.
+  - A structural regression test (`tests/Unit/Services/Payments/CheckoutPromoterStructuralTest.php`) inspects the controller source for the `DB::transaction`, `lockForUpdate`, and `PaymentStatus::Paid` tokens so a maintenance edit that removes any of them fails loudly instead of surfacing in prod.
+  - Session 2b's reaper (`bookings:expire-unpaid`) per locked decision #31's pre-flight retrieve will call this same service — no duplicate promotion logic to write or maintain.
+  - Future refund / dispute handlers follow the same shape: outcome-level guard first, transaction-scoped DB mutations, notifications in the `afterCommit`-adjacent branch.
+
+---
+
+### D-152 — Booking `currency` + `paid_amount_cents` captured at booking creation, overwritten by Stripe on promotion
+
+- **Date**: 2026-04-23 (PAYMENTS Session 2a)
+- **Status**: accepted
+- **Context**: Locked decision #42 (refunds preserve booking currency, not account default) and #37 (refunds read `paid_amount_cents`, never `Service.price`) both require these two columns to be authoritative and populated BEFORE any Stripe event arrives. Two candidate moments to populate: (a) at booking creation from the connected account's `default_currency` + the service price, (b) at webhook promotion from `$session->currency` + `$session->amount_total`. Session 2b's reaper needs the columns populated at creation; Stripe is authoritative on what actually settled.
+- **Decision**: Write both columns at booking creation. `PublicBookingController::store`'s online-payment branch captures `paid_amount_cents = (int) round($service->price * 100)` and `currency = $connectedAccount->default_currency ?? 'chf'`. At webhook / success-page promotion, `CheckoutPromoter::promote` compares `$session->amount_total` and `$session->currency` against the captured values; on any mismatch it logs a critical and overwrites with Stripe's figures (Stripe is authoritative). Both columns are NOT NULL once the online-payment branch runs.
+- **Consequences**:
+  - Session 2b's reaper can filter on `paid_amount_cents` without branching on "did the webhook run yet?".
+  - Session 3's refund path reads `paid_amount_cents` per decision #37 with no null-handling needed for awaiting-payment or paid rows.
+  - A mismatch during promotion fires a critical log — diagnostic signal if Stripe ever returns a different amount than the line item requested (should be impossible for a fixed-amount Checkout session, but the log is our guardrail).
+
+---
+
+### D-153 — Booking success URL uses the cancellation token as bearer + cross-checks the Checkout session id
+
+- **Date**: 2026-04-23 (PAYMENTS Session 2a)
+- **Status**: accepted
+- **Context**: Stripe's `success_url` is a client-visible URL. The customer's return to riservo must identify the booking AND verify the return is for that specific Checkout session (not a replayed URL with a swapped `session_id`). Two auth schemes considered: (a) mint a fresh signed URL à la D-142's Connect return-URL, (b) reuse the existing `cancellation_token` that already authenticates `bookings.show` and `bookings.cancel`.
+- **Decision**: The success URL is `/bookings/{cancellation_token}/payment-success?session_id={CHECKOUT_SESSION_ID}` (Stripe's server-side template placeholder is replaced at redirect time). The token provides access-level auth (who can view this booking); the controller additionally verifies `$request->query('session_id') === $booking->stripe_checkout_session_id` and redirects to `bookings.show` with a neutral flash on mismatch (logged as a warning). The `cancel_url` mirrors the shape for consistency. Rate limiter: `throttle:booking-api`.
+- **Consequences**:
+  - One auth token per booking, reused across the full customer-facing surface (`show`, `cancel`, `payment-success`, `payment-cancel`).
+  - A hostile actor swapping the `session_id` query param cannot redeem someone else's Checkout session — the cross-check rejects before any Stripe API call.
+  - The URL is shareable (customer saves the email link and reopens later) without minting a second token scheme.
+
+---
+
+### D-154 — TWINT inclusion driven by `config('payments.twint_countries')`, not by capability introspection
+
+- **Date**: 2026-04-23 (PAYMENTS Session 2a)
+- **Status**: accepted
+- **Context**: Locked decision #3 makes TWINT mandatory (not opt-in) for CH-located connected accounts. Two implementations considered: (a) query Stripe for the account's enabled payment-method capabilities and include TWINT when present, (b) drive inclusion off the config key `twint_countries` introduced in Session 1 (D-112). Option (a) adds an API call per Checkout creation; option (b) aligns with the roadmap's "single config switch" ethos (decision #43).
+- **Decision**: `CheckoutSessionFactory::paymentMethodTypes` returns `['card', 'twint']` when the account's country is in `config('payments.twint_countries')`, `['card']` otherwise. No Stripe introspection. The MVP config values (`['CH']`) make the branches coincident with `supported_countries`; the fast-follow to IT/DE/FR/AT/LI becomes a config flip with documented card-only fallback for non-TWINT markets (the card-only branch is unreachable in MVP today but wired for this reason).
+- **Consequences**:
+  - Zero extra API round-trips. A newly-added TWINT market becomes live on a config flip plus ops-side verification.
+  - The card-only branch has its own unit-test (`CheckoutSessionFactoryTest > create falls back to card-only when the country is not in twint_countries`) to guarantee the seam stays open.
+  - The roadmap's non-CH fast-follow plan remains valid: flip `PAYMENTS_SUPPORTED_COUNTRIES` + verify tax/locale assumptions per decision #11 and #39.
+
+---
+
+### D-156 — `CheckoutPromoter` fails closed on session-id / amount / currency mismatch (supersedes D-152's log-and-overwrite stance)
+
+- **Date**: 2026-04-23 (Codex adversarial review, Round 1, F2)
+- **Status**: accepted
+- **Supersedes**: D-152's "log and overwrite with Stripe's figures" stance on amount / currency divergence
+- **Context**: D-152 chose "log critical and persist Stripe's figures" when the Stripe session's `amount_total` / `currency` diverged from the booking's captured values at promotion time, treating Stripe as authoritative on what actually settled. Codex Round 1 flagged two problems this created: (a) `StripeConnectWebhookController::handleCheckoutSessionCompleted` looked bookings up by `client_reference_id` and cross-checked only the connected account — a second Stripe integration on the same account (or a manual Stripe-dashboard session whose `client_reference_id` reused a riservo booking id) could reconcile a riservo booking as paid; (b) the log-and-overwrite stance on amount/currency actively confirmed any attack that came through. For a fixed-`unit_amount` Checkout session the values MUST match; a mismatch is pathological (coding bug, Stripe-side error, or hostile reconciliation). The captured columns are also load-bearing for Session 3's refund path (locked decisions #37 / #42); silently overwriting them is worse than failing closed.
+- **Decision**: `CheckoutPromoter::promote` (the shared service on the webhook AND success-page paths) now:
+  1. Rejects with `'mismatch'` outcome + critical log when `$session->id !== $booking->stripe_checkout_session_id` — before any DB write, before the lock. Placing the guard on the shared service means both callers inherit it; the success-page's query-param cross-check (D-153) and the webhook's new session-id guard now converge.
+  2. Rejects with `'mismatch'` outcome + critical log when `$session->amount_total` diverges from the booking's captured `paid_amount_cents`, or when `$session->currency` diverges from the booking's captured `currency`. These checks happen inside the row lock, so a legitimate concurrent promotion (webhook vs success-page) can't sneak through.
+  3. Return union expands to `'paid' | 'already_paid' | 'not_paid' | 'mismatch'`. The webhook handler 200s regardless (Stripe must NOT retry a mismatch — a retry would re-fire the same mismatch); the success-page controller renders a neutral "we'll follow up" flash instead of the success confirmation.
+- **Consequences**:
+  - Cross-integration `client_reference_id` collisions on the same connected account can no longer promote a riservo booking.
+  - Amount / currency divergence forces manual operator reconciliation via the critical log rather than silent corruption of the refund-load-bearing columns.
+  - Three new regression tests in `tests/Feature/Payments/CheckoutSessionCompletedWebhookTest.php` cover the session-id, amount, and currency mismatch cases (each asserts the booking stays `AwaitingPayment` + no notifications fire).
+  - D-152's "capture at booking creation" half (currency + paid_amount_cents snapshot at Checkout create time) is kept — that half was load-bearing for Session 2b's reaper anyway. Only the "overwrite on divergence" half is superseded.
+
+---
+
+### D-157 — Customer-side cancel refuses `payment_status = Paid` bookings until Session 3 ships `RefundService`
+
+- **Date**: 2026-04-23 (Codex adversarial review, Round 1, F3)
+- **Status**: accepted
+- **Context**: `BookingManagementController::cancel` keys on booking `status` + cancellation window only; the `canCancel()` helper returns true for Confirmed / Pending bookings regardless of `payment_status`. After Session 2a the factory can land bookings at `payment_status = Paid`, which still satisfies `canCancel()`. A customer holding the `cancellation_token` can therefore transition a paid booking to `Cancelled` with no refund — leaving `cancelled + paid` rows where the slot is freed but funds stay on the connected account. Session 3 per locked decisions #15 / #16 will wire the in-window automatic full refund; until that ships, the system has no path to refund money the customer just released the slot for.
+- **Decision**: Before the state mutation (after the existing status + window checks), `BookingManagementController::cancel` now refuses with an error flash `Please contact :business to cancel this booking — refunds are handled directly with the business for now.` when `$booking->payment_status === PaymentStatus::Paid`. The `can_cancel` Inertia prop on `bookings/show` stays true so the existing Cancel button still renders; clicking it surfaces the error flash — matching the existing cancellation-window-exceeded UX shape. No refund is attempted; no status transition; no customer notification.
+- **Consequences**:
+  - No `cancelled + paid` rows can be produced by the customer-side path in Sessions 2a → 2b.
+  - Session 3 relaxes the guard in a two-line diff: in-window + paid → dispatch `RefundService::refund($booking, null, 'customer-requested')` before the status transition; out-of-window + paid → existing block stays with "contact the business" copy. The rest of Session 3's refund wiring lands on a clean foundation.
+  - One new regression test in `tests/Feature/Booking/BookingManagementTest.php` covers the block (paid booking + `/bookings/{token}/cancel` → status stays Confirmed, payment_status stays Paid, error flash).
+  - Admin-side cancellation (dashboard) is unaffected — admins can always cancel. Session 3 will wire the automatic-refund path for admin cancels of paid bookings per locked decision #17.
+
+---
+
+### D-158 — Minting connected-account id pinned onto the booking at creation time
+
+- **Date**: 2026-04-23 (Codex native review, Round 2, P2)
+- **Status**: accepted
+- **Context**: Round 1's webhook + success-page cross-account guards read the expected account id via `StripeConnectedAccount::withTrashed()->where('business_id', $booking->business_id)->value('stripe_account_id')`. For a business with disconnect+reconnect history — one active row plus one or more trashed historical rows — `value()` returns the first match without guaranteed ordering. Legitimate late webhooks for EITHER the old trashed account or the new active account could be rejected as cross-account mismatches, AND the success-page's `checkout.sessions.retrieve` could be targeted at the wrong account. The booking needs to remember exactly which account minted its Checkout session.
+- **Decision**: New column `bookings.stripe_connected_account_id` (nullable string). `PublicBookingController::store`'s online-payment branch writes `$connectedAccount->stripe_account_id` onto the booking inside the creation transaction, alongside `stripe_checkout_session_id`. `StripeConnectWebhookController::handleCheckoutSessionCompleted` and `BookingPaymentReturnController::success` read `$booking->stripe_connected_account_id` directly — fail closed with a critical log if null. `BookingFactory`'s `awaitingPayment()` + `paid()` states populate the column with random `acct_test_…` values so legacy tests keep a matching id; tests that need a specific id override via the factory array.
+- **Consequences**:
+  - Reconnect history no longer makes the cross-account guard non-deterministic. A new regression test in `OnlinePaymentCheckoutTest` seeds both a trashed historical row and the active row, confirms the booking's pinned id matches the active (minting) account.
+  - The `withTrashed()` lookup on the business + account relation is retained in Session 1's onboarding paths (where it's load-bearing per D-139 / D-146 / D-148) — Round 2 only replaces its usage in the two checkout-promotion paths.
+  - Session 2b's reaper pre-flight retrieve per locked roadmap decision #31 reads the same pinned id — no new lookup shape needed.
+  - The existing "disconnect race" test keeps passing because the booking's pinned id survives the account row's soft-delete.
+
+---
+
+### D-159 — Paid-cancel guards extended to Customer + Dashboard endpoints
+
+- **Date**: 2026-04-23 (Codex native review, Round 2, P1)
+- **Status**: accepted
+- **Supersedes**: partial scope of D-157 (which only covered `BookingManagementController::cancel`)
+- **Context**: D-157 (Round 1) blocked `payment_status = Paid` cancellation on the token-based `BookingManagementController::cancel` endpoint, but two other paths could still produce `cancelled + paid` rows: the authenticated customer path `Customer\BookingController::cancel` (customers with an account cancelling from `/my-bookings`) and the staff/admin path `Dashboard\BookingController::updateStatus` (admin transitioning a booking to Cancelled from the dashboard). Session 3's `RefundService` isn't here yet.
+- **Decision**: Both paths now refuse the transition when `$booking->payment_status === PaymentStatus::Paid`:
+  - `Customer\BookingController::cancel` surfaces the same "contact the business — refunds are handled directly with the business for now" flash as D-157.
+  - `Dashboard\BookingController::updateStatus` refuses the `Cancelled` transition with dashboard-appropriate copy: "This booking has been paid online. Automatic refunds ship in a later release — until then, refund the customer in the Stripe dashboard first, then cancel." Admins still cancel unpaid bookings via the same endpoint normally.
+  - Session 3 will replace both blocks: the customer path relaxes to "in-window → automatic `RefundService::refund($booking, null, 'customer-requested')`" per locked decisions #15 / #16; the admin path dispatches `RefundService::refund($booking, null, 'business-cancelled')` before the status transition per locked decision #17.
+- **Consequences**:
+  - No customer- or admin-facing endpoint can produce a `cancelled + paid` row in Sessions 2a → 2b.
+  - New regression file `tests/Feature/Booking/PaidCancellationGuardTest.php` covers both endpoints.
+  - Session 3's diff is cleaner: two small code edits (swap the block for the refund dispatch) instead of writing the refund dispatch next to an in-the-wild state-transition path.
+
+---
+
+### D-160 — Payment-success flash copy branches on booking status (manual vs auto confirmation)
+
+- **Date**: 2026-04-23 (Codex native review, Round 2, P2)
+- **Status**: accepted
+- **Context**: `BookingPaymentReturnController::success` unconditionally flashed "Payment received — your booking is confirmed." on every paid outcome. Manual-confirmation businesses (locked decision #29) land the booking at `pending + paid` — "confirmed" contradicts the actual state, the admin's approval queue, and the `paid_awaiting_confirmation` notification the customer just received.
+- **Decision**: Extract a `successFlashFor(Booking $booking): string` helper that branches on `$booking->status`:
+  - `Pending` → "Payment received — your booking is pending confirmation from the business."
+  - `Confirmed` → the original "Payment received — your booking is confirmed."
+  Both the outcome-level fast path (booking already paid before the controller ran) and the post-promotion path call the helper on the fresh booking state. The helper lives on the controller rather than on the model because the copy is controller-layer UX, not a domain concept.
+- **Consequences**:
+  - Manual-confirmation customers see copy that matches the paid-awaiting-confirmation email — no UX contradiction.
+  - Auto-confirmation customers see the original copy.
+  - Two new regression tests in `CheckoutSuccessReturnTest` cover each branch with `assertSessionHas('success', …)` + the underlying notification context assertion.
+
+---
+
+### D-161 — Booking store response carries an explicit `external_redirect` flag
+
+- **Date**: 2026-04-23 (Codex native review, Round 2, P2)
+- **Status**: accepted
+- **Context**: `booking-summary.tsx` dispatched on `result.redirect_url?.startsWith('https://')` to decide whether to `window.location.href` (external Stripe URL) vs handle internally. On an HTTPS-deployed riservo instance the offline-path `route('bookings.show', …)` is ALSO an `https://…` URL, so every booking (online or offline) would hard-navigate, skipping the existing confirmation step.
+- **Decision**: `PublicBookingController::store` returns an explicit `external_redirect: boolean` on both response branches — `false` for the offline path (internal `route()` URL), `true` for the online path (absolute Stripe Checkout URL). `BookingStoreResponse` TS type gains the boolean. `booking-summary.tsx` dispatches on the server-computed boolean instead of a URL heuristic. The server is authoritative on the redirect target's category; the client doesn't need to re-derive it.
+- **Consequences**:
+  - HTTPS-deployed riservo doesn't short-circuit offline-path redirects. The existing confirmation step renders for every offline booking as intended.
+  - One new `external_redirect: false` JSON assertion on the offline path test; the online happy-path test now asserts `external_redirect: true` alongside the Stripe URL.
+  - Other clients consuming this response (a future embed SDK, a mobile app) get a single boolean to dispatch on — no URL-host inspection required.
+
+---
+
+### D-155 — `PaymentStatus::Pending` removed outright (no alias, no backfill)
+
+- **Date**: 2026-04-23 (PAYMENTS Session 2a)
+- **Status**: accepted
+- **Context**: Locked decision #28 + the Session 2a Data-layer clause ("riservo is pre-launch; dev DB is `migrate:fresh --seed`") permit retiring the legacy `Pending` case without a soft alias. Two options considered: (a) keep `Pending` as a sentinel mapping to `NotApplicable` for legacy data, (b) remove the case and update every writer + seed + factory + the initial migration's default. The first option keeps a dead enum case forever; the second is a small coordinated edit under pre-launch constraints.
+- **Decision**: Remove the `Pending` case. Update `BookingFactory`'s default to `PaymentStatus::NotApplicable` + `payment_mode_at_creation = 'offline'`. Update the three existing writers (`PublicBookingController::store` offline branch, `Dashboard\BookingController::store`, `PullCalendarEventsJob`) to write `PaymentStatus::NotApplicable` + the appropriate `payment_mode_at_creation`. Update the initial `create_bookings_table` migration's column default from `PaymentStatus::Pending->value` to `PaymentStatus::NotApplicable->value` (migrations run via `migrate:fresh` so editing the initial migration is safe).
+- **Consequences**:
+  - No sentinel state to explain to future readers; every enum value has a concrete meaning.
+  - Session 2b's failure-branching writes use the same vocabulary (`AwaitingPayment` → `Unpaid` / `NotApplicable` per locked decision #14's three outcomes).
+  - Factory gains two states `awaitingPayment()` + `paid()` for the Session 2a test matrix; `manual()` and `external()` now explicitly write the `offline` snapshot + `not_applicable` status per locked decision #30's carve-out.

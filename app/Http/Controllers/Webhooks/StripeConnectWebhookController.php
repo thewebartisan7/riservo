@@ -3,15 +3,19 @@
 namespace App\Http\Controllers\Webhooks;
 
 use App\Enums\PaymentMode;
+use App\Enums\PaymentStatus;
 use App\Enums\PendingActionStatus;
 use App\Enums\PendingActionType;
+use App\Models\Booking;
 use App\Models\PendingAction;
 use App\Models\StripeConnectedAccount;
+use App\Services\Payments\CheckoutPromoter;
 use App\Support\Billing\DedupesStripeWebhookEvents;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Stripe\Checkout\Session as StripeCheckoutSession;
 use Stripe\Event as StripeEvent;
 use Stripe\Exception\SignatureVerificationException;
 use Stripe\StripeClient;
@@ -51,7 +55,10 @@ class StripeConnectWebhookController
 
     private const DEDUP_PREFIX = 'stripe:connect:event:';
 
-    public function __construct(private readonly StripeClient $stripe) {}
+    public function __construct(
+        private readonly StripeClient $stripe,
+        private readonly CheckoutPromoter $checkoutPromoter,
+    ) {}
 
     public function __invoke(Request $request): Response
     {
@@ -117,6 +124,13 @@ class StripeConnectWebhookController
             'charge.dispute.created',
             'charge.dispute.updated',
             'charge.dispute.closed' => $this->handleDisputeEvent($event),
+            // PAYMENTS Session 2a: happy-path promotion. Both event names
+            // flow through the same handler because locked decision #41
+            // branches on `$session->payment_status`, NOT on event name —
+            // so a future Stripe flip of TWINT to async cannot regress
+            // the promotion path.
+            'checkout.session.completed',
+            'checkout.session.async_payment_succeeded' => $this->handleCheckoutSessionCompleted($event),
             default => new Response('Webhook unhandled.', 200),
         };
     }
@@ -443,6 +457,101 @@ class StripeConnectWebhookController
         }
 
         $existing->forceFill(['payload' => $payload])->save();
+
+        return new Response('OK', 200);
+    }
+
+    /**
+     * PAYMENTS Session 2a happy-path handler.
+     *
+     * Stripe emits `checkout.session.completed` as soon as the hosted page
+     * transitions to terminal (paid OR async-pending). For synchronous
+     * methods (card, TWINT today) the session's `payment_status` is already
+     * `'paid'` at this event. For async methods, `payment_status` is not
+     * `'paid'` here; Stripe follows up with
+     * `checkout.session.async_payment_succeeded` carrying a paid session.
+     * Locked decision #41 binds us to branch on `$session->payment_status`,
+     * not on event name — which is exactly what `CheckoutPromoter` does.
+     *
+     * Outcome-level idempotency (locked decision #33): the promoter's
+     * `lockForUpdate`-inside-transaction + DB-state guard collapse
+     * replays / inline-race scenarios to a no-op without double-notifying.
+     * The cache-layer event-id dedup (D-092 / D-110) is belt-and-braces.
+     *
+     * Disconnect race safety (locked decision #36): the connected-account
+     * lookup uses `withTrashed()` so a late webhook after an admin
+     * Disconnect still resolves the business / account pairing — funds
+     * were already charged on the connected account, retaining the id on
+     * the soft-deleted row is the documented invariant.
+     */
+    private function handleCheckoutSessionCompleted(StripeEvent $event): Response
+    {
+        $session = $event->data->object ?? null;
+
+        if (! $session instanceof StripeCheckoutSession) {
+            // Defensive: event shape divergence. The Stripe PHP SDK constructs
+            // `$session` from the payload, so this should only fire on a
+            // malformed body.
+            Log::warning('Connect checkout.session.completed: data.object is not a Checkout Session', [
+                'event_id' => $event->id,
+            ]);
+
+            return new Response('Invalid session payload.', 200);
+        }
+
+        $bookingRef = $session->client_reference_id ?? null;
+        if (! is_string($bookingRef) || ! ctype_digit($bookingRef)) {
+            Log::warning('Connect checkout.session.completed missing or non-numeric client_reference_id', [
+                'event_id' => $event->id,
+                'session_id' => $session->id ?? null,
+            ]);
+
+            return new Response('Missing client_reference_id.', 200);
+        }
+
+        $booking = Booking::find((int) $bookingRef);
+        if ($booking === null) {
+            Log::critical('Connect checkout.session.completed for unknown booking id — manual reconciliation required', [
+                'event_id' => $event->id,
+                'session_id' => $session->id ?? null,
+                'client_reference_id' => $bookingRef,
+            ]);
+
+            return new Response('Unknown booking.', 200);
+        }
+
+        // Cross-account guard: the session's `account` must match the
+        // CONNECTED ACCOUNT THAT MINTED this booking's Checkout session,
+        // not the business's current active row. Codex Round 2 (D-158):
+        // reading the id off the booking is deterministic across
+        // disconnect+reconnect cycles; reading it off the business via
+        // `withTrashed()->value()` was non-deterministic (multiple historical
+        // rows for the same business). Fail closed if the booking lacks
+        // the pinned id — every online booking created via `store`'s M2
+        // branch writes it, so a null here is a pre-migration / data-drift
+        // anomaly worth surfacing rather than silently falling back.
+        $expectedAccountId = $booking->stripe_connected_account_id;
+        $sessionAccountId = $session->account ?? ($event->account ?? null);
+
+        if (! is_string($expectedAccountId) || $expectedAccountId === '' || $sessionAccountId !== $expectedAccountId) {
+            Log::critical('Connect checkout.session.completed cross-account mismatch — refusing to promote', [
+                'event_id' => $event->id,
+                'booking_id' => $booking->id,
+                'session_account' => $sessionAccountId,
+                'expected_account' => $expectedAccountId,
+            ]);
+
+            return new Response('Cross-account mismatch.', 200);
+        }
+
+        // Outcome-level fast path before touching the promoter: if the
+        // booking is already Paid, short-circuit without locking. The
+        // promoter re-checks under a lock for race-safety regardless.
+        if ($booking->payment_status === PaymentStatus::Paid) {
+            return new Response('Already paid.', 200);
+        }
+
+        $this->checkoutPromoter->promote($booking, $session);
 
         return new Response('OK', 200);
     }

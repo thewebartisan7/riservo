@@ -4,6 +4,7 @@ namespace App\Jobs\Calendar;
 
 use App\Enums\BookingSource;
 use App\Enums\BookingStatus;
+use App\Enums\PaymentStatus;
 use App\Enums\PendingActionStatus;
 use App\Enums\PendingActionType;
 use App\Models\Booking;
@@ -217,7 +218,10 @@ class PullCalendarEventsJob implements ShouldQueue
             'external_calendar_id' => $event->id,
             'external_title' => $event->summary,
             'external_html_link' => $event->htmlLink,
-            'payment_status' => 'pending',
+            // Locked roadmap decision #30: google_calendar bookings are ALWAYS
+            // offline — no payment ever expected through riservo.
+            'payment_status' => PaymentStatus::NotApplicable,
+            'payment_mode_at_creation' => 'offline',
             'cancellation_token' => $existing->cancellation_token ?? (string) Str::uuid(),
         ];
 

@@ -25,7 +25,13 @@ return new class extends Migration
             $table->string('status')->default(BookingStatus::Pending->value);
             $table->string('source')->default(BookingSource::Riservo->value);
             $table->string('external_calendar_id')->nullable();
-            $table->string('payment_status')->default(PaymentStatus::Pending->value);
+            // PAYMENTS Session 2a (locked roadmap decision #28): the pre-2a
+            // `Pending` case on PaymentStatus was retired without a rename.
+            // The fresh default is `not_applicable` (offline-from-the-start
+            // booking, no payment ever expected). Every code path that
+            // creates a booking writes the column explicitly — the default
+            // only protects legacy / test-fixture rows.
+            $table->string('payment_status')->default(PaymentStatus::NotApplicable->value);
             $table->text('notes')->nullable();
             $table->text('internal_notes')->nullable();
             $table->string('cancellation_token')->unique();

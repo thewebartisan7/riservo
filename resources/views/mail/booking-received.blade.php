@@ -3,6 +3,10 @@
 # {{ __('Booking Confirmed') }}
 
 {{ __('A booking has been confirmed at **:business**.', ['business' => $businessName]) }}
+@elseif ($context === 'paid_awaiting_confirmation')
+# {{ __('Payment received') }}
+
+{{ __('We received your payment. **:business** will confirm your booking shortly. If they cannot accept it, you will receive an automatic full refund.', ['business' => $businessName]) }}
 @else
 # {{ __('New Booking Received') }}
 

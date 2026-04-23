@@ -174,6 +174,7 @@ export default function BookingShow() {
             {step === 'summary' && selectedService && selectedDate && selectedTime && (
                 <BookingSummary
                     slug={business.slug}
+                    business={business}
                     service={selectedService}
                     provider={selectedProvider}
                     date={selectedDate}

@@ -164,22 +164,20 @@ class FakeStripeClient
     // array fails the expectation match, and Mockery surfaces the failure
     // as a clear test error.
     //
-    // Session 2+ contract — DO NOT IMPLEMENT IN SESSION 1.
-    // Connected-account-level methods (per-request option
-    //     ['stripe_account' => $accountId]
-    // MUST be present and asserted) will live alongside this bucket:
-    //   - mockCheckoutSessionCreateOnAccount   (Session 2a)
-    //   - mockCheckoutSessionRetrieveOnAccount (Session 2a)
+    // Connected-account-level methods (PAYMENTS Session 2a+) live below this
+    // bucket. They enforce the inverse contract: `['stripe_account' => $acct]`
+    // MUST be present and match the account id the test wires. A call that
+    // crosses categories (e.g. accounts.create with a stripe_account header,
+    // or checkout.sessions.create without one) is a test failure by
+    // construction.
+    //
+    // Remaining members of the Session 2+ contract (not implemented yet):
     //   - mockRefundCreate                      (Session 2b — also asserts
     //       idempotency_key = 'riservo_refund_'.{booking_refund_uuid}
     //       per locked roadmap decision #36)
     //   - mockTaxSettingsRetrieve               (Session 4)
     //   - mockBalanceRetrieve                   (Session 4)
     //   - mockPayoutsList                       (Session 4)
-    //
-    // A call that crosses categories (e.g. accounts.create with a
-    // stripe_account header, or checkout.sessions.create without one) is a
-    // test failure by construction.
     // ================================================================
 
     /**
@@ -347,6 +345,99 @@ class FakeStripeClient
         // call — exactly the signal the FakeStripeClient contract (D-109 / #38)
         // is engineered to produce.
         return ! array_key_exists('stripe_account', $opts);
+    }
+
+    // ================================================================
+    // Connected-account-level methods — PAYMENTS Session 2a surface
+    // (locked roadmap decision #5). Every call here MUST carry
+    // ['stripe_account' => $expectedAccountId] in the per-request options;
+    // a missing key or mismatched value fails the withArgs matcher.
+    // ================================================================
+
+    /**
+     * Stub `$stripe->checkout->sessions->create([...], ['stripe_account' =>
+     * $acct])`. Asserts the `stripe_account` header is PRESENT and matches
+     * the given account id.
+     *
+     * Returns a Checkout Session object carrying `id`, `url`, and any extra
+     * keys the caller passes in `$response`. The `id` and `url` default to
+     * unique test strings so multiple calls within one test produce distinct
+     * sessions.
+     *
+     * @param  array<string, mixed>  $response
+     */
+    public function mockCheckoutSessionCreateOnAccount(
+        string $expectedAccountId,
+        array $response = [],
+    ): self {
+        $this->ensureCheckoutSessions();
+
+        $id = (string) ($response['id'] ?? 'cs_test_'.uniqid());
+        $session = StripeCheckoutSession::constructFrom(array_merge([
+            'id' => $id,
+            'url' => 'https://checkout.stripe.com/c/pay/'.$id,
+        ], $response));
+
+        $this->checkoutSessions
+            ->shouldReceive('create')
+            ->withArgs(function ($params, $opts = []) use ($expectedAccountId) {
+                return $this->assertConnectedAccountLevel((array) $opts, $expectedAccountId);
+            })
+            ->andReturn($session);
+
+        return $this;
+    }
+
+    /**
+     * Stub `$stripe->checkout->sessions->retrieve($id, ['stripe_account' =>
+     * $acct])`. Asserts the header is PRESENT and matches, AND asserts the
+     * requested session id matches.
+     *
+     * Defaults to a happy-path (paid, CHF 50, sync) session so most Session 2a
+     * tests need only pass the account id + session id. Tests that exercise
+     * the async branch, a non-paid state, or an account-mismatch scenario
+     * override via `$response`.
+     *
+     * @param  array<string, mixed>  $response
+     */
+    public function mockCheckoutSessionRetrieveOnAccount(
+        string $expectedAccountId,
+        string $sessionId,
+        array $response = [],
+    ): self {
+        $this->ensureCheckoutSessions();
+
+        $session = StripeCheckoutSession::constructFrom(array_merge([
+            'id' => $sessionId,
+            'payment_status' => 'paid',
+            'amount_total' => 5000,
+            'currency' => 'chf',
+            'payment_intent' => 'pi_test_'.uniqid(),
+            'account' => $expectedAccountId,
+        ], $response));
+
+        $this->checkoutSessions
+            ->shouldReceive('retrieve')
+            ->withArgs(function ($id, $opts = []) use ($expectedAccountId, $sessionId) {
+                return $id === $sessionId
+                    && $this->assertConnectedAccountLevel((array) $opts, $expectedAccountId);
+            })
+            ->andReturn($session);
+
+        return $this;
+    }
+
+    /**
+     * Connected-account-level calls MUST carry `stripe_account => $acct` in
+     * the per-request options. A missing key or mismatched value fails the
+     * Mockery `withArgs` matcher, surfacing as a "method not expected"
+     * diagnostic that names the errant call.
+     */
+    private function assertConnectedAccountLevel(array $opts, string $expectedAccountId): bool
+    {
+        $header = $opts['stripe_account'] ?? null;
+
+        return is_string($header) && $header === $expectedAccountId;
     }
 
     private function ensureAccounts(): void

@@ -32,15 +32,24 @@ class BookingReceivedNotification extends Notification implements ShouldQueue
         $business = $this->booking->business;
         $startsAt = $this->booking->starts_at->setTimezone($business->timezone);
 
-        $subject = $this->context === 'confirmed'
-            ? __('Booking Confirmed — :service on :date', [
+        // PAYMENTS Session 2a (locked decision #29): when a manual-confirmation
+        // business is paid via Stripe Checkout, the booking lands at
+        // `pending + paid`. The customer has paid BUT the business still has
+        // to approve; the notification must make that contract explicit so
+        // the customer isn't surprised by a refund if the admin rejects.
+        $subject = match ($this->context) {
+            'confirmed' => __('Booking Confirmed — :service on :date', [
                 'service' => $this->booking->service->name,
                 'date' => $startsAt->format('d.m.Y'),
-            ])
-            : __('New Booking — :service on :date', [
+            ]),
+            'paid_awaiting_confirmation' => __('Payment received — :business will confirm your booking', [
+                'business' => $business->name,
+            ]),
+            default => __('New Booking — :service on :date', [
                 'service' => $this->booking->service->name,
                 'date' => $startsAt->format('d.m.Y'),
-            ]);
+            ]),
+        };
 
         return (new MailMessage)
             ->subject($subject)
