@@ -20,6 +20,19 @@ use Tests\TestCase;
 
 pest()->extend(TestCase::class)
     ->use(RefreshDatabase::class)
+    ->beforeEach(function () {
+        // Feature tests render Inertia pages through the `@vite` directive,
+        // which tries to resolve `public/build/manifest.json`. CI's Tests
+        // job does not run `npm run build` (only the Browser Tests job
+        // does), so every Inertia-rendering Feature test would fail with
+        // "Vite manifest not found" in CI. `withoutVite()` disables the
+        // directive's resolution for the duration of the test — the
+        // assertion targets are the Inertia payload + HTTP status, not
+        // the rendered script tags. Browser tests opt out of this global
+        // by living in their own `->in('Browser')` binding below, where
+        // the real manifest is required by the headless browser.
+        $this->withoutVite();
+    })
     ->in('Feature');
 
 pest()->extend(TestCase::class)
