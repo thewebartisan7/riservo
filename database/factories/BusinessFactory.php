@@ -31,6 +31,7 @@ class BusinessFactory extends Factory
             'email' => fake()->companyEmail(),
             'address' => fake()->address(),
             'timezone' => 'Europe/Zurich',
+            'country' => 'CH',
             'payment_mode' => PaymentMode::Offline,
             'confirmation_mode' => ConfirmationMode::Auto,
             'allow_provider_choice' => true,

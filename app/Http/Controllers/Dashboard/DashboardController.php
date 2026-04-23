@@ -6,6 +6,7 @@ use App\Enums\BookingSource;
 use App\Enums\BookingStatus;
 use App\Enums\BusinessMemberRole;
 use App\Enums\PendingActionStatus;
+use App\Enums\PendingActionType;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\PendingAction;
@@ -104,7 +105,11 @@ class DashboardController extends Controller
     {
         $isAdmin = tenant()->role() === BusinessMemberRole::Admin;
 
+        // Dashboard banner is calendar-only (D-113 + locked roadmap decision
+        // #44). Payment Pending Actions render in their per-session surfaces
+        // (booking-detail panel in Session 2b / 3), not in this list.
         $query = PendingAction::where('business_id', $business->id)
+            ->whereIn('type', PendingActionType::calendarValues())
             ->where('status', PendingActionStatus::Pending->value)
             ->with(['booking.customer:id,name', 'booking.service:id,name']);
 

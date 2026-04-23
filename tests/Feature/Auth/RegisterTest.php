@@ -87,6 +87,29 @@ test('slug is generated uniquely', function () {
     expect($business)->not->toBeNull();
 });
 
+test('new businesses get a supported country populated (D-143, codex Round 10)', function () {
+    // Codex Round 10 finding: new businesses were created without a
+    // `country`, and the D-141 Connected Account gate then refused Stripe
+    // onboarding forever (null country => not in supported_countries).
+    // Registration now seeds the column from
+    // `config('payments.default_onboarding_country')`, so a fresh signup
+    // can reach Stripe Connect Express onboarding without intervention.
+    Notification::fake();
+
+    $this->post('/register', [
+        'name' => 'Owner',
+        'email' => 'country-seed@example.com',
+        'password' => 'password123',
+        'password_confirmation' => 'password123',
+        'business_name' => 'Country Seed Salon',
+    ]);
+
+    $business = Business::where('slug', 'country-seed-salon')->first();
+    expect($business)->not->toBeNull()
+        ->and($business->country)->toBe(config('payments.default_onboarding_country'))
+        ->and(in_array($business->country, config('payments.supported_countries'), true))->toBeTrue();
+});
+
 test('reserved slugs are avoided', function () {
     Notification::fake();
 

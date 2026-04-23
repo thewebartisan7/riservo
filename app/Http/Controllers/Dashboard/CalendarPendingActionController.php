@@ -42,9 +42,17 @@ class CalendarPendingActionController extends Controller
 
         $action->loadMissing(['integration', 'booking']);
 
+        // PAYMENTS Session 1 (D-113) generalised the pending_actions table.
+        // This controller stays calendar-only; payment-typed Pending Actions
+        // are resolved by their owning per-session UIs (Session 2b / 3).
+        if (! in_array($action->type->value, PendingActionType::calendarValues(), true)) {
+            abort(404);
+        }
+
         $handled = match ($action->type) {
             PendingActionType::RiservoEventDeletedInGoogle => $this->resolveRiservoDeleted($action, $choice),
             PendingActionType::ExternalBookingConflict => $this->resolveConflict($action, $choice),
+            default => 'invalid',
         };
 
         if ($handled === 'invalid') {

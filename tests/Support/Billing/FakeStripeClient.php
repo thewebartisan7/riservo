@@ -4,6 +4,8 @@ namespace Tests\Support\Billing;
 
 use Mockery;
 use Mockery\MockInterface;
+use Stripe\Account as StripeAccount;
+use Stripe\AccountLink as StripeAccountLink;
 use Stripe\BillingPortal\Session as StripeBillingPortalSession;
 use Stripe\Checkout\Session as StripeCheckoutSession;
 use Stripe\StripeClient;
@@ -33,6 +35,10 @@ class FakeStripeClient
     private ?MockInterface $subscriptions = null;
 
     private ?MockInterface $customers = null;
+
+    private ?MockInterface $accounts = null;
+
+    private ?MockInterface $accountLinks = null;
 
     public function __construct()
     {
@@ -148,6 +154,219 @@ class FakeStripeClient
             ->andReturn((object) ['id' => $stripeId]);
 
         return $this;
+    }
+
+    // ================================================================
+    // Platform-level methods — PAYMENTS Session 1 surface (D-109, #38).
+    // Every call here MUST be invoked WITHOUT a `stripe_account` per-request
+    // option. The header-absent assertion is enforced via `withArgs` on the
+    // Mockery chain: a call that carries `stripe_account` in the options
+    // array fails the expectation match, and Mockery surfaces the failure
+    // as a clear test error.
+    //
+    // Session 2+ contract — DO NOT IMPLEMENT IN SESSION 1.
+    // Connected-account-level methods (per-request option
+    //     ['stripe_account' => $accountId]
+    // MUST be present and asserted) will live alongside this bucket:
+    //   - mockCheckoutSessionCreateOnAccount   (Session 2a)
+    //   - mockCheckoutSessionRetrieveOnAccount (Session 2a)
+    //   - mockRefundCreate                      (Session 2b — also asserts
+    //       idempotency_key = 'riservo_refund_'.{booking_refund_uuid}
+    //       per locked roadmap decision #36)
+    //   - mockTaxSettingsRetrieve               (Session 4)
+    //   - mockBalanceRetrieve                   (Session 4)
+    //   - mockPayoutsList                       (Session 4)
+    //
+    // A call that crosses categories (e.g. accounts.create with a
+    // stripe_account header, or checkout.sessions.create without one) is a
+    // test failure by construction.
+    // ================================================================
+
+    /**
+     * Stub `$stripe->accounts->create([...])`. Platform-level — asserts the
+     * `stripe_account` per-request option is absent. Codex Round-2 fix
+     * (D-124): also asserts that an `idempotency_key` per-request option is
+     * present — the controller MUST pass one so a crash between the Stripe
+     * response and the local DB insert does not orphan a duplicate Express
+     * account on retry.
+     *
+     * Pass `expectedIdempotencyKey` to assert the exact key (default: any
+     * non-empty string).
+     *
+     * @param  array<string, mixed>  $response
+     */
+    public function mockAccountCreate(array $response = [], ?string $expectedIdempotencyKey = null): self
+    {
+        $this->ensureAccounts();
+
+        $account = StripeAccount::constructFrom(array_merge([
+            'id' => 'acct_test_'.uniqid(),
+            'country' => 'CH',
+            'default_currency' => null,
+            'charges_enabled' => false,
+            'payouts_enabled' => false,
+            'details_submitted' => false,
+        ], $response));
+
+        $this->accounts
+            ->shouldReceive('create')
+            ->withArgs(function ($params, $opts = []) use ($expectedIdempotencyKey) {
+                if (! $this->assertPlatformLevel((array) $opts)) {
+                    return false;
+                }
+
+                $key = $opts['idempotency_key'] ?? null;
+                if (! is_string($key) || $key === '') {
+                    return false;
+                }
+
+                if ($expectedIdempotencyKey !== null && $key !== $expectedIdempotencyKey) {
+                    return false;
+                }
+
+                return true;
+            })
+            ->andReturn($account);
+
+        return $this;
+    }
+
+    /**
+     * Stub `$stripe->accounts->retrieve($accountId)`. Platform-level — asserts
+     * the `stripe_account` per-request option is absent.
+     *
+     * @param  array<string, mixed>  $response
+     */
+    public function mockAccountRetrieve(string $accountId, array $response = []): self
+    {
+        $this->ensureAccounts();
+
+        $account = StripeAccount::constructFrom(array_merge([
+            'id' => $accountId,
+            'country' => 'CH',
+            'default_currency' => 'chf',
+            'charges_enabled' => true,
+            'payouts_enabled' => true,
+            'details_submitted' => true,
+            'requirements' => (object) [
+                'currently_due' => [],
+                'disabled_reason' => null,
+            ],
+        ], $response));
+
+        $this->accounts
+            ->shouldReceive('retrieve')
+            ->withArgs(function ($id, $opts = []) use ($accountId) {
+                return $id === $accountId && $this->assertPlatformLevel((array) $opts);
+            })
+            ->andReturn($account);
+
+        return $this;
+    }
+
+    /**
+     * Stub `$stripe->accountLinks->create([...])`. Platform-level — asserts
+     * the `stripe_account` per-request option is absent.
+     *
+     * Codex Round-10 (D-144): when `$expectedSignedAccountParam` is passed,
+     * the matcher also enforces that the `refresh_url` and `return_url`
+     * params are `URL::temporarySignedRoute` outputs carrying the given
+     * `account=…` query param — i.e. they carry both a `signature=` query
+     * and the expected `account=` value. This proves the controller is
+     * sending Stripe URLs the corresponding `signed`-middleware routes
+     * will accept on return/refresh; a plain `route(...)` URL fails the
+     * matcher here, not silently in production.
+     *
+     * @param  array<string, mixed>  $response
+     */
+    public function mockAccountLinkCreate(array $response = [], ?string $expectedSignedAccountParam = null): self
+    {
+        $this->ensureAccountLinks();
+
+        $link = StripeAccountLink::constructFrom(array_merge([
+            'object' => 'account_link',
+            'created' => time(),
+            'expires_at' => time() + 300,
+            'url' => 'https://connect.stripe.com/setup/c/acct_test/link_'.uniqid(),
+        ], $response));
+
+        $this->accountLinks
+            ->shouldReceive('create')
+            ->withArgs(function ($params, $opts = []) use ($expectedSignedAccountParam) {
+                if (! $this->assertPlatformLevel((array) $opts)) {
+                    return false;
+                }
+
+                if ($expectedSignedAccountParam === null) {
+                    return true;
+                }
+
+                $refresh = is_array($params) ? ($params['refresh_url'] ?? null) : null;
+                $return = is_array($params) ? ($params['return_url'] ?? null) : null;
+
+                return $this->assertSignedReturnUrl($refresh, $expectedSignedAccountParam)
+                    && $this->assertSignedReturnUrl($return, $expectedSignedAccountParam);
+            })
+            ->andReturn($link);
+
+        return $this;
+    }
+
+    /**
+     * A URL matches when it carries both a `signature=` query param (proof
+     * it came from `URL::temporarySignedRoute`) and an `account=` query
+     * param equal to the expected acct_id. Rejection here surfaces as a
+     * Mockery "method not expected" failure naming the bad call — matching
+     * the D-144 contract: a plain `route(...)` URL would never pass the
+     * `signed` middleware on return, so it must not pass in tests either.
+     */
+    private function assertSignedReturnUrl(mixed $url, string $expectedAccount): bool
+    {
+        if (! is_string($url) || $url === '') {
+            return false;
+        }
+
+        $query = parse_url($url, PHP_URL_QUERY);
+        if (! is_string($query) || $query === '') {
+            return false;
+        }
+
+        parse_str($query, $parts);
+
+        $signatureOk = isset($parts['signature']) && is_string($parts['signature']) && $parts['signature'] !== '';
+        $accountOk = isset($parts['account']) && $parts['account'] === $expectedAccount;
+
+        return $signatureOk && $accountOk;
+    }
+
+    private function assertPlatformLevel(array $opts): bool
+    {
+        // Platform-level calls MUST NOT carry a stripe_account header. Returning
+        // false here causes Mockery's withArgs to reject the match; the test
+        // then fails with a "method not expected" diagnostic naming the errant
+        // call — exactly the signal the FakeStripeClient contract (D-109 / #38)
+        // is engineered to produce.
+        return ! array_key_exists('stripe_account', $opts);
+    }
+
+    private function ensureAccounts(): void
+    {
+        if ($this->accounts !== null) {
+            return;
+        }
+
+        $this->accounts = Mockery::mock();
+        $this->client->accounts = $this->accounts;
+    }
+
+    private function ensureAccountLinks(): void
+    {
+        if ($this->accountLinks !== null) {
+            return;
+        }
+
+        $this->accountLinks = Mockery::mock();
+        $this->client->accountLinks = $this->accountLinks;
     }
 
     private function ensureCheckoutSessions(): void

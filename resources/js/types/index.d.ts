@@ -11,11 +11,19 @@ export interface SubscriptionState {
     current_period_ends_at: string | null;
 }
 
+export interface ConnectedAccountState {
+    status: 'not_connected' | 'pending' | 'incomplete' | 'active' | 'disabled';
+    country: string | null;
+    can_accept_online_payments: boolean;
+    payment_mode_mismatch: boolean;
+}
+
 export interface Business {
     id: number;
     name: string;
     slug: string;
     subscription: SubscriptionState;
+    connected_account: ConnectedAccountState;
 }
 
 export interface BookingDetail {

@@ -73,6 +73,13 @@ export default function AuthenticatedLayout({
     const unbookableServices = bookability?.unbookableServices ?? [];
     const subscription: SubscriptionState | null = auth.business?.subscription ?? null;
     const subscriptionBanner = resolveSubscriptionBanner(subscription, isAdmin, t);
+    const connectedAccount = auth.business?.connected_account ?? null;
+    // PAYMENTS Session 1 (D-114): dashboard-wide mismatch banner fires when
+    // the Business's payment_mode is not offline but the connected account is
+    // missing or unverified. Dormant until Session 5 unhides the non-offline
+    // options; still wired now so a DB-seeded online value (dogfooding Session
+    // 2a) surfaces correctly.
+    const paymentModeMismatch = isAdmin && (connectedAccount?.payment_mode_mismatch ?? false);
 
     const navItems: { label: string; href: string; active: boolean; icon: LucideIcon }[] = [
         { label: t('Dashboard'), href: dashboardIndex.url(), active: currentPath === '/dashboard', icon: HomeIcon },
@@ -222,6 +229,36 @@ export default function AuthenticatedLayout({
                                             </Link>
                                         </AlertAction>
                                     )}
+                                </Alert>
+                            </div>
+                        )}
+                        {paymentModeMismatch && (
+                            <div
+                                className={
+                                    fullBleed
+                                        ? 'border-b border-border/60 px-5 pb-3 pt-3 sm:px-8'
+                                        : 'mx-auto w-full max-w-6xl px-5 pt-5 sm:px-8 sm:pt-8'
+                                }
+                                data-testid="payment-mode-mismatch-banner"
+                            >
+                                <Alert variant="warning" role="alert">
+                                    <AlertTriangleIcon aria-hidden="true" />
+                                    <AlertTitle>{t('Online payments need attention')}</AlertTitle>
+                                    <AlertDescription>
+                                        <p>
+                                            {t(
+                                                'Your business is set to accept online payments, but your Stripe connected account is not ready yet. New bookings will fall back to offline until this is resolved.',
+                                            )}
+                                        </p>
+                                    </AlertDescription>
+                                    <AlertAction>
+                                        <Link
+                                            href="/dashboard/settings/connected-account"
+                                            className="inline-flex items-center text-xs font-medium uppercase tracking-[0.22em] text-warning underline-offset-4 hover:underline"
+                                        >
+                                            {t('Resolve in settings')}
+                                        </Link>
+                                    </AlertAction>
                                 </Alert>
                             </div>
                         )}

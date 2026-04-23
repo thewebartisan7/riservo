@@ -3,7 +3,10 @@
 namespace App\Http\Middleware;
 
 use App\Enums\BusinessMemberRole;
+use App\Enums\PaymentMode;
 use App\Enums\PendingActionStatus;
+use App\Enums\PendingActionType;
+use App\Models\Business;
 use App\Models\PendingAction;
 use App\Models\Provider;
 use App\Models\Service;
@@ -79,7 +82,11 @@ class HandleInertiaRequests extends Middleware
             return 0;
         }
 
+        // PAYMENTS Session 1 generalised the pending_actions table (D-113);
+        // scope to calendar types only so payment-typed rows in 2b / 3 don't
+        // inflate this calendar-named badge.
         $query = PendingAction::where('business_id', $tenant->business()->id)
+            ->whereIn('type', PendingActionType::calendarValues())
             ->where('status', PendingActionStatus::Pending->value);
 
         if ($tenant->role() !== BusinessMemberRole::Admin) {
@@ -177,7 +184,13 @@ class HandleInertiaRequests extends Middleware
     }
 
     /**
-     * @return array{id: int, name: string, slug: string, subscription: array{status: string, trial_ends_at: string|null, current_period_ends_at: string|null}}|null
+     * @return array{
+     *     id: int,
+     *     name: string,
+     *     slug: string,
+     *     subscription: array{status: string, trial_ends_at: string|null, current_period_ends_at: string|null},
+     *     connected_account: array{status: string, country: string|null, can_accept_online_payments: bool, payment_mode_mismatch: bool}
+     * }|null
      */
     private function resolveBusiness(Request $request): ?array
     {
@@ -191,16 +204,53 @@ class HandleInertiaRequests extends Middleware
             return null;
         }
 
-        // Eager-load subscriptions so subscriptionStateForPayload() (D-089 §4.9)
-        // collapses two queries (`subscriptions()->exists()` +
-        // `subscription('default')`) into one relation-load.
-        $business->loadMissing('subscriptions');
+        // Eager-load subscriptions + connected account so
+        // subscriptionStateForPayload() (D-089 §4.9) and the PAYMENTS shared
+        // prop (D-114) collapse their reads into one relation-load pass each.
+        $business->loadMissing(['subscriptions', 'stripeConnectedAccount']);
 
         return [
             'id' => $business->id,
             'name' => $business->name,
             'slug' => $business->slug,
             'subscription' => $business->subscriptionStateForPayload(),
+            'connected_account' => $this->resolveConnectedAccountPayload($business),
+        ];
+    }
+
+    /**
+     * Shared Inertia prop for the PAYMENTS Connected Account surface (D-114).
+     * Carries just enough state for the Connected Account settings page, the
+     * dashboard-wide mismatch banner, and (in later sessions) the Settings →
+     * Booking gate and public-booking flow — without a per-page DB round-trip.
+     *
+     * @return array{
+     *     status: string,
+     *     country: string|null,
+     *     can_accept_online_payments: bool,
+     *     payment_mode_mismatch: bool
+     * }
+     */
+    private function resolveConnectedAccountPayload(Business $business): array
+    {
+        $row = $business->stripeConnectedAccount;
+
+        if ($row === null) {
+            return [
+                'status' => 'not_connected',
+                'country' => null,
+                'can_accept_online_payments' => false,
+                'payment_mode_mismatch' => $business->payment_mode !== PaymentMode::Offline,
+            ];
+        }
+
+        $canAccept = $business->canAcceptOnlinePayments();
+
+        return [
+            'status' => $row->verificationStatus(),
+            'country' => $row->country,
+            'can_accept_online_payments' => $canAccept,
+            'payment_mode_mismatch' => ! $canAccept && $business->payment_mode !== PaymentMode::Offline,
         ];
     }
 

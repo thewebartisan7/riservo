@@ -48,10 +48,13 @@ export default function BookingSettings({ settings }: Props) {
         { value: 'first_available', label: t('First available') },
         { value: 'round_robin', label: t('Round robin (least busy)') },
     ];
+    // Online and customer_choice are hidden from the UI until PAYMENTS Session 5
+    // lifts the ban (locked roadmap decision #27). The <Select> trigger still
+    // renders the persisted value as its label when the DB row carries a hidden
+    // option, so existing rows read back without error — they simply cannot be
+    // changed to a hidden option from this UI.
     const paymentModeItems = [
         { value: 'offline', label: t('Pay on-site') },
-        { value: 'online', label: t('Pay online') },
-        { value: 'customer_choice', label: t('Customer choice') },
     ];
 
     return (
@@ -204,9 +207,6 @@ export default function BookingSettings({ settings }: Props) {
                                             ))}
                                         </SelectPopup>
                                     </Select>
-                                    <FieldDescription>
-                                        {t('Online payments require Stripe setup — coming soon.')}
-                                    </FieldDescription>
                                     {errors.payment_mode && <FieldError match>{errors.payment_mode}</FieldError>}
                                 </Field>
                             </section>

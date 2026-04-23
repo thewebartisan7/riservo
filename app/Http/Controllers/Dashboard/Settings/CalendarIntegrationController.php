@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Dashboard\Settings;
 
 use App\Enums\PendingActionStatus;
+use App\Enums\PendingActionType;
 use App\Http\Controllers\Controller;
 use App\Jobs\Calendar\PullCalendarEventsJob;
 use App\Jobs\Calendar\StartCalendarSyncJob;
@@ -347,7 +348,10 @@ class CalendarIntegrationController extends Controller
 
         $isAdmin = tenant()->role()->value === 'admin';
 
+        // Calendar-typed only — D-113 generalised the table; payment-typed rows
+        // surface in their owning per-session UIs (Session 2b / 3), not here.
         $query = PendingAction::where('business_id', $business->id)
+            ->whereIn('type', PendingActionType::calendarValues())
             ->where('status', PendingActionStatus::Pending->value);
 
         if (! $isAdmin) {

@@ -280,3 +280,118 @@ Documented separately in the pre-launch checklist (`docs/SPEC.md §15` — Strip
 go-live). Switching is a flip of the env vars from `*_test_*` to live keys plus
 re-creating the live-mode product + prices + webhook endpoint. The application
 code does not change.
+
+---
+
+## Stripe Connect (customer-to-professional payments)
+
+Connected-account onboarding shipped in PAYMENTS Session 1. This section covers
+the operator-side setup; payment-taking, refund, payout, and dispute handlers
+land in PAYMENTS Sessions 2a / 2b / 3 / 4. The full roadmap lives in
+`docs/ROADMAP.md`; the cross-cutting decisions are at
+`docs/decisions/DECISIONS-PAYMENTS.md` (D-109..D-119).
+
+### Stripe-side configuration
+
+The Connect webhook is a SEPARATE subscription from the platform-subscription
+webhook above. In the Stripe dashboard, navigate to
+**Developers → Webhooks → Connected accounts** (the second tab — distinct from
+the "Account" tab that hosts the subscription webhook).
+
+1. Create a new endpoint pointing at `https://<your-domain>/webhooks/stripe-connect`.
+   For local development, an ngrok tunnel works the same as the subscription
+   webhook (`https://<random>.ngrok.app/webhooks/stripe-connect`).
+2. Subscribe to the following events. Sessions 1's controller log-and-200's
+   any unhandled type, so configuring all of them now is forward-compatible.
+   - **Session 1 handles**: `account.updated`, `account.application.deauthorized`.
+   - **Session 1 stubs (log-and-200; Session 3 wires the body)**:
+     `charge.dispute.created`, `charge.dispute.updated`, `charge.dispute.closed`.
+   - **Sessions 2a / 2b / 3 will add**: `checkout.session.completed`,
+     `checkout.session.expired`, `checkout.session.async_payment_succeeded`,
+     `checkout.session.async_payment_failed`, `payment_intent.payment_failed`,
+     `payment_intent.succeeded`, `charge.refunded`, `charge.refund.updated`,
+     `refund.updated`. Configuring them at Session 1 time is harmless.
+3. Copy the signing secret into `STRIPE_CONNECT_WEBHOOK_SECRET` (env). This is
+   DISTINCT from `STRIPE_WEBHOOK_SECRET` (Cashier's subscription webhook,
+   above). Per locked roadmap decision #38 the two endpoints use different
+   cache-key prefixes (`stripe:subscription:event:` vs `stripe:connect:event:`)
+   so they cannot collide.
+4. Use the SAME `STRIPE_KEY` / `STRIPE_SECRET` test-vs-live pair as the
+   subscription side — Connect is a marketplace abstraction over the same
+   account, not a separate Stripe account.
+
+### Environment variables
+
+Added in PAYMENTS Session 1:
+
+```
+STRIPE_CONNECT_WEBHOOK_SECRET=whsec_connect_...
+
+# config/payments.php — country gating per locked roadmap decision #43.
+# MVP value = CH only; the seam is open for IT/DE/FR/AT/LI in a fast-follow.
+PAYMENTS_SUPPORTED_COUNTRIES=CH
+PAYMENTS_DEFAULT_ONBOARDING_COUNTRY=CH
+PAYMENTS_TWINT_COUNTRIES=CH
+```
+
+`config/payments.php` reads the three `PAYMENTS_*` keys; comma-separated lists
+are parsed into arrays.
+
+### Webhook endpoint
+
+`POST /webhooks/stripe-connect` is a fresh controller (NOT a Cashier subclass —
+Cashier's base routes platform-subscription events that don't apply here).
+CSRF is excluded in `bootstrap/app.php`. Signature verification runs in
+`StripeConnectWebhookController` against `STRIPE_CONNECT_WEBHOOK_SECRET`; a
+missing or empty secret in production logs a critical line and accepts the
+payload without verification (test escape hatch — production MUST set the
+secret).
+
+The controller treats every `account.*` payload as a nudge per locked roadmap
+decision #34 — it calls `stripe.accounts.retrieve(...)` to pull authoritative
+state rather than trusting the payload. This makes the handler immune to
+out-of-order delivery.
+
+### Connected Account onboarding flow (admin-side)
+
+1. Admin visits `/dashboard/settings/connected-account` (Settings → Online Payments).
+2. Click **Enable online payments** → server creates a Stripe Express account
+   via API (country = `config('payments.default_onboarding_country')`, MVP =
+   `'CH'`), persists the local row, mints a Stripe Account Link, and 302s the
+   admin into Stripe-hosted KYC.
+3. Stripe redirects back to `/dashboard/settings/connected-account/refresh` on
+   completion or abandonment. The controller re-fetches state via
+   `stripe.accounts.retrieve(...)` and either:
+   - mints a fresh Account Link if the user bailed mid-KYC (transparent
+     re-entry into Stripe-hosted onboarding), OR
+   - shows the verified-account state (charges enabled, payouts enabled,
+     default currency) on the settings page.
+4. Disconnect soft-deletes the local row (retaining `stripe_account_id` for
+   audit + Session 2b's late-webhook refund path) and forces
+   `Business.payment_mode` back to `offline`.
+
+### Migration deploy requirement: `pending_actions` rename is NOT rolling-deploy-safe
+
+PAYMENTS Session 1 includes the migration `2026_04_22_231235_rename_calendar_pending_actions_to_pending_actions.php` which renames `calendar_pending_actions` → `pending_actions` AND switches every model / reader to the new name in the same release. This is a classic expand/contract violation under any rolling deployment:
+
+- **Before migration**: new code reads `pending_actions` → table does not exist → 500.
+- **After migration**: old code (still serving traffic during a rolling cutover) reads `calendar_pending_actions` → table no longer exists → 500.
+
+**Operator requirement (D-125)**: deploy this release with **zero overlap between old and new code**. Acceptable shapes:
+
+- **Single-instance restart** (the simplest path; matches riservo's MVP / pre-launch deploy posture). Stop the old process, run `php artisan migrate`, start the new process. Brief downtime (seconds).
+- **Blue-green cutover**. Spin up the new fleet, run the migration, switch traffic atomically, drain the old fleet. No code overlap.
+- **Maintenance mode** during the migration: `php artisan down && php artisan migrate && <deploy new code> && php artisan up`.
+
+A standard rolling deploy (e.g. Laravel Cloud's default for some plans) will surface 500s on whichever side of the rollout is out of sync with the schema for the duration of the rollout. **Do not ship this release through a rolling deploy.**
+
+This trade-off is acceptable for PAYMENTS Session 1 because riservo is pre-launch — there is no production traffic to disrupt. If a future session edits a similar table-rename pattern after launch, redesign as a phased expand/contract migration (rename via `Schema::rename`, then a follow-up release that drops the legacy reader paths after both code and DB are unified).
+
+### Hide on Booking Settings (until Session 5)
+
+PAYMENTS Sessions 1–4 keep `payment_mode = online` and `customer_choice` HIDDEN
+from the Settings → Booking select. Session 5 lifts the ban after the full
+payment lifecycle (charging, refunds, disputes, payouts) is shipped. A DB-seeded
+non-offline value still reads back without error; the React Select silently
+shows the persisted value as its trigger label even though the popup only
+contains `offline`.

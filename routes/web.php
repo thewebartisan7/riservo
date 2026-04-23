@@ -21,6 +21,7 @@ use App\Http\Controllers\Dashboard\Settings\BillingController;
 use App\Http\Controllers\Dashboard\Settings\BookingSettingsController;
 use App\Http\Controllers\Dashboard\Settings\BusinessExceptionController;
 use App\Http\Controllers\Dashboard\Settings\CalendarIntegrationController;
+use App\Http\Controllers\Dashboard\Settings\ConnectedAccountController;
 use App\Http\Controllers\Dashboard\Settings\EmbedController;
 use App\Http\Controllers\Dashboard\Settings\ProfileController as SettingsProfileController;
 use App\Http\Controllers\Dashboard\Settings\ProviderController as SettingsProviderController;
@@ -29,6 +30,7 @@ use App\Http\Controllers\Dashboard\Settings\StaffController as SettingsStaffCont
 use App\Http\Controllers\Dashboard\Settings\WorkingHoursController;
 use App\Http\Controllers\OnboardingController;
 use App\Http\Controllers\Webhooks\GoogleCalendarWebhookController;
+use App\Http\Controllers\Webhooks\StripeConnectWebhookController;
 use App\Http\Controllers\Webhooks\StripeWebhookController;
 use App\Http\Controllers\WelcomeController;
 use Illuminate\Support\Facades\Route;
@@ -203,6 +205,38 @@ Route::middleware('auth')->group(function () {
                 // Embed & Share
                 Route::get('/embed', [EmbedController::class, 'edit'])->name('settings.embed');
 
+                // Stripe Connect Express onboarding (PAYMENTS Session 1,
+                // D-116). Admin-only, inside billing.writable — a SaaS-lapsed
+                // Business cannot open new payment surfaces. GET verbs pass
+                // through billing.writable unconditionally per D-090, so a
+                // lapsed admin returning from Stripe's hosted KYC still lands
+                // on a working refresh handler.
+                Route::get('/connected-account', [ConnectedAccountController::class, 'show'])
+                    ->name('settings.connected-account');
+                Route::post('/connected-account', [ConnectedAccountController::class, 'create'])
+                    ->name('settings.connected-account.create');
+                // Codex Round-7 (D-137): split the refresh surface. GET
+                // `refresh` is Stripe's return_url (sync-only, no bounce);
+                // POST `resume` is admin-triggered "Continue onboarding"
+                // (gated by billing.writable); GET `resume-expired` is
+                // Stripe's refresh_url handler (link-expired mid-flow).
+                //
+                // Codex Round-9 (D-142): refresh + resume-expired use
+                // signed URLs carrying the acct_id. `signed` middleware
+                // verifies the signature + TTL; the controller then
+                // verifies the tenant owns the signed acct. Cross-site
+                // GET triggers and wrong-tenant resumes are both rejected.
+                Route::get('/connected-account/refresh', [ConnectedAccountController::class, 'refresh'])
+                    ->middleware('signed')
+                    ->name('settings.connected-account.refresh');
+                Route::post('/connected-account/resume', [ConnectedAccountController::class, 'resume'])
+                    ->name('settings.connected-account.resume');
+                Route::get('/connected-account/resume-expired', [ConnectedAccountController::class, 'resumeExpired'])
+                    ->middleware('signed')
+                    ->name('settings.connected-account.resume-expired');
+                Route::delete('/connected-account', [ConnectedAccountController::class, 'disconnect'])
+                    ->name('settings.connected-account.disconnect');
+
                 // Account — admin-only carve-out: "be your own first provider"
                 // toggle (D-062). The Account GET + profile/password/avatar
                 // mutations live in the shared sub-group below (D-096).
@@ -270,8 +304,21 @@ Route::post('/webhooks/google-calendar', [GoogleCalendarWebhookController::class
 // Stripe webhook. No auth, CSRF excluded in bootstrap/app.php. Signature
 // verified inside Cashier's WebhookController via cashier.webhook.secret;
 // our subclass adds cache-layer event-id idempotency (D-091, D-092).
+//
+// Codex Round-6 (D-135): the route name is `cashier.webhook` to preserve
+// Cashier's named-route contract. Our /webhooks/stripe URL is documented
+// for operators (DEPLOYMENT.md); Cashier-internal callers that
+// `route('cashier.webhook')` resolve through this route.
 Route::post('/webhooks/stripe', [StripeWebhookController::class, 'handleWebhook'])
-    ->name('webhooks.stripe');
+    ->name('cashier.webhook');
+
+// Stripe Connect webhook (PAYMENTS Session 1, D-109). No auth, CSRF excluded
+// in bootstrap/app.php. Signature verified inside the controller against
+// STRIPE_CONNECT_WEBHOOK_SECRET (distinct from the Cashier subscription
+// webhook secret per locked roadmap decision #38). Cache prefix
+// `stripe:connect:event:` ensures dedup isolation from the subscription path.
+Route::post('/webhooks/stripe-connect', StripeConnectWebhookController::class)
+    ->name('webhooks.stripe-connect');
 
 // Guest booking management (no auth, via cancellation token)
 Route::get('/bookings/{token}', [BookingManagementController::class, 'show'])->name('bookings.show');

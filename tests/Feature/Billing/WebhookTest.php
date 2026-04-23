@@ -4,6 +4,7 @@ use App\Http\Controllers\Webhooks\StripeWebhookController;
 use App\Models\Business;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Route;
 use Laravel\Cashier\Subscription;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -87,7 +88,7 @@ test('webhook is idempotent — second delivery short-circuits with 200', functi
     Cache::flush();
 
     $this->postJson('/webhooks/stripe', $payload)->assertOk();
-    expect(Cache::has('stripe:event:evt_dedup_test'))->toBeTrue();
+    expect(Cache::has('stripe:subscription:event:evt_dedup_test'))->toBeTrue();
 
     // Second delivery: same event id. Should short-circuit. The subscription
     // count must not change (the create handler would have created a duplicate
@@ -120,7 +121,7 @@ test('webhook does NOT mark the event id processed when the handler throws', fun
                 // Simulate the event-id dedup check on entry.
                 $payload = json_decode($request->getContent(), true);
                 $eventId = $payload['id'] ?? null;
-                $cacheKey = 'stripe:event:'.$eventId;
+                $cacheKey = 'stripe:subscription:event:'.$eventId;
 
                 if (Cache::has($cacheKey)) {
                     return new Response('Webhook already processed.', 200);
@@ -146,8 +147,24 @@ test('webhook does NOT mark the event id processed when the handler throws', fun
         // Expected — the handler throws.
     }
 
-    expect(Cache::has('stripe:event:evt_failure_test'))
+    expect(Cache::has('stripe:subscription:event:evt_failure_test'))
         ->toBeFalse('event id was cached despite handler failure — Stripe retries would be silently dropped');
+});
+
+test('cashier.payment and cashier.webhook named routes are registered (D-135, codex Round 6)', function () {
+    // Codex Round 6 finding: Cashier::ignoreRoutes() drops both
+    // `cashier.payment` and `cashier.webhook`. We must re-register both
+    // so any code (Cashier-internal or our own) that calls
+    // `route('cashier.*')` resolves correctly. The cashier.payment URL
+    // also respects `config('cashier.path')` so deployers who rebrand
+    // the path don't break the SCA / IncompletePayment recovery flow.
+    expect(Route::has('cashier.payment'))->toBeTrue();
+    expect(Route::has('cashier.webhook'))->toBeTrue();
+
+    expect(route('cashier.payment', ['id' => 'pi_test']))
+        ->toContain('/'.trim((string) config('cashier.path', 'stripe'), '/').'/payment/pi_test');
+
+    expect(route('cashier.webhook'))->toContain('/webhooks/stripe');
 });
 
 test('signature verification rejects an invalid signature with 403', function () {

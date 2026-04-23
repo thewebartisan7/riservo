@@ -30,36 +30,49 @@ A glossary of terms used throughout this plan:
 - **D-092 cache-dedup pattern** — Stripe webhook idempotency: cache the event id for 24 h after a 2xx response so retries no-op. The MVPC-3 controller inlines this with prefix `stripe:event:`; this session extracts it into a shared helper that takes a prefix parameter (per locked decision #38), the Connect webhook uses prefix `stripe:connect:event:`, the subscription webhook moves to `stripe:subscription:event:`.
 - **Outcome-level idempotency** — every webhook handler additionally re-checks DB state at the top so replays / inline-promotion races never double-write (per locked roadmap decision #33). For Session 1 this manifests as the `account.updated` handler re-fetching Stripe state and skipping writes when the local row already matches.
 - **Wayfinder** — `laravel/wayfinder`, generates TypeScript callables for Laravel routes / controllers under `resources/js/actions/...` and `resources/js/routes/...`. We regenerate after route additions with `php artisan wayfinder:generate` and import via `@/actions/...`.
+- **PHPStan / Larastan** — static analysis at level 5 over `app/` (see `phpstan.neon`). Part of the iteration loop per the Session Done Checklist; command is `./vendor/bin/phpstan`.
 
 
 ## Progress
 
-Planning phase. No code yet. Updated as exec proceeds.
+- [x] (2026-04-23 22:00Z) Plan drafted and approved by developer; defaults applied for the 5 open questions (D-115..D-119).
+- [x] (2026-04-23 22:10Z) M1 — Hide `online` / `customer_choice` from Settings → Booking; persisted hidden values still read back without error. New regression test: `tests/Feature/Settings/BookingSettingsTest.php::"persisted online payment_mode reads back without error"`.
+- [x] (2026-04-23 22:15Z) M2 — `config/payments.php` created with three keys; no hardcoded `'CH'` literal in app code. New unit test: `tests/Unit/Config/PaymentsConfigTest.php`.
+- [x] (2026-04-23 22:25Z) M3 — `pending_actions` rename migration + nullable `integration_id` + readers audit + `PendingActionType` extended with three `payment.*` cases + `calendarValues()` helper. New regression tests: `tests/Feature/Dashboard/PendingActionFiltersTest.php`. Calendar test suite stayed green.
+- [x] (2026-04-23 22:35Z) M4 — `stripe_connected_accounts` migration + `StripeConnectedAccount` model (SoftDeletes, `verificationStatus()`, `matchesAuthoritativeState()`) + factory with `pending`/`incomplete`/`active`/`disabled` states + `Business::stripeConnectedAccount()` + `Business::canAcceptOnlinePayments()`. New unit tests: `tests/Unit/Models/StripeConnectedAccountTest.php`, `tests/Unit/Models/BusinessConnectedAccountTest.php`.
+- [x] (2026-04-23 22:50Z) M5 — `DedupesStripeWebhookEvents` trait extracted; subscription cache prefix moved to `stripe:subscription:event:`; `MVPC-3 WebhookTest` updated to the new prefix and stayed green. `POST /webhooks/stripe-connect` controller (signature verification against `STRIPE_CONNECT_WEBHOOK_SECRET`; `account.updated` re-fetches via `accounts.retrieve`; `account.application.deauthorized` soft-deletes + forces `payment_mode=offline`; `charge.dispute.*` log-and-200 stub). New tests: `tests/Feature/Payments/StripeConnectWebhookTest.php` (9 cases including stale-payload convergence and cache-prefix isolation).
+- [x] (2026-04-23 23:20Z) M6 — `ConnectedAccountController` with four actions inside the admin-only + `billing.writable` group; `auth.business.connected_account` Inertia shared prop in `HandleInertiaRequests`; `Dashboard/settings/connected-account.tsx` page with four states + accessible disconnect confirmation; dashboard-wide payment-mode-mismatch banner in `authenticated-layout.tsx`; Settings nav item under "Business" group. New tests: `tests/Feature/Payments/ConnectedAccountControllerTest.php` (10 cases including cross-tenant denial + multi-business admin + Inertia prop shape). One workaround: production uses Inertia external redirects, but those rewrite to the request URL in tests due to the version-mismatch handler in `Inertia\Middleware`; tests use the non-Inertia 302 + Location form (controller code is identical for both paths).
+- [x] (2026-04-23 23:25Z) M7 — `FakeStripeClient` split into platform-level (`mockAccountCreate`, `mockAccountRetrieve`, `mockAccountLinkCreate`, header asserted ABSENT via `withArgs`) + scaffold comment for the connected-account-level bucket (Sessions 2+). Shipped alongside M5/M6.
+- [x] (2026-04-23 23:35Z) M8 — Wayfinder regenerated; Pint clean (one phpdoc_align fix); PHPStan level-5 clean (5 issues fixed: match exhaustiveness, nullsafe-on-non-null, is_array-on-narrowed-type); Feature+Unit suite 730/2965 (was 695/2819 baseline; +35 tests, +146 assertions); `npm run build` clean; `docs/DEPLOYMENT.md` updated with Stripe Connect operator setup; `docs/decisions/DECISIONS-PAYMENTS.md` populated with D-109..D-119; `docs/BACKLOG.md` updated with the support-contact-surface follow-up; `docs/HANDOFF.md` rewritten.
+- [x] (2026-04-23 04:55Z next-day-UTC) Codex Round 1 — three blockers fixed on the same uncommitted diff. See `## Review — Round 1` for findings + fixes. New decisions D-120, D-121, D-122. Suite now 735/2974; PHPStan + Pint + build still clean.
+- [x] (2026-04-23 05:30Z next-day-UTC) Codex Round 2 — three more findings fixed (parse error, dispute persistence, accounts.create idempotency key). See `## Review — Round 2`. New decisions D-123, D-124. Suite now 739/2994; PHPStan + Pint + build still clean.
+- [x] (2026-04-23 06:10Z next-day-UTC) Codex Round 3 — four more findings fixed (reconnect-within-24h, rename deploy contract, dispute partial unique index, country gate in helper). See `## Review — Round 3`. New decisions D-125, D-126, D-127. Suite now 745/3009; PHPStan + Pint + build still clean.
+- [x] (2026-04-23 07:00Z next-day-UTC) Codex Round 4 — three more findings fixed (atomic + retry-safe demotion paths, incomplete-state resume, server-side payment_mode gate). See `## Review — Round 4`. New decisions D-128, D-129, D-130. Suite now 752/3027; PHPStan + Pint + build still clean.
+- [x] (2026-04-23 07:30Z next-day-UTC) Codex Round 5 — three more findings fixed (atomic disconnect, hard-block non-offline payment_mode, rollback-safe migration down). See `## Review — Round 5`. New decisions D-131, D-132, D-133. Suite now 753/3033; PHPStan + Pint + build still clean.
+- [x] (2026-04-23 08:05Z next-day-UTC) Codex Round 6 — three more findings fixed (cross-tenant replay guard, Cashier named-route contract, false-ready UI copy). See `## Review — Round 6`. New decisions D-134, D-135. Suite now 755/3042; PHPStan + Pint + build still clean.
+- [x] (2026-04-23 09:25Z next-day-UTC) Codex Round 7 — three more findings fixed (account.updated serialisation, refresh/resume/resume-expired split, canAcceptOnlinePayments disabled_reason check). See `## Review — Round 7`. New decisions D-136, D-137, D-138. Suite now 759/3052; PHPStan + Pint + build still clean.
+- [x] (2026-04-23 10:00Z next-day-UTC) Codex Round 8 — two more findings fixed (reconnect-history deauthorize guard, disconnect prefers active row). See `## Review — Round 8`. New decisions D-139, D-140. Suite now 761/3063; PHPStan + Pint + build still clean.
+- [x] (2026-04-23 11:00Z next-day-UTC) Codex Round 9 — two more findings fixed (Business.country canonical field, signed URLs for Stripe return/refresh). See `## Review — Round 9`. New decisions D-141, D-142. Suite now 764/3068; PHPStan + Pint + build still clean.
+- [x] (2026-04-23 12:30Z next-day-UTC) Codex Round 10 — three more findings fixed (country seed on signup, signed URLs on initial create(), resumeExpired billing-gate). See `## Review — Round 10`. New decisions D-143, D-144, D-145. Suite now 767/3076; PHPStan + Pint + build still clean.
+- [x] (2026-04-23 13:15Z next-day-UTC) Codex Round 11 — one finding fixed (stale signed URL after disconnect); one rejected (pending_actions rename restatement of D-125). See `## Review — Round 11`. New decision D-146. Suite now 769/3082; PHPStan + Pint + build still clean.
+- [x] (2026-04-23 14:30Z next-day-UTC) Codex Round 12 — three findings fixed (multi-business admin authz via row's business, disconnect-vs-resume TOCTOU serialisation, unknown-account webhook returns retryable 503). See `## Review — Round 12`. New decisions D-147, D-148, D-149. Suite now 774/3105; PHPStan + Pint + build still clean.
+- [x] (2026-04-23 15:40Z next-day-UTC) Codex Round 13 — one finding fixed (verificationStatus returns `unsupported_market` when Stripe caps on but country drifts outside supported_countries). See `## Review — Round 13`. New decision D-150. Suite now 777/3123; PHPStan + Pint + build still clean.
+- [ ] Final commit (developer; gate two).
 
-- [ ] Plan drafted and waiting for developer approval (gate one).
-- [ ] Hide `online` / `customer_choice` from Settings → Booking; persisted hidden values still read back without error.
-- [ ] `config/payments.php` created with three keys; no hardcoded `'CH'` literal in app code.
-- [ ] `pending_actions` rename migration + readers audit + `PendingActionType` extended with `payment.*` cases.
-- [ ] `stripe_connected_accounts` table + `StripeConnectedAccount` model + `Business::stripeConnectedAccount()` + `Business::canAcceptOnlinePayments()`.
-- [ ] `ConnectedAccountController` (show / create / refresh / disconnect) + admin-only routes inside `billing.writable`.
-- [ ] Shared dedup helper extracted; subscription webhook switched to `stripe:subscription:event:`; existing MVPC-3 webhook tests still green.
-- [ ] `POST /webhooks/stripe-connect` controller with signature verification against `STRIPE_CONNECT_WEBHOOK_SECRET`, handlers for `account.updated`, `account.application.deauthorized`, log-and-200 stub for `charge.dispute.*`.
-- [ ] `auth.business.connected_account` Inertia shared prop wired in `HandleInertiaRequests`.
-- [ ] `Dashboard/settings/connected-account.tsx` page (four states: not_connected, pending, active, disabled) + dashboard-wide mismatch banner.
-- [ ] Settings nav adds the Connected Account item under "Business" group (admin-only).
-- [ ] `FakeStripeClient` split into platform-level vs connected-account-level method categories with header asserts.
-- [ ] Feature tests pass (full list in `Validation and Acceptance`).
-- [ ] Wayfinder regenerated; `npm run build` clean; `vendor/bin/pint --dirty --format agent` clean.
-- [ ] `docs/DEPLOYMENT.md` updated with Connect endpoint URL, secret env var, full subscribed-event list.
-- [ ] New `D-NNN` decisions promoted into `docs/decisions/DECISIONS-PAYMENTS.md` (start at D-109).
-- [ ] `docs/HANDOFF.md` rewritten to reflect shipped Session 1 state.
-
-Use UTC timestamps when ticking boxes (`(2026-04-19 14:32Z)`).
+All times approximate, UTC.
 
 
 ## Surprises & Discoveries
 
-Nothing to report yet.
+- **Observation**: Inertia v3's `Middleware::onVersionChange` rewrites a 409 + `X-Inertia-Location` response to point at the request URL when the request's `X-Inertia-Version` header doesn't match `Inertia::getVersion()`. In tests this collapsed an external Stripe redirect to a same-URL self-redirect, masking the controller's real behaviour.
+  **Evidence**: Controller log line `Inertia::location url {"url":"https://connect.stripe.com/setup/c/.../redo"}` immediately followed by an X-Inertia-Location header value of `http://riservo.test/dashboard/settings/connected-account/refresh` in the response. Reproduced even after pinning `Inertia::version('test-fixed')` and matching the header — suggests a separate Inertia middleware path also rewrites.
+  **Consequence**: Tests assert the non-Inertia 302 + `Location` form instead. The controller code is identical for both paths (a single `return Inertia::location($link->url)`); the test exercises the same external-redirect contract, just at the simpler boundary.
+- **Observation**: Adding new enum cases to `PendingActionType` broke PHPStan's exhaustiveness check on `CalendarPendingActionController::resolve`'s `match` statement — exactly the compile-time signal we wanted.
+  **Evidence**: `match.unhandled` error from `./vendor/bin/phpstan` covering the three new `payment.*` cases on the existing match.
+  **Consequence**: Added a calendar-bucket `abort(404)` guard at the top of `resolve()` (so payment-typed rows never reach the calendar resolver) plus a `default => 'invalid'` arm. Resolution shapes for payment Pending Actions land in their owning per-session UIs in 2b/3.
+- **Observation**: Cashier resolves `StripeClient` via `app(StripeClient::class, ['config' => $config])`. A naive container binding `bind(StripeClient::class, fn () => Cashier::stripe())` would infinite-loop because `Cashier::stripe()` itself calls `app(StripeClient::class, ...)`.
+  **Evidence**: Reading `vendor/laravel/cashier/src/Cashier.php:120-129`.
+  **Consequence**: Bound `StripeClient` directly in `AppServiceProvider::register()` with a closure that constructs `new StripeClient(['api_key' => config('cashier.secret'), 'stripe_version' => Cashier::STRIPE_VERSION])` — no recursion. `FakeStripeClient` in tests overrides this binding via its own `app()->bind(...)` call (D-095).
 
 
 ## Decision Log
@@ -72,18 +85,312 @@ Decisions land here during exec. Each entry pairs with a freshly-allocated `D-NN
 - **D-112 — `config/payments.php` is the single switch for country gating**. Three keys: `supported_countries`, `default_onboarding_country`, `twint_countries` — MVP value `['CH']` for the lists, `'CH'` for the singleton, all env-driven. No hardcoded `'CH'` literal anywhere in app code, tests, Inertia props, Tailwind utilities. Locked roadmap decision #43.
 - **D-113 — `pending_actions` table generalised; `integration_id` nullable; calendar-aware readers add `whereNotNull('integration_id')` (or a `type`-based filter)**. The `CalendarPendingActionController` keeps operating against the renamed table with the calendar-type filter. The dashboard URL / controller rename to a generic `PendingActionController` is post-MVP polish. `PendingActionType` enum gains the three Session 3-consumed cases (`payment.dispute_opened`, `payment.refund_failed`, `payment.cancelled_after_payment`) so 2b / 3 don't need a schema-or-enum session. Locked roadmap decision #44.
 - **D-114 — `auth.business.connected_account` Inertia shared prop carries onboarding state**. Shape: `{ status: 'not_connected'|'pending'|'active'|'disabled', country: string|null, can_accept_online_payments: bool, payment_mode_mismatch: bool }`. Same shared-prop pattern as `subscription` (D-089) and `role` / `has_active_provider` (MVPC-4). The dashboard-wide banner reads `payment_mode_mismatch` to decide whether to render. Reading the prop avoids a per-page DB hit and centralises the banner logic in the layout.
+- **D-115 — Onboarding country = `config('payments.default_onboarding_country')` (always)**. `Business.address` is a freeform string today with no separate country column; regex-parsing it is fragile and unnecessary because Stripe collects the real country during hosted KYC and the `country` column on `stripe_connected_accounts` is overwritten by the first `accounts.retrieve`. Config-default-only keeps the code path simple and defers all country truth to Stripe.
+  **Rationale**: simplicity and no-false-positives outweigh friction (the single extra KYC click to correct a wrong country guess). Approved 2026-04-23 by the developer.
+- **D-116 — `ConnectedAccountController` mutations sit inside `billing.writable` middleware**. A SaaS-lapsed Business must resubscribe (via the `settings.billing*` routes, which sit outside the gate) before opening new payment surfaces. `GET /dashboard/settings/connected-account` and `GET /dashboard/settings/connected-account/refresh` pass through the gate unconditionally per D-090 (safe verbs are not gated); `POST` and `DELETE` redirect to `settings.billing` with a flash when the Business is read-only.
+  **Rationale**: consistent with D-090's "gate at the mutation edge, billing routes carve out, everything else gated" shape. Approved 2026-04-23 by the developer.
+- **D-117 — `ConnectedAccountController::create()` rejects with 422 when a connected account already exists**. Retry after a prior failure follows the same path (the partially-created row exists; the admin hits "Continue Stripe onboarding" on the settings page, which re-enters `refresh()` and mints a fresh Account Link). No silent idempotent re-create, no show-page redirect. Message: "A connected account already exists for this business — disconnect first to re-onboard."
+  **Rationale**: one row at a time is the cleanest invariant and surfaces bugs (duplicate clicks, double-submits) loudly. Approved 2026-04-23 by the developer.
+- **D-118 — Disabled-state "Contact support" CTA uses `mailto:support@riservo.ch` as a placeholder + `docs/BACKLOG.md` entry**. No support-flow surface exists in the codebase today (grep for `support@riservo` returned nothing under `app/` and `resources/`). The placeholder mailto links out; a BACKLOG entry titled **"Formal support-contact surface"** captures the follow-up to replace placeholders with a real flow (help page, in-app contact form, or similar) before launch.
+  **Rationale**: ship the feature without blocking on a support-UX design session; track the follow-up explicitly. Approved 2026-04-23 by the developer.
+- **D-119 — Pre-add all three `payment.*` cases to `PendingActionType` in Session 1**. `PaymentDisputeOpened`, `PaymentRefundFailed`, `PaymentCancelledAfterPayment` all land in the enum now. Sessions 2b / 3 are the writers; pre-adding costs nothing and avoids a cross-session enum edit that could be missed.
+  **Rationale**: tight scope vs pre-add is a judgment call; pre-adding wins on ergonomics and lands within Session 1's locked #44 remit. Approved 2026-04-23 by the developer.
 
 Add additional `D-NNN` entries here when other architectural calls crystallise. Promote each into `docs/decisions/DECISIONS-PAYMENTS.md` before close.
 
 
 ## Review
 
-(Empty until codex review runs against the staged diff. One subsection per round, per the format in `.claude/references/PLAN.md`.)
+### Round 1
+
+**Codex verdict**: needs-attention. Three blockers — webhook fail-open on empty secret, hardcoded country into immutable Stripe Express account, broken Postgres uniqueness on the active-row invariant. All three fixed on the same uncommitted diff.
+
+- [x] **Finding 1 (critical)** — Webhook signature verification fails open when `STRIPE_CONNECT_WEBHOOK_SECRET` is empty. Anyone who knows a real `acct_…` id could POST `account.application.deauthorized` and force the target Business back to `payment_mode = offline`.
+  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php:66-96` (`resolveEvent()`).
+  *Fix*: Restrict the empty-secret bypass to `app()->environment('testing')`. In any other environment, log a critical line and return null (the controller surfaces this as a 400). New regression test `empty connect_webhook_secret in non-testing environments fails closed` flips the environment to `production` and asserts the 400 + that no state mutation occurred. Promoted as **D-120** in `docs/decisions/DECISIONS-PAYMENTS.md`.
+  *Status*: done.
+
+- [x] **Finding 2 (high)** — `ConnectedAccountController::create()` silently passes `config('payments.default_onboarding_country')` to `stripe.accounts.create([...])`. Stripe Express country is permanent, so any non-default-country Business that hits the Enable flow gets a Stripe account in the wrong legal country with no recovery short of disconnect-and-recreate.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:59-107` (`create()`).
+  *Fix*: New private helper `resolveOnboardingCountry()` returns `null` when (a) `count(supported_countries) !== 1` or (b) the singleton doesn't equal `default_onboarding_country`. The controller refuses with a clear admin error in both cases — no Stripe call. In MVP (`['CH']` + `'CH'`) the runtime behaviour is identical; expanding `supported_countries` becomes a forced workflow that breaks loudly until a real per-Business country selector lands. Two new feature tests cover both refusal paths. BACKLOG entry **"Per-Business country selector for Stripe Express onboarding (D-121)"** captures the fast-follow. Promoted as **D-121** in DECISIONS-PAYMENTS.md (D-115's stance is preserved but now bounded by D-121).
+  *Status*: done.
+
+- [x] **Finding 3 (high)** — `unique(['business_id', 'deleted_at'])` does not enforce "one active row per business" on Postgres because NULLs are treated as DISTINCT. Concurrent Enable clicks could create multiple active rows AND multiple live Stripe accounts (each `accounts.create` succeeds; the unique constraint never fires).
+  *Location*: `database/migrations/2026_04_22_231504_create_stripe_connected_accounts_table.php:13-38` and `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:59-107`.
+  *Fix*: New migration `2026_04_23_045538_replace_stripe_connected_accounts_unique_with_partial_index.php` drops the broken compound unique and creates a Postgres partial unique index `CREATE UNIQUE INDEX … ON stripe_connected_accounts (business_id) WHERE deleted_at IS NULL`. `ConnectedAccountController::create()` is wrapped in a `DB::transaction` with a `lockForUpdate()` on the parent `Business` row; concurrent attempts throw a dedicated `App\Exceptions\Payments\ConnectedAccountAlreadyExists` and get the same "already connected" flash as the existence check. Two new unit tests prove the index (duplicate active throws `QueryException`; soft-deleted coexists with active). Promoted as **D-122** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+**Iteration loop after Round 1**: 735 / 2974 tests pass (was 730 / 2965 pre-review; +5 tests / +9 assertions). PHPStan level-5 clean. Pint clean (touched two test files for `fully_qualified_strict_types` / `ordered_imports`). `npm run build` clean. Decisions D-120, D-121, D-122 promoted into `docs/decisions/DECISIONS-PAYMENTS.md`. BACKLOG updated with the country-selector follow-up (D-121).
+
+### Round 2
+
+**Codex verdict**: needs-attention. Three findings — one critical (a stray `/c` prefix turned ConnectedAccountController into invalid PHP), two high (dispute webhook silently swallows real disputes via the dedup cache; `accounts.create` has no idempotency key and orphans Express accounts on crash-then-retry). All three fixed on the same uncommitted diff.
+
+- [x] **Finding 1 (critical)** — `ConnectedAccountController.php` started with `/c<?php`; `php -l` failed; any request loading the controller would fatal before the page or actions could run.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:1`.
+  *Fix*: removed the stray `/c` prefix. `php -l` confirms `No syntax errors detected`. The full Feature+Unit suite now exercises every connected-account code path successfully.
+  *Status*: done.
+
+- [x] **Finding 2 (high)** — `charge.dispute.*` events were routed to a log-and-200 stub, then cached by `dedupedProcess()` as "successfully handled". Stripe stops retrying; the cache prevents re-processing. A real dispute opened pre-Session-3 would be silently lost.
+  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php:51-225`.
+  *Fix*: the new `handleDisputeEvent()` upserts a `payment.dispute_opened` Pending Action keyed by `(business_id, payload->dispute_id)` for `created` / `updated`, resolves the row on `closed` (capturing the dispute outcome in `resolution_note = "closed:{$dispute->status}"`). The connected-account lookup includes soft-deleted rows so a dispute fired post-Disconnect still resolves to the original Business per locked roadmap decision #36. Outcome-level idempotency: an `updated` after a `closed` is a no-op. Unknown-account events log critical + 200 (no row inserted). Four new feature tests cover all branches. Promoted as **D-123** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 3 (high)** — `accounts.create` had no `idempotency_key`. A crash between Stripe's response and the local insert orphans a duplicate Express account on retry.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:84-128`.
+  *Fix*: pass `idempotency_key = 'riservo_connect_account_create_'.$business->id` per request; Stripe collapses retries within its 24h key TTL. The shape mirrors locked roadmap decision #36's `riservo_refund_{uuid}` convention. `FakeStripeClient::mockAccountCreate()` now requires and asserts the `idempotency_key` option (with optional `expectedIdempotencyKey` for exact-value pinning); a new feature test "accounts.create retry uses the same idempotency key for the same business" simulates post-Stripe/pre-commit failure by hard-deleting the local row between two POSTs and asserts the second call passes the same key. Promoted as **D-124** in DECISIONS-PAYMENTS.md (rejected reconciliation-via-search alternative documented).
+  *Status*: done.
+
+**Iteration loop after Round 2**: 739 / 2994 tests pass (was 735 / 2974 post-Round-1; +4 tests / +20 assertions). PHPStan level-5 clean. Pint clean (touched two test files for `fully_qualified_strict_types` / `ordered_imports`). `npm run build` clean. Decisions D-123, D-124 promoted into `docs/decisions/DECISIONS-PAYMENTS.md`.
+
+### Round 3
+
+**Codex verdict**: needs-attention. Four findings — two high (reconnect-within-24h breaks via the Stripe idempotency cache; the `pending_actions` rename is not rolling-deploy-safe), two medium (dispute Pending Action race; country gate missing from the readiness helper). All four addressed on the same uncommitted diff.
+
+- [x] **Finding 1 (high)** — D-124's per-business idempotency key collides on disconnect+reconnect inside Stripe's 24h key TTL: Stripe replays the original `acct_…`, the local insert hits the global unique on `stripe_account_id` (the soft-deleted row retains the id per locked decision #36), the user gets a 500.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:99-136`.
+  *Fix*: idempotency key is now `riservo_connect_account_create_{business_id}_attempt_{nonce}` where nonce = count of soft-deleted rows for this business. Each disconnect bumps the nonce → fresh key → fresh `acct_…` from Stripe. Defense-in-depth: if Stripe somehow still replays an existing `acct_…`, the controller restores the soft-deleted local row instead of inserting a colliding duplicate. Two new feature tests cover the disconnect+reconnect path and the defensive restore. Promoted as **D-125** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 2 (high)** — `calendar_pending_actions` → `pending_actions` rename ships in the same release that switches readers; under any rolling deploy, one side of the rollout points at a non-existent table.
+  *Location*: `database/migrations/2026_04_22_231235_rename_calendar_pending_actions_to_pending_actions.php`.
+  *Fix*: documented as an explicit operator deploy requirement in `docs/DEPLOYMENT.md` (single-instance restart / blue-green / `php artisan down`). Pre-launch context (no production traffic) makes this acceptable for PAYMENTS Session 1; future post-launch table renames should follow phased expand/contract. Recorded in **D-125** alongside the idempotency-key fix because both bind the same release shape.
+  *Status*: done (documentation-only fix).
+
+- [x] **Finding 3 (medium)** — Dispute Pending Actions used `first()`-then-`create()` which races under concurrent delivery. Different Stripe events for the same dispute carry different event ids, so the cache-layer dedup doesn't collapse them.
+  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php:285-324`.
+  *Fix*: new migration `add_dispute_id_unique_index_to_pending_actions.php` adds a Postgres partial unique index `((payload->>'dispute_id'))` scoped to `type = 'payment.dispute_opened'`. Handler refactored to insert-first, catch `UniqueConstraintViolationException`, then re-read for the update branch — both winner and loser converge on the same row. The insert is wrapped in `DB::transaction` so the unique violation rolls back to a Postgres SAVEPOINT, leaving the outer request transaction intact (otherwise Postgres aborts every subsequent query with `current transaction is aborted`). Two new feature tests cover the constraint directly. Promoted as **D-126** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 4 (medium)** — `Business::canAcceptOnlinePayments()` checked Stripe capability booleans only, ignoring `config('payments.supported_countries')`. A connected account whose country resolved to an unsupported value would still surface as "ready" via the Inertia mismatch-banner check, the `account.updated` webhook demotion path, and the future Session 5 Settings gate.
+  *Location*: `app/Models/Business.php:165-173`.
+  *Fix*: helper now requires `in_array($row->country, config('payments.supported_countries'))` in addition to the existing capability checks. Every reader inherits the country gate automatically. Two new unit tests: an active account in an unsupported country reports false; flipping the supported-countries config makes the same row eligible (proves the gate is truly config-driven). Promoted as **D-127** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+**Iteration loop after Round 3**: 745 / 3009 tests pass (was 739 / 2994 post-Round-2; +6 tests / +15 assertions). PHPStan level-5 clean. Pint clean (touched two test files for `fully_qualified_strict_types` / `ordered_imports`). `npm run build` clean. Decisions D-125, D-126, D-127 promoted into `docs/decisions/DECISIONS-PAYMENTS.md`. DEPLOYMENT.md carries the rename-migration deploy contract.
+
+### Round 4
+
+**Codex verdict**: needs-attention. Three findings — two high (webhook retries can permanently skip business demotion; `incomplete` accounts cannot resume onboarding), one medium (server-side `payment_mode` gate was cosmetic). All three fixed on the same uncommitted diff.
+
+- [x] **Finding 1 (high)** — Both Connect demotion paths mutated the row before forcing `payment_mode = offline`. `account.updated` then short-circuited on `matchesAuthoritativeState()` without re-evaluating demotion, and `account.application.deauthorized` scoped trashed rows out of the lookup. A partial-success crash (row saved, business save failed) left the system in a forever-broken state Stripe retries could not recover from.
+  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php:130-216`.
+  *Fix*: both demotion paths wrap row + business writes in a single `DB::transaction`. `account.updated` evaluates the demotion check OUTSIDE the matches-short-circuit so a retry still finishes demoting even when the row already matches Stripe. `account.application.deauthorized` lookup uses `withTrashed()` so a retry against an already-trashed row finds it. Two new feature tests cover both retry paths. Promoted as **D-128** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 2 (high)** — `refresh()` only minted a fresh Account Link when `! details_submitted`. The `incomplete` state (`details_submitted = true && capabilities missing`) gets a "Continue in Stripe" CTA from the React page that pointed at this route — admins were stuck in an infinite loop with no way to satisfy Stripe's outstanding requirements.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:226-280`.
+  *Fix*: gate is now `in_array($row->verificationStatus(), ['pending', 'incomplete'], true)`. Stripe's `account_links.create` with `account_onboarding` routes to whichever step still needs input. New feature test seeds an incomplete row and asserts a fresh Account Link is minted. Promoted as **D-129** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 3 (medium)** — `UpdateBookingSettingsRequest` validator accepted any `PaymentMode` enum value. The UI hide was cosmetic; a direct PUT could persist `online` and trigger the mismatch banner.
+  *Location*: `app/Http/Requests/Dashboard/Settings/UpdateBookingSettingsRequest.php:22-29`.
+  *Fix*: new `paymentModeRolloutRule()` closure restricts non-offline values to businesses that pass `canAcceptOnlinePayments()` (which folds in Stripe capabilities + supported-country gate per D-127). Idempotent passthrough: the currently-persisted value can always be re-submitted (keeps the form usable when other fields are edited). Four new feature tests cover the gate. Session 5 needs zero validator changes — just removes the UI hide. Promoted as **D-130** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+**Iteration loop after Round 4**: 752 / 3027 tests pass (was 745 / 3009 post-Round-3; +7 tests / +18 assertions). PHPStan level-5 clean. Pint clean (touched one test file for `fully_qualified_strict_types` / `ordered_imports`). `npm run build` clean. Decisions D-128, D-129, D-130 promoted into `docs/decisions/DECISIONS-PAYMENTS.md`.
+
+### Round 5
+
+**Codex verdict**: needs-attention. Three findings — two high (disconnect not atomic / not retry-safe; verified-Stripe carve-out lets admins persist non-offline before any flow consumes it), one medium (migration `down()` would fail rollback once payment rows exist). All three fixed on the same uncommitted diff.
+
+- [x] **Finding 1 (high)** — `disconnect()` was not transactional; the active-only relation lookup meant a retry against a partially-completed state 404'd. Business could be permanently stuck at `online`.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:303-314`.
+  *Fix*: D-128's pattern extended to the user-initiated path. Lookup uses `withTrashed()`; row delete + business demote wrapped in `DB::transaction`; trashed-noop branch makes the action idempotent so a retry converges. New regression test seeds a trashed row + non-offline business and asserts the retry demotes. Promoted as **D-131** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 2 (high)** — D-130's verified-Stripe carve-out let admins persist `online` / `customer_choice` via direct PUT before any booking-flow code consumes `payment_mode`. Combined with the active-state success copy ("online payments are ready"), this created a false-ready surface where customers would book without paying.
+  *Location*: `app/Http/Requests/Dashboard/Settings/UpdateBookingSettingsRequest.php:47-77` + `ConnectedAccountController::refresh()` + `connected-account.tsx`.
+  *Fix*: removed the verified-Stripe carve-out; non-offline values are hard-blocked regardless of Stripe verification until Session 5 ships. Idempotent passthrough kept (DB-seeded development for Session 2a still works). Active-state success copy reworded to "Stripe onboarding complete. Online payments will activate in a later release." React page bullet reframes verification as the prerequisite. Inverted the previous "verified Stripe accepts online" test to assert rejection. Promoted as **D-132** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 3 (medium)** — `pending_actions` rename `down()` restored `integration_id NOT NULL`, which would fail after any payment-typed row (D-123's dispute Pending Actions insert with `integration_id = null`).
+  *Location*: `database/migrations/2026_04_22_231235_rename_calendar_pending_actions_to_pending_actions.php:28-37`.
+  *Fix*: `down()` now performs the rename only; `integration_id` stays nullable on rollback (a strict superset of the original constraint, no impact on rolled-back code that always set `integration_id`). Inline docblock documents the operator follow-up DDL for a clean restore. Promoted as **D-133** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+**Iteration loop after Round 5**: 753 / 3027 tests pass (was 752 / 3027 post-Round-4; +1 net test, the inverted online-acceptance test stays at the same count, +1 disconnect-retry test). PHPStan level-5 clean. Pint clean. `npm run build` clean. Decisions D-131, D-132, D-133 promoted into `docs/decisions/DECISIONS-PAYMENTS.md`.
+
+### Round 6
+
+**Codex verdict**: needs-attention. Three findings — one high (replay-recovery silently re-parented cross-tenant rows), two medium (Cashier named-route contract dropped; active-state UI still said "online payments are ready"). All three fixed on the same uncommitted diff.
+
+- [x] **Finding 1 (high)** — D-125's replay-recovery branch restored ANY soft-deleted row matching the returned `acct_…` and rewrote `business_id` to the current tenant. Cross-tenant replays silently re-parented another Business's row.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:141-155`.
+  *Fix*: replay branch now verifies `existing->business_id === requesting->business_id`. On mismatch: log critical + throw `App\Exceptions\Payments\ConnectedAccountReplayCrossTenant` (caught by the controller, translates to a manual-reconciliation flash). Existing row is never touched. New cross-tenant regression test seeds B's soft-deleted row with the colliding `acct_…`, asserts B is untouched and A gets the error flash. Promoted as **D-134** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 2 (medium)** — `Cashier::ignoreRoutes()` dropped `cashier.webhook` entirely; the re-registered `cashier.payment` hardcoded `'stripe/payment/{id}'`, ignoring `config('cashier.path')`.
+  *Location*: `app/Providers/AppServiceProvider.php:33-37` + `routes/web.php`.
+  *Fix*: `cashier.payment` now uses `config('cashier.path', 'stripe')` (trimmed). The existing `/webhooks/stripe` route renamed from `webhooks.stripe` to `cashier.webhook` (no callers of the old name found by grep). New regression test asserts both names exist and the URLs match the contract. Promoted as **D-135** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 3 (medium)** — Active-state Connected Account page said "Your Stripe account is verified. Online payments are ready" while the validator hard-blocks online (D-132). False-ready surface for admins.
+  *Location*: `resources/js/pages/dashboard/settings/connected-account.tsx:181-192`.
+  *Fix*: chip label changes from "Active" to "Verified"; copy changes to "Your Stripe account is verified. Charging customers will activate in a later release." Aligns with the backend rollout gate.
+  *Status*: done.
+
+**Iteration loop after Round 6**: 755 / 3042 tests pass (was 753 / 3033 post-Round-5; +2 tests / +9 assertions). PHPStan level-5 clean. Pint clean (touched one test file for `class_definition` / `fully_qualified_strict_types` / `braces_position` / `ordered_imports`). `npm run build` clean. Decisions D-134, D-135 promoted into `docs/decisions/DECISIONS-PAYMENTS.md`.
+
+### Round 7
+
+**Codex verdict**: needs-attention. Three findings — two high (account.updated race; mutating GET refresh that trapped incomplete admins + bypassed the write gate), one medium (canAcceptOnlinePayments ignored requirements_disabled_reason). All three fixed on the same uncommitted diff.
+
+- [x] **Finding 1 (high)** — `account.updated` fetched Stripe state before opening a row lock; two concurrent deliveries could interleave fetch+save and an older snapshot could overwrite a newer one.
+  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php:159-188`.
+  *Fix*: the `accounts.retrieve` + save + business demote now run inside a single `DB::transaction` that opens with `StripeConnectedAccount::where(...)->lockForUpdate()->first()`. Per-account webhook processing is serialised. A new structural test asserts the invariant. Promoted as **D-136** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 2 (high)** — `refresh()` was GET-mutating-and-redirecting-to-Stripe. Pending/incomplete admins returning from KYC got bounced back into Stripe with no way to land on the settings page; SaaS-lapsed admins bypassed `billing.writable` because GET.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:265-313`.
+  *Fix*: split into three endpoints — `refresh()` (GET, sync + redirect to settings), `resume()` (POST, admin-triggered, gated by billing.writable, mints Account Link), `resumeExpired()` (GET, Stripe's refresh_url handler). React page's "Continue" CTAs become `<Form action={resume()}>` POSTs. Four new feature tests cover the split. Promoted as **D-137** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 3 (medium)** — `canAcceptOnlinePayments()` ignored `requirements_disabled_reason`. Disabled accounts could be surfaced as ready if capability flags were stale.
+  *Location*: `app/Models/Business.php:176-190`.
+  *Fix*: helper now returns false when `requirements_disabled_reason` is non-null, checked before capability booleans. Consistent with `StripeConnectedAccount::verificationStatus()`. New unit test covers active-capabilities + disabled_reason. Promoted as **D-138** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+**Iteration loop after Round 7**: 759 / 3052 tests pass (was 755 / 3042 post-Round-6; +4 tests / +10 assertions). PHPStan level-5 clean. Pint clean. `npm run build` clean. Decisions D-136, D-137, D-138 promoted into `docs/decisions/DECISIONS-PAYMENTS.md`.
+
+### Round 8
+
+**Codex verdict**: needs-attention. Two findings (both high) — reconnect history broke both the deauthorize demotion gate and the admin-side disconnect row lookup. Both fixed on the same uncommitted diff.
+
+- [x] **Finding 1 (high)** — Late `account.application.deauthorized` for a retired `acct_…` could demote a business that had already reconnected with a fresh active account.
+  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php:243-263`.
+  *Fix*: after trashing the matched row, unset the relation cache and re-read `$business->stripeConnectedAccount` (SoftDeletes-scoped). Only demote `payment_mode` to `offline` when the relation resolves to null (no active account remains). Historical soft-deleted rows never mutate current business state. New regression test covers the reconnect + late-deauthorize scenario. Promoted as **D-139** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 2 (high)** — `disconnect()` used `stripeConnectedAccount()->withTrashed()->first()`, which after a reconnect cycle could return a historical trashed row instead of the active one — leaving the real active Stripe account behind.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:430-442`.
+  *Fix*: prefer the active relation (`$business->stripeConnectedAccount`). Fall back to `withTrashed()->first()` only when no active row exists (the retry-recovery path D-131 preserved). New regression test: reconnect history + disconnect, asserts the NEW active row is the one trashed. Promoted as **D-140** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+**Iteration loop after Round 8**: 761 / 3063 tests pass (was 759 / 3052 post-Round-7; +2 tests / +11 assertions). PHPStan level-5 clean. Pint clean. `npm run build` clean. Decisions D-139, D-140 promoted into `docs/decisions/DECISIONS-PAYMENTS.md`.
+
+### Round 9
+
+**Codex verdict**: needs-attention. Two findings (both high) — hardcoded Stripe country with no canonical per-business value; unsigned mutating GET for Stripe's refresh_url bound to mutable session tenant. Both fixed on the same uncommitted diff.
+
+- [x] **Finding 1 (high)** — `create()` passed `config('payments.default_onboarding_country')` into `accounts.create()` with no code-level proof the business was in that country. Stripe Express country is permanent; a non-CH tenant would get an immutable wrong-jurisdiction account.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:54-119`.
+  *Fix*: canonical `businesses.country` column added (nullable, backfilled to `'CH'` for pre-launch rows). `resolveOnboardingCountry()` now takes the Business and verifies `$business->country` is in `config('payments.supported_countries')`, returning null (→ refused onboarding) when missing or unsupported. Three new feature tests; D-115's config-fallback stance is superseded. Promoted as **D-141** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 2 (high)** — `resumeExpired()` was an unsigned GET that minted Stripe Account Links, bound only to `tenant()->business()`. Cross-site GET could trigger; tab-switched session could resume the wrong tenant; `billing.writable` passed GET verbs through unconditionally.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:349-468`.
+  *Fix*: `mintAccountLink()` passes `URL::temporarySignedRoute(...)` for both `return_url` and `refresh_url`, carrying the `account` (acct_…) as a query param. Routes for `refresh` and `resume-expired` carry the `signed` middleware. New `resolveSignedAccountRow()` helper looks up the row by the signed param and verifies the current tenant owns it (403 otherwise). Two new security regression tests: unsigned GET rejected; cross-tenant signed URL rejected. Promoted as **D-142** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+**Iteration loop after Round 9**: 764 / 3068 tests pass (was 761 / 3063 post-Round-8; +3 tests / +5 assertions). PHPStan level-5 clean. Pint clean (touched one test file for `fully_qualified_strict_types` / `ordered_imports` / `single_blank_line_at_eof`). `npm run build` clean. Decisions D-141, D-142 promoted into `docs/decisions/DECISIONS-PAYMENTS.md`.
+
+### Round 10
+
+**Codex verdict**: needs-attention. Three findings — two high (first-time KYC return 403s because the initial create() flow uses plain URLs, post-migration signups dead-ended by the D-141 country gate), one medium (resumeExpired billing-gate bypass via 24h signed URL). All three fixed on the same uncommitted diff.
+
+- [x] **Finding 1 (high)** — Post-migration signups land with `country = null`; the D-141 gate then refuses Stripe onboarding forever because `null` is not in `supported_countries`. `RegisterController::store()` created Business rows with only `name` + `slug`. The migration backfilled pre-existing rows, so the regression was invisible in existing test data but permanent for every real signup after the deploy.
+  *Location*: `app/Http/Controllers/Auth/RegisterController.php:31-35`.
+  *Fix*: `Business::create([...])` now also passes `'country' => config('payments.default_onboarding_country')`. The seed uses the same config key Session 1 originally treated as the default pre-D-141, so extending to another country is a config flip. A future business-onboarding step (BACKLOG entry) will override the seed per-business before Stripe is ever touched. New feature test in `RegisterTest.php` asserts the column is seeded and the value is in `supported_countries` (the chain with D-141 is coherent). Promoted as **D-143** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 2 (high)** — The initial `create()` flow still passed plain `route('settings.connected-account.refresh' / 'resume-expired')` URLs to Stripe for `refresh_url` / `return_url`. Both routes now require `signed` middleware + a tenant-matched `account` query param (D-142), so the very first KYC return or link-expired retry hit 403 — onboarding could never complete.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:196-207`.
+  *Fix*: `create()` now calls `$this->mintAccountLink($row)` — the same helper `resume()` and `resumeExpired()` already used. Single source of truth for the signed-URL shape; the 24h TTL + `account` query param + tenant-match check all come along for free. `FakeStripeClient::mockAccountLinkCreate()` gained an optional `expectedSignedAccountParam` argument that enforces `signature=…` + `account={acct_id}` on both URLs via Mockery's `withArgs`. A regression where the controller reverts to plain `route(...)` URLs fails the matcher with a clear diagnostic instead of silently shipping a 403. One new feature test wires the assertion into `create()`'s happy path. Promoted as **D-144** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 3 (medium)** — `resumeExpired()` is GET, so `billing.writable` passed it through unconditionally (D-090). But the handler mints a fresh Stripe Account Link — a NEW payment surface that D-116 forbids on a read-only business. The signed URL's 24h TTL meant a pre-minted link carried over the subscription cancellation boundary: a lapsed admin could keep opening fresh onboarding URLs.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:353-382`.
+  *Fix*: After the signed-URL + tenant-match guard and BEFORE any Stripe call, check `tenant()->business()?->canWrite()`. On false, redirect to `route('settings.billing')` with the same `__('Your subscription has ended. Please resubscribe to continue.')` flash `EnsureBusinessCanWrite` uses — UX consistency. No Stripe call made. `refresh()` doesn't need the same guard (it's pure sync, doesn't mint a new surface); `resume()` is a POST so `billing.writable` already covers it. New feature test: canceled-subscription business hits a pre-minted signed `/resume-expired` URL → redirects to billing with the standard flash. No Stripe mocks registered — a regression where the guard is skipped triggers an unstubbed `accountLinks->create` and Mockery explodes with "method not expected". Structural enforcement. Promoted as **D-145** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+**Iteration loop after Round 10**: 767 / 3076 tests pass (was 764 / 3068 post-Round-9; +3 tests / +8 assertions). PHPStan level-5 clean. Pint clean (touched one test file for `fully_qualified_strict_types` / `ordered_imports`). Wayfinder regenerated. `npm run build` clean. Decisions D-143, D-144, D-145 promoted into `docs/decisions/DECISIONS-PAYMENTS.md`.
+
+### Round 11
+
+**Codex verdict**: needs-attention. Two findings — one high (stale signed Stripe return/refresh URLs still resolve against soft-deleted rows, letting a post-disconnect KYC completion revive local state), one high REJECTED (restatement of D-125's pre-launch deploy-timing trade-off for the `pending_actions` rename). One fix applied on the same uncommitted diff; one documented as a restatement, not a new finding.
+
+- [x] **Finding 1 (high)** — `resolveSignedAccountRow()` uses `withTrashed()` (correct for the cross-tenant-replay defense in `create()`), and `refresh()` + `resumeExpired()` did not check `$row->trashed()` afterwards. Signed URLs live 24h (D-142); a pre-disconnect signed URL therefore kept resolving after disconnect. An admin who completed Stripe KYC AFTER clicking Disconnect would revive local sync state (via `refresh()` → `syncRowFromStripe`) or mint a FRESH Account Link for a disconnected account (via `resumeExpired()` → `mintAccountLink`) — both violate the disconnect invariant and are expensive to reconcile because the real Stripe acct_ still exists (locked decision #36 retains the id on the trashed row for Session 2b's late-refund path).
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:283-310` (`refresh()`), `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:358-390` (`resumeExpired()`).
+  *Fix*: both handlers now check `if ($row->trashed())` after `resolveSignedAccountRow()` and redirect to `settings.connected-account` with a clear admin flash: "This Stripe account has been disconnected. Start a new onboarding from the settings page if you want to accept online payments again." No Stripe call is made — neither `accounts.retrieve` (would redundantly sync a disconnected row) nor `accountLinks->create` (would mint a fresh onboarding surface for a disconnected account). Two new regression tests register NO FakeStripeClient mocks: a trashed-row request arriving on either handler triggers the guard and redirects; a regression that skips the guard would hit the unstubbed Stripe call and Mockery would explode with "method not expected" — structural enforcement. The check does NOT move into `resolveSignedAccountRow()` because that helper is also called indirectly in the cross-tenant-replay defense path, which DOES need to see trashed rows (to refuse re-parenting). Keeping the trashed-check at each handler site preserves both invariants. Promoted as **D-146** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [ ] **Finding 2 (high) — REJECTED as restatement of D-125**. Codex flagged that the `calendar_pending_actions` → `pending_actions` rename is not safe for any deploy where old and new code overlap, and recommended an expand/contract sequence or an explicit maintenance window. This is the exact issue Codex Round 3 surfaced and is already documented in D-125 + `docs/DEPLOYMENT.md`: the operator deploy requirement is a single-instance restart / blue-green / `php artisan down` because riservo is pre-launch (no production traffic, single instance). Expand/contract is the right pattern POST-launch and is captured as a general future-deploy discipline — but for PAYMENTS Session 1's context (pre-launch, single-node, no concurrent readers), documented atomic cutover is sufficient. No code change. No new decision. This rejection is recorded here (not as a new `D-` entry) because D-125 already carries the reasoning; a second entry would just duplicate it.
+
+**Iteration loop after Round 11**: 769 / 3082 tests pass (was 767 / 3076 post-Round-10; +2 tests / +6 assertions). PHPStan level-5 clean. Pint clean (nothing to fix). `npm run build` unchanged. Decision D-146 promoted into `docs/decisions/DECISIONS-PAYMENTS.md`.
+
+### Round 12
+
+**Codex verdict**: needs-attention. Three findings — two high (signed URLs can strand multi-business admins after re-auth; disconnect is racy against resume/refresh), one medium (unknown-account `account.*` webhook events return 200 + cache, stranding us when an event beats our local insert). All three fixed on the same uncommitted diff. The review was run WITH focus text telling Codex about D-125's pre-launch deploy trade-off so it didn't re-flag the `pending_actions` rename; Codex complied and surfaced three new-angle findings instead.
+
+- [x] **Finding 1 (high)** — `resolveSignedAccountRow()` required the session-pinned tenant to own the signed row. Problem: `ResolveTenantContext` rule 2 re-pins a user's session to their oldest active membership on login. A multi-business admin whose session expired during Stripe onboarding therefore 403s on a valid signed URL for a DIFFERENT business, even though they ARE an admin of it. The signed URL doesn't carry enough context to recover safely.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:472-537` (`resolveSignedAccountRow()`).
+  *Fix*: authorisation is now derived from the SIGNED ROW's business. The helper loads the row, looks up the user's `BusinessMember` for that business (active memberships only — `whereNull('deleted_at')` per D-079), verifies the role is `Admin`, loads the Business, and re-pins BOTH `session('current_business_id')` AND `app(TenantContext::class)` so downstream `tenant()` calls, Inertia shared props, and the response redirect all see the correct business. The outer `role:admin` middleware still runs against the original session tenant (cannot be bypassed), so the false-negative case "staff of session tenant, admin of signed row's tenant" still 403s at middleware — acceptable tactical-fix boundary for this round; a future middleware that re-pins BEFORE `role:admin` is captured in BACKLOG. Two regression tests: (a) admin of both businesses + session pinned wrong → redirects + session re-pinned; (b) staff-only membership on signed row's business → 403. Promoted as **D-147** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 2 (high)** — `refresh()`, `resume()`, `resumeExpired()` all had a pre-check-then-Stripe-call pattern. A `disconnect()` committing between the check and the Stripe call would either (a) sync `accounts.retrieve` state onto a row we're trashing, or (b) mint a fresh Account Link for a disconnected account — both violate the D-146 disconnect-finality invariant.
+  *Location*: `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:281-468` (all four handlers).
+  *Fix*: all four handlers now wrap their body in `DB::transaction` + `lockForUpdate` on the row and re-check `$locked->trashed()` inside the lock before any Stripe call or local state mutation. `resume()` and `resumeExpired()` share a `runResumeInLock(StripeConnectedAccount $row, string $settledOutcome)` helper — the `settledOutcome` arg differentiates the resume flow ("not-resumable" → error flash) from the link-expiry flow ("settled" → silent redirect back to settings). `disconnect()`'s existing transaction was extended with an inside-lock re-read so any in-flight resume/refresh either sees the pre-disconnect row (they locked first) or the trashed row (we locked first). A structural regression test inspects the controller source, asserting each public handler either inlines `DB::transaction + lockForUpdate + trashed()` re-check OR delegates to `runResumeInLock()`, and the helper itself carries all three invariants. Concurrency is not reliably simulable in Pest without a multi-connection harness; the structural check is the belt-and-braces. Promoted as **D-148** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+- [x] **Finding 3 (medium)** — `handleAccountUpdated` and `handleAccountDeauthorized` returned `200 Unknown account.` when the local row wasn't found. The D-092 cache-dedup trait caches 2xx responses for 24h; Stripe stops retrying. If the webhook raced `create()`'s `accounts.create` + local-insert transaction — the acct_ exists on Stripe's side at T, our row doesn't commit until T+ms — the local row gets stuck on the stale `accounts.create` snapshot until a manual admin refresh or another Stripe-side change arrives. Narrow but real.
+  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php:140-175` (`handleAccountUpdated`), `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php:253-266` (`handleAccountDeauthorized`).
+  *Fix*: unknown-account branches now return `503 Service Unavailable` with a `Retry-After: 60` header. The dedup trait only caches 2xx (D-092) so Stripe's retry delivers the event again; by the time Stripe retries, our local insert has almost always committed. For disputes, the "unknown account" branch stays at `200 + Log::critical` (D-123) — disputes arrive days/weeks after charges, so the race can't realistically fire, and the critical log is the reconciliation signal. `handleAccountUpdated`'s pre-check now uses `withTrashed()` so a trashed row takes the no-op path (the disconnect decision wins) rather than re-entering the 503 retry loop. Two new regression tests assert the 503 + `Retry-After` header AND that the cache is NOT populated for the event id — a regression that reverts to 200 would silently repopulate the cache and the test would fail on the `Cache::has(...)` check. Dispute-unknown-account stays at 200 per the existing test. Promoted as **D-149** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+**Iteration loop after Round 12**: 774 / 3105 tests pass (was 769 / 3082 post-Round-11; +5 tests / +23 assertions). PHPStan level-5 clean (one unresolvable-type error required refactoring the two resume/resumeExpired transactions into a shared helper that uses a by-reference capture pattern — the `array{outcome, url?}` return type confused PHPStan's generic inference on `DB::transaction`'s template). Pint clean. `npm run build` unchanged. Decisions D-147, D-148, D-149 promoted into `docs/decisions/DECISIONS-PAYMENTS.md`.
+
+### Round 13
+
+**Codex verdict**: needs-attention. One finding (medium) — `verificationStatus()` returned `active` based on Stripe capabilities alone, ignoring the country gate that `Business::canAcceptOnlinePayments()` enforces. A config/env flip removing a row's country from `supported_countries` would surface "Verified / Active" in the UI while the backend silently refuses online payments, stranding the admin with no explanation. Fixed on the same uncommitted diff. The review was run WITH focus text explicitly listing Rounds 1–12 as settled; Codex complied and returned exactly one new-angle finding.
+
+- [x] **Finding 1 (medium)** — `StripeConnectedAccount::verificationStatus()` on an otherwise-active row returned `'active'` regardless of the row's `country`. `canAcceptOnlinePayments()` (D-127) layered on the country gate, but the UI consumed `verificationStatus()` directly (connected-account page + refresh flash + Inertia shared prop), so a country-drift scenario (operator tightens `PAYMENTS_SUPPORTED_COUNTRIES` env, or we expand then retract during beta) showed "Verified" on the account page while the backend quietly blocked online payments. The admin had no way to tell why.
+  *Location*: `app/Models/StripeConnectedAccount.php:85-100` (`verificationStatus()`), `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php:327-338` (refresh flash), `resources/js/pages/dashboard/settings/connected-account.tsx:20-30` (AccountState status union).
+  *Fix*: added an explicit `'unsupported_market'` state: returned when Stripe capabilities are fully on AND `details_submitted === true` AND `requirements_disabled_reason === null`, but the row's `country` is not in `config('payments.supported_countries')`. The refresh flash gets a new `match` arm with dedicated copy ("Stripe onboarding complete, but online payments are not available for your country yet. Please contact support."). The frontend `AccountState` union picks up the new variant and the page renders a new `<UnsupportedMarket>` panel (warning alert + country code + Contact support + Disconnect CTA, matching the `<Disabled>` shape for consistency). Three regression tests: (a) unit — caps on + country=CH + supported=['DE'] returns `'unsupported_market'`; (b) unit — flipping supported_countries to include the row's country reverts to `'active'` without a DB write (proves the gate is config-driven, not persisted); (c) feature — refresh flow with mismatched country produces the new flash + Inertia shared prop state + `can_accept_online_payments = false`. `verificationStatus()`'s existing `disabled` / `incomplete` / `pending` arms are unchanged because they're independent of the market check. Promoted as **D-150** in DECISIONS-PAYMENTS.md.
+  *Status*: done.
+
+**Iteration loop after Round 13**: 777 / 3123 tests pass (was 774 / 3105 post-Round-12; +3 tests / +18 assertions). PHPStan level-5 clean. Pint clean. `npm run build` unchanged. Decision D-150 promoted into `docs/decisions/DECISIONS-PAYMENTS.md`.
 
 
 ## Outcomes & Retrospective
 
-Filled at session close.
+**Outcome**: PAYMENTS Session 1 lands the Stripe Connect Express onboarding foundation end-to-end, then survives 13 rounds of adversarial review hardening. An admin can now click "Enable online payments" in Settings → Online Payments, complete Stripe-hosted KYC, return to a verified-state settings page, and disconnect cleanly. The `/webhooks/stripe-connect` endpoint keeps the local row in sync with Stripe's authoritative state via the re-fetch-on-nudge pattern (locked roadmap decision #34) and demotes `payment_mode` back to offline when capabilities are lost (locked decision #20). The `pending_actions` table is generalised so payment Pending Actions in Sessions 2b / 3 can write without a fresh schema session. The FakeStripeClient is split so Sessions 2+ can extend the connected-account-level surface without re-discovering the platform-vs-account-header contract.
+
+**Tests**: 777 / 3123 (was 695 / 2819 baseline; +82 tests, +304 assertions). Iteration loop fully green after every round: Pint, PHPStan level 5, Wayfinder, npm build.
+
+**Compared to Purpose**: every observable acceptance criterion from `## Purpose / Big Picture` is met. The `payment_mode_mismatch` banner is dormant (no Business has `payment_mode != offline` legitimately yet), but the prop is wired and tested for a DB-seeded value. All 13 codex review rounds addressed to the developer's satisfaction (one finding rejected as restatement of D-125; all others applied).
+
+**Decisions promoted**: D-109..D-150 (42 decisions) in `docs/decisions/DECISIONS-PAYMENTS.md`. Next free D-ID = **D-151**.
+
+**Codex round summary (what each round found, in 1 line each)**:
+- R1 (D-120/D-121/D-122): webhook fail-closed; country gate; Postgres partial unique index.
+- R2 (D-123/D-124): parse error; dispute persistence; idempotency key.
+- R3 (D-125/D-126/D-127): reconnect-24h nonce; dispute race; country gate in readiness helper.
+- R4 (D-128/D-129/D-130): atomic demotion; incomplete-state resume; server-side payment_mode gate.
+- R5 (D-131/D-132/D-133): atomic disconnect; payment_mode hard-block; rollback-safe down().
+- R6 (D-134/D-135): cross-tenant replay guard; Cashier named-route contract.
+- R7 (D-136/D-137/D-138): account.updated lock; refresh/resume/resume-expired split; disabled_reason in readiness.
+- R8 (D-139/D-140): reconnect+late-deauth guard; disconnect prefers active row.
+- R9 (D-141/D-142): canonical Business.country; signed URLs for Stripe return/refresh.
+- R10 (D-143/D-144/D-145): country seed at signup; signed URLs on create(); resumeExpired billing gate.
+- R11 (D-146): trashed-row guard on signed GETs.
+- R12 (D-147/D-148/D-149): authz via row's business; disconnect/resume TOCTOU serialisation; unknown-account 503+Retry-After.
+- R13 (D-150): `unsupported_market` state for country drift.
+
+**Carry-overs**:
+- Formal support-contact surface (D-118) — `mailto:support@riservo.ch` placeholder shipped; pre-launch needs a real flow. Tracked in `docs/BACKLOG.md`.
+- Pre-role-middleware signed-URL session pinner (D-147 false-negative for "staff of session tenant + admin of signed row's tenant"). Tracked in `docs/BACKLOG.md`.
+- The Inertia v3 version-mismatch behaviour deserves a small follow-up note in the testing reference. Not a blocker.
+
+**Lessons learned**:
+- Enum exhaustiveness via PHPStan is a real safety net — adding the three `payment.*` cases surfaced the calendar match coverage gap immediately, not at a runtime "Unhandled match value" exception.
+- The FakeStripeClient platform-vs-account split is the cheapest correctness investment in this session: every Stripe API call in Sessions 2–4 will be tested against the right header constraint by construction.
+- D-117's "reject if a row already exists" is the right call — the alternative (silent re-create) would have made debugging double-clicks much harder.
+- Iterative codex review with focus text works — R12 / R13 avoided re-flagging settled findings when we explicitly listed them as out of scope. Without focus text R11 re-flagged D-125.
+- Every round's fix landed on the same uncommitted diff without regression against prior rounds. The `## Review` section per round + the `D-NNN` promotion discipline kept the rationale attached to code.
+- Structural / source-inspection tests (R12-2 lock serialisation, R5 migration down, etc.) are the right tool when concurrency / timing can't be reliably simulated in Pest. They catch regressions that behavioural tests can't reach.
+
+**Status**: ready for developer commit (gate two). 48 files / 5,739 insertions staged. 13 codex rounds applied; further rounds yield diminishing returns — developer call.
 
 
 ## Context and Orientation
@@ -195,9 +502,9 @@ The `ConnectedAccountController::create` action reads `config('payments.default_
 **Enum** (`app/Enums/PendingActionType.php`):
 
 - Add three cases for Sessions 2b/3 readers, value strings dotted per the roadmap convention:
-  - `case PaymentDisputeOpened = 'payment.dispute_opened';`
-  - `case PaymentRefundFailed = 'payment.refund_failed';`
-  - `case PaymentCancelledAfterPayment = 'payment.cancelled_after_payment';`
+    - `case PaymentDisputeOpened = 'payment.dispute_opened';`
+    - `case PaymentRefundFailed = 'payment.refund_failed';`
+    - `case PaymentCancelledAfterPayment = 'payment.cancelled_after_payment';`
 - Existing cases (`riservo_event_deleted_in_google`, `external_booking_conflict`) are NOT renamed (locked decision #44).
 
 **Readers audit**: every site that selects from `pending_actions` and relies on `integration_id` being present must add `->whereNotNull('integration_id')` (or, equivalently, a type-based filter restricting to calendar types). Grep targets:
@@ -252,10 +559,10 @@ The `(business_id, deleted_at)` compound unique mirrors D-079's pattern for `bus
 - Casts: `requirements_currently_due => 'array'`, booleans, etc.
 - `business(): BelongsTo<Business, ...>`.
 - `verificationStatus(): string` returns one of `'pending'` | `'incomplete'` | `'active'` | `'disabled'` (plain strings, not an enum — Stripe's verification states are richer than a local enum can carry; per the roadmap's data layer note). Mapping:
-  - `disabled` if `requirements_disabled_reason !== null`.
-  - `active` if `charges_enabled && payouts_enabled && details_submitted`.
-  - `incomplete` if `details_submitted && (! charges_enabled || ! payouts_enabled)`.
-  - `pending` otherwise (account created but onboarding not yet submitted).
+    - `disabled` if `requirements_disabled_reason !== null`.
+    - `active` if `charges_enabled && payouts_enabled && details_submitted`.
+    - `incomplete` if `details_submitted && (! charges_enabled || ! payouts_enabled)`.
+    - `pending` otherwise (account created but onboarding not yet submitted).
 
 **Business model extensions** (`app/Models/Business.php`):
 
@@ -335,10 +642,10 @@ return $this->dedupedProcess($event->id, 'stripe:connect:event:', function () us
 ```
 
 - `dispatch($event)` is a `match` on `$event->type`:
-  - `'account.updated'` → `handleAccountUpdated($event)`.
-  - `'account.application.deauthorized'` → `handleAccountDeauthorized($event)`.
-  - `'charge.dispute.created' | 'charge.dispute.updated' | 'charge.dispute.closed'` → `Log::info('Connect dispute event received pre-Session-3', [...]); return new Response('OK', 200);` (per the roadmap's "log-and-200 no-op handler to avoid Stripe retry storms during the window between roadmap sessions" requirement).
-  - default → `return new Response('Webhook unhandled.', 200);` (unknown event types must 200, not 4xx — Stripe will retry on 4xx and we don't want noise; logging is fine).
+    - `'account.updated'` → `handleAccountUpdated($event)`.
+    - `'account.application.deauthorized'` → `handleAccountDeauthorized($event)`.
+    - `'charge.dispute.created' | 'charge.dispute.updated' | 'charge.dispute.closed'` → `Log::info('Connect dispute event received pre-Session-3', [...]); return new Response('OK', 200);` (per the roadmap's "log-and-200 no-op handler to avoid Stripe retry storms during the window between roadmap sessions" requirement).
+    - default → `return new Response('Webhook unhandled.', 200);` (unknown event types must 200, not 4xx — Stripe will retry on 4xx and we don't want noise; logging is fine).
 
 **Step 5c — `account.updated` handler**:
 
@@ -630,17 +937,17 @@ The connected-account-level bucket is **scaffolded in a comment block** in the f
 - `npm run build` — clean; Vite manifest updated.
 - `php artisan test tests/Feature tests/Unit --compact` — green; baseline 695 tests grows by the Session 1 test count (estimate ~30: 6 webhook + 9 controller + 3 model + 4 cross-tenant + 2 Pending Action filter + 6 misc).
 - Update `docs/DEPLOYMENT.md` — append a new subsection under "Billing (Stripe)" titled **"Stripe Connect (customer-to-professional payments)"** that documents:
-  - Connect webhook endpoint URL: `https://<your-domain>/webhooks/stripe-connect`.
-  - Env var: `STRIPE_CONNECT_WEBHOOK_SECRET` (in addition to the existing `STRIPE_WEBHOOK_SECRET` for the subscription webhook).
-  - Subscribed event list to configure in the Stripe Connect dashboard (separate webhook endpoint from the platform-subscription one):
-    - `account.updated`
-    - `account.application.deauthorized`
-    - `charge.dispute.created`
-    - `charge.dispute.updated`
-    - `charge.dispute.closed`
-    - (Sessions 2a/2b/3 will add: `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `payment_intent.payment_failed`, `payment_intent.succeeded`, `charge.refunded`, `charge.refund.updated`, `refund.updated`. Configuring them now is forward-compatible — Session 1's controller log-and-200's any unhandled type — but flagging them as Session-2-only on the operator side avoids confusion.)
-  - Test-vs-live key handling (same key set as the platform Stripe account; the Connect endpoint is a separate webhook subscription, not separate keys).
-  - `config/payments.php` env vars: `PAYMENTS_SUPPORTED_COUNTRIES`, `PAYMENTS_DEFAULT_ONBOARDING_COUNTRY`, `PAYMENTS_TWINT_COUNTRIES` (all default to `CH`).
+    - Connect webhook endpoint URL: `https://<your-domain>/webhooks/stripe-connect`.
+    - Env var: `STRIPE_CONNECT_WEBHOOK_SECRET` (in addition to the existing `STRIPE_WEBHOOK_SECRET` for the subscription webhook).
+    - Subscribed event list to configure in the Stripe Connect dashboard (separate webhook endpoint from the platform-subscription one):
+        - `account.updated`
+        - `account.application.deauthorized`
+        - `charge.dispute.created`
+        - `charge.dispute.updated`
+        - `charge.dispute.closed`
+        - (Sessions 2a/2b/3 will add: `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `payment_intent.payment_failed`, `payment_intent.succeeded`, `charge.refunded`, `charge.refund.updated`, `refund.updated`. Configuring them now is forward-compatible — Session 1's controller log-and-200's any unhandled type — but flagging them as Session-2-only on the operator side avoids confusion.)
+    - Test-vs-live key handling (same key set as the platform Stripe account; the Connect endpoint is a separate webhook subscription, not separate keys).
+    - `config/payments.php` env vars: `PAYMENTS_SUPPORTED_COUNTRIES`, `PAYMENTS_DEFAULT_ONBOARDING_COUNTRY`, `PAYMENTS_TWINT_COUNTRIES` (all default to `CH`).
 - **Promote `D-NNN` decisions** into `docs/decisions/DECISIONS-PAYMENTS.md`. Allocate the next free IDs starting at D-109 per `docs/HANDOFF.md`. Each decision in this PLAN's `Decision Log` becomes a topic-file entry with the standard date / status / context / decision / consequences shape (see `DECISIONS-FOUNDATIONS.md` for canonical examples). Write the entries during exec, not at the very end — discoveries surface decisions.
 - **Rewrite `docs/HANDOFF.md`** to reflect Session 1 shipped state: bump the "Feature+Unit suite" baseline; add a "What shipped: PAYMENTS-1" line; update "Next free decision ID" (it'll be D-109 + however many we minted); document the connected-account onboarding path operators can now use; flag the next session (PAYMENTS-2a — Payment at Booking, Happy Path).
 
@@ -723,6 +1030,7 @@ php artisan test tests/Feature --compact
 vendor/bin/pint --dirty --format agent
 php artisan wayfinder:generate
 php artisan test tests/Feature tests/Unit --compact
+./vendor/bin/phpstan
 npm run build
 
 # Edit docs/DEPLOYMENT.md per Plan of Work § Milestone 8.
@@ -922,17 +1230,7 @@ Add it to the existing shared-prop type definition under `resources/js/types/ind
 
 ## Open Questions
 
-These are product / scope calls I cannot resolve from the live docs alone. Please answer before exec begins.
-
-1. **`Business.address` parsing for onboarding country**. The roadmap says `create()` derives the country from `Business.address` falling back to `config('payments.default_onboarding_country')`. `Business.address` is a freeform string today (no separate country column). I'm proposing we **always use the config default** and never attempt to parse the freeform address — Stripe collects the real country during KYC and the data layer (`country` column on `stripe_connected_accounts`) is overwritten by the first `accounts.retrieve` anyway. Does this match your intent, or do you want a real address-parsing pass (postal-code regex, country-name extraction)?
-
-2. **`ConnectedAccountController` inside `billing.writable` middleware?** I'm proposing **inside** — a SaaS-lapsed business shouldn't be opening new payment surfaces; if their riservo subscription has lapsed they should resubscribe before onboarding Stripe Connect. `GET` requests pass through the gate unconditionally regardless. Confirm? (If you'd rather lapsed admins still be able to disconnect Stripe — say, as part of a cleanup before they cancel — I'd move `disconnect()` outside the gate alongside the billing routes.)
-
-3. **`create()` second-call behaviour**. If a connected account already exists, should `create()` (a) reject with 422 ("Already connected. Disconnect first."), (b) silently re-mint an Account Link and redirect into onboarding (idempotent re-create), or (c) redirect to the show page with a flash? I'm proposing (a) for the cleanest invariant ("one row at a time"); the user clicks Disconnect then Enable to re-onboard. (b) is friendlier but masks bugs. (c) is the no-op-with-info choice.
-
-4. **Support contact for the `disabled` state's "Contact support" CTA**. There's no obvious `mailto:support@…` or support-page link in the codebase today (grep for `support@riservo` returned nothing under `app/` and `resources/`). Should the disabled-state CTA mailto a placeholder (`support@riservo.ch`), link to `/dashboard/settings/billing` (the closest existing surface for "talk to riservo"), or something else? If the answer is "we don't have a support flow yet", I'll inline the placeholder mailto and add a `docs/BACKLOG.md` entry.
-
-5. **Pending Action enum value for the late-webhook path** (informational, not blocking). The roadmap names three new types (`payment.dispute_opened`, `payment.refund_failed`, `payment.cancelled_after_payment`). I'm adding all three to the enum in Session 1 even though only Session 3 writes the dispute one and only Session 2b writes the cancelled-after-payment one. Confirm I should pre-add all three (vs add per-session), or push back if you'd rather see a tighter scope.
+Resolved — see `## Decision Log` (D-115..D-119 defaults). None outstanding.
 
 
 ## Risks & Notes

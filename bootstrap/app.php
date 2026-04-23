@@ -24,11 +24,15 @@ return Application::configure(basePath: dirname(__DIR__))
         // Third-party webhooks cannot carry a CSRF token.
         //   - Google Calendar push: authenticity via X-Goog-Channel-Id +
         //     X-Goog-Channel-Token inside GoogleCalendarWebhookController (D-086).
-        //   - Stripe: signature verification via Cashier's
+        //   - Stripe subscription: signature verification via Cashier's
         //     VerifyWebhookSignature middleware on the route (D-091).
+        //   - Stripe Connect: signature verification inside
+        //     StripeConnectWebhookController against STRIPE_CONNECT_WEBHOOK_SECRET
+        //     (PAYMENTS Session 1, D-109).
         $middleware->preventRequestForgery(except: [
             'webhooks/google-calendar',
             'webhooks/stripe',
+            'webhooks/stripe-connect',
         ]);
 
         $middleware->alias([

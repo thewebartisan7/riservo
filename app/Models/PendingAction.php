@@ -33,7 +33,13 @@ class PendingAction extends Model
     /** @use HasFactory<PendingActionFactory> */
     use HasFactory;
 
-    protected $table = 'calendar_pending_actions';
+    /**
+     * Per locked roadmap decision #44 (D-113): the table was generalised in
+     * PAYMENTS Session 1 so payment-typed Pending Actions can coexist with
+     * calendar-typed ones. The model name keeps the generic 'PendingAction'
+     * shape it always had.
+     */
+    protected $table = 'pending_actions';
 
     protected function casts(): array
     {

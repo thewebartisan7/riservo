@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Cashier\Billable;
@@ -36,6 +37,7 @@ use Laravel\Cashier\Billable;
     'email',
     'address',
     'timezone',
+    'country',
     'payment_mode',
     'confirmation_mode',
     'allow_provider_choice',
@@ -137,6 +139,67 @@ class Business extends Model
     public function invitations(): HasMany
     {
         return $this->hasMany(BusinessInvitation::class);
+    }
+
+    /**
+     * Per-Business Stripe Connect Express connected account (PAYMENTS Session
+     * 1). HasOne returns the active (non-trashed) row only — soft-deleted rows
+     * sit behind the SoftDeletes scope on the related model. Locked roadmap
+     * decisions #20 (KYC failure forces offline) and #22 (one connected
+     * account per Business) bind this relation.
+     *
+     * @return HasOne<StripeConnectedAccount, $this>
+     */
+    public function stripeConnectedAccount(): HasOne
+    {
+        return $this->hasOne(StripeConnectedAccount::class);
+    }
+
+    /**
+     * Aggregate gate: can this Business take customer-to-professional online
+     * payments right now? True iff a verified connected account is attached
+     * AND the account's authoritative country is in the supported set.
+     *
+     * Sessions 2a / 5 read this through the Inertia shared prop; the Connect
+     * webhook handler reads it directly to decide whether to demote
+     * `payment_mode` back to `offline` after a Stripe-side capability change
+     * (locked roadmap decision #20).
+     *
+     * Codex Round-3 finding (D-127): the supported-country gate (locked
+     * roadmap decision #43) MUST live in the shared eligibility helper, not
+     * just at the Settings → Booking call site (Session 5). Otherwise a
+     * Business whose connected-account country resolved to an unsupported
+     * value (KYC reported a different country than onboarding requested,
+     * future operator backfill, etc.) would still surface as "ready"
+     * through every other surface (Inertia banner, the `account.updated`
+     * demotion check, the Settings UI gate that 2a / 5 will wire).
+     */
+    public function canAcceptOnlinePayments(): bool
+    {
+        $row = $this->stripeConnectedAccount;
+
+        if ($row === null) {
+            return false;
+        }
+
+        // Codex Round-7 finding (D-138): Stripe's `requirements_disabled_reason`
+        // is authoritative — per Stripe's Connect handling-api-verification
+        // docs, any non-null value means the account is NOT permitted to
+        // process charges or transfers, regardless of what the capability
+        // booleans look like. The capability flags and disabled_reason can
+        // be stale relative to each other (Stripe eventual consistency),
+        // so we treat a non-null disabled_reason as the strongest signal.
+        if ($row->requirements_disabled_reason !== null) {
+            return false;
+        }
+
+        if (! $row->charges_enabled || ! $row->payouts_enabled || ! $row->details_submitted) {
+            return false;
+        }
+
+        $supported = (array) config('payments.supported_countries');
+
+        return in_array($row->country, $supported, true);
     }
 
     public function isOnboarded(): bool

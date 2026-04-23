@@ -41,4 +41,14 @@ return [
         'redirect' => env('GOOGLE_REDIRECT_URI'),
     ],
 
+    /*
+     * Stripe Connect webhook secret (PAYMENTS Session 1, D-109). Distinct
+     * from Cashier's STRIPE_WEBHOOK_SECRET — Stripe's Connect events are
+     * signed by a separate webhook subscription configured in the
+     * "Connected accounts" tab of Stripe's webhooks dashboard.
+     */
+    'stripe' => [
+        'connect_webhook_secret' => env('STRIPE_CONNECT_WEBHOOK_SECRET'),
+    ],
+
 ];
