@@ -49,7 +49,7 @@ export function BookingHoverCard({
     const customer = booking.customer?.name ?? (booking.external ? t('External') : null);
 
     return (
-        <Tooltip delay={300} closeDelay={120}>
+        <Tooltip>
             <TooltipTrigger render={children} />
             <TooltipContent className="min-w-48 max-w-64 p-3" side="right" sideOffset={8}>
                 <div className="flex flex-col gap-2">

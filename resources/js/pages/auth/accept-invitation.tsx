@@ -7,13 +7,12 @@ import { useTrans } from '@/hooks/use-trans';
 import { Form, usePage } from '@inertiajs/react';
 import { accept } from '@/actions/App/Http/Controllers/Auth/InvitationController';
 import { destroy as logout } from '@/actions/App/Http/Controllers/Auth/LoginController';
-import type { InvitationData } from '@/types';
+import type { InvitationData, PageProps } from '@/types';
 
-interface AcceptInvitationProps {
+interface AcceptInvitationProps extends PageProps {
     invitation: InvitationData;
     isExistingUser: boolean;
     authUserEmail: string | null;
-    flash?: { error: string | null; success: string | null };
 }
 
 export default function AcceptInvitation() {
