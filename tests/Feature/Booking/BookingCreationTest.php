@@ -142,7 +142,11 @@ test('returns 409 when slot is no longer available', function () {
 
     $response = $this->postJson('/booking/'.$this->business->slug.'/book', validBookingData());
 
-    $response->assertStatus(409);
+    // PAYMENTS Session 5 Round 3: slot-gone now flows through
+    // ValidationException (Inertia-native useHttp shape) → 422 with
+    // `slot_taken` key, rather than a bare 409.
+    $response->assertStatus(422);
+    $response->assertJsonValidationErrors(['slot_taken']);
     expect(Booking::count())->toBe(1);
 });
 

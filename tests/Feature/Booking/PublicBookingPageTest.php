@@ -1,10 +1,12 @@
 <?php
 
 use App\Enums\DayOfWeek;
+use App\Enums\PaymentMode;
 use App\Models\AvailabilityRule;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\Service;
+use App\Models\StripeConnectedAccount;
 use App\Models\User;
 
 function createStaffedService(Business $business, array $attrs = []): Service
@@ -187,4 +189,29 @@ test('preselected service page exposes allow_provider_choice = false when settin
         ->where('business.allow_provider_choice', false)
         ->where('preSelectedServiceSlug', 'haircut')
     );
+});
+
+test('public page props for payment_mode=online + degraded connected account surface the unavailable state (Session 5 Round 4 codex P1)', function () {
+    // Round 4 codex review: the booking-summary React branches on
+    // `business.payment_mode === 'online'` (policy) + `business.can_accept_online_payments`
+    // (runtime) to render a pre-submit "unavailable" banner rather than
+    // disguising the flow as offline-with-email-confirmation. This Feature
+    // test proves the server exposes both signals via Inertia props — the
+    // React rendering is covered by tsc + build.
+    $this->withoutVite();
+    $business = Business::factory()->onboarded()->create([
+        'payment_mode' => PaymentMode::Online,
+    ]);
+    // Degraded: row exists but KYC failed → canAcceptOnlinePayments() is false.
+    StripeConnectedAccount::factory()
+        ->disabled()
+        ->for($business)
+        ->create();
+    createStaffedService($business);
+
+    $this->get('/'.$business->slug)
+        ->assertInertia(fn ($page) => $page
+            ->where('business.payment_mode', 'online')
+            ->where('business.can_accept_online_payments', false)
+        );
 });

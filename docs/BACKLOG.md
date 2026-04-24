@@ -79,3 +79,33 @@ This file captures unscheduled follow-up work, UX ideas, and deferred engineerin
 - Deployed-snippet telemetry — instrument `embed.js` load to count "popup snippets in the wild," informing future contract changes.
 - Dashboard embed-settings copy UX polish — toggles, multi-service snippet view, inline copy-with-comments.
 - SRI hashes on the `<script>` tag — revisit if/when `embed.js` ever moves to a CDN rather than the app origin.
+
+## PAYMENTS — "Accept offline bookings when Stripe is temporarily unavailable" opt-out (deferred from PAYMENTS Session 5)
+
+**Context.** PAYMENTS Session 5 (2026-04-24) shipped a behaviour change for `payment_mode = 'online'` businesses whose connected account is currently ineligible (KYC failure, disconnect, country drift, capability flip). Before: the public booking controller silently downgraded to the offline path — slot reserved, customer not charged, business's "require online payment" commercial contract silently violated. After: the controller returns a 422 with `online_payments_unavailable` BEFORE the transaction; the public booking page renders a pre-submit banner ("This business is no longer accepting online payments right now — try again later or contact them directly.") and disables the CTA when the business is online-only and Stripe is degraded at page-load.
+
+The hard-block default is correct: a business that sets `payment_mode = 'online'` has made a commercial choice to require payment at booking (see roadmap locked decision #6 and #14). Silently creating a confirmed offline booking violates that.
+
+**But there is a legitimate edge case the current baseline doesn't serve.** Some businesses choose `payment_mode = 'online'` primarily because they want every transaction recorded on Stripe for bookkeeping / reconciliation, not because the pre-payment itself is non-negotiable. For those businesses, a Stripe outage that blocks ALL bookings is a worse outcome than a temporary offline fallback — they'd rather accept bookings with on-site payment during the outage and reconcile manually, than lose customers entirely while Stripe recovers.
+
+**Proposed UX.** A new Settings → Booking checkbox, visible only when `payment_mode = 'online'` (not for `offline` or `customer_choice`):
+
+> **"Still accept bookings if my Stripe account is temporarily unavailable"**
+>
+> Description: "When this is on, customers can still book during a Stripe outage — they'll pay on-site instead of online, and you can reconcile manually. When off (default), bookings are blocked until Stripe is working again."
+
+Default: **off** (hard-block) — matches the current post-Session-5 baseline and the commercial-contract reading of `payment_mode = 'online'`.
+
+**Implementation sketch (when scheduled).**
+- New column on `businesses` table: `accept_offline_fallback_on_stripe_outage` (boolean, default `false`). Migration additive; no data backfill needed (all existing rows get default `false` = current behaviour preserved).
+- `Business::canAcceptOnlinePayments()` unchanged — it's the authoritative eligibility reader.
+- `PublicBookingController::store` branches: when `$customerIntendedOnline && !$canAcceptOnline`, check the new flag. If `true`: fall to offline path (silent downgrade, as pre-Session-5); if `false`: throw `ValidationException::withMessages(['online_payments_unavailable' => ...])` (as post-Session-5).
+- Same flag read on `booking-summary.tsx` so the UI mirrors the server: with flag on, show the normal "Confirm booking" flow; with flag off, show the "unavailable" banner.
+- Settings → Booking UI: the checkbox renders below the `payment_mode` select only when the select's value is `'online'`. Wrap with `__()` / `t()`.
+- A `paymentModeMismatch` banner in `authenticated-layout.tsx` can gain a secondary sentence for the flag-on case: "Customers can still book with on-site payment until Stripe is working again."
+- Tests: at minimum, two new Feature tests on the public booking path (flag on + degraded → offline booking succeeds; flag off + degraded → 422); one Settings test that the flag is persisted; one Inertia-prop assertion on the shape.
+- Documentation: promote a new `D-NNN` describing the opt-out contract + rationale. Update Session-5 D-176 with a "superseded-by" note once this ships.
+
+**Decision on when to schedule.** To be evaluated in the next session or later. Not a blocker — the post-Session-5 baseline is defensible as a standalone product stance. The opt-out is a refinement that lands when a real-world request from an online-only business surfaces, or when product validation suggests enough online-only businesses would appreciate the flexibility during Stripe outages.
+
+**Origin.** This entry exists because the behaviour change was not in the Session 5 plan approved by the developer — the implementing agent added it during execution without consultation. The developer course-corrected the process (explicit prompt-product-decisions rule) AND endorsed the hard-block default but asked for this opt-out to be documented as the right long-term surface. Keep the baseline; add the opt-out when prioritised.

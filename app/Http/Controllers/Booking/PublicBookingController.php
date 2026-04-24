@@ -33,6 +33,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 use Stripe\Exception\ApiErrorException;
@@ -91,6 +92,15 @@ class PublicBookingController extends Controller
                 'payment_mode' => $business->payment_mode->value,
                 'can_accept_online_payments' => $business->canAcceptOnlinePayments(),
                 'currency' => $business->stripeConnectedAccount?->default_currency,
+                // PAYMENTS Session 5: server-computed TWINT availability so
+                // the React UI doesn't re-do a country-in-set check (locked
+                // decision #43 — no hardcoded 'CH' on the client). Read from
+                // `config('payments.twint_countries')` (D-154 single source).
+                'twint_available' => in_array(
+                    $business->stripeConnectedAccount?->country,
+                    (array) config('payments.twint_countries'),
+                    true,
+                ),
             ],
             'services' => $services->map(fn (Service $service) => [
                 'id' => $service->id,
@@ -223,7 +233,13 @@ class PublicBookingController extends Controller
         $validated = $request->validated();
 
         if (! empty($validated['website'])) {
-            return response()->json(['message' => __('Something went wrong.')], 422);
+            // Honeypot trip: surface a generic error via Inertia's validation
+            // envelope so useHttp's `http.errors` populates correctly
+            // (Round-3 codex review P1: hand-rolled `response()->json` bodies
+            // aren't consumed by useHttp).
+            throw ValidationException::withMessages([
+                'booking' => __('Something went wrong.'),
+            ]);
         }
 
         $service = $business->services()
@@ -252,7 +268,9 @@ class PublicBookingController extends Controller
                 ->exists();
 
             if (! $serviceMember) {
-                return response()->json(['message' => __('Selected provider is not available for this service.')], 409);
+                throw ValidationException::withMessages([
+                    'provider_id' => __('Selected provider is not available for this service.'),
+                ]);
             }
         }
 
@@ -284,15 +302,63 @@ class PublicBookingController extends Controller
         $servicePrice = $service->price !== null ? (float) $service->price : 0.0;
         $priceEligibleForOnline = $servicePrice > 0;
 
-        $needsOnlinePayment = $canAcceptOnline
-            && $priceEligibleForOnline
+        // PAYMENTS Session 5: did the customer intend online payment?
+        //   - Business.payment_mode = Online → always yes (the Business's
+        //     commercial contract is "require online").
+        //   - Business.payment_mode = CustomerChoice → yes ONLY when the
+        //     client sent an explicit `payment_choice = 'online'`. A
+        //     missing `payment_choice` in customer_choice mode means the
+        //     client never rendered the pay-now / pay-on-site picker
+        //     (booking-summary.tsx only renders it when
+        //     `onlinePaymentAvailable` was true at page-load), so the
+        //     customer couldn't have expressed an online intent. Treating
+        //     the absent field as 'online' (pre-Round-2 default) escalated
+        //     a degraded connected-account state into a hard 422 for
+        //     customers whose UI was already showing the offline "Confirm
+        //     booking" CTA — that's the Codex adversarial-review Round 2
+        //     Finding 1. Explicit `'online'` only.
+        //   - Business.payment_mode = Offline → no.
+        //
+        // For online happy path + customer_choice + explicit online pick,
+        // booking-summary.tsx's useHttp payload always sends
+        // `payment_choice: paymentChoice` (defaulted to `'online'` via
+        // useState) — so the intended-online branch still fires for every
+        // legitimate customer-initiated online flow.
+        $customerIntendedOnline = $priceEligibleForOnline
             && (
                 $business->payment_mode === PaymentMode::Online
                 || (
                     $business->payment_mode === PaymentMode::CustomerChoice
-                    && ($paymentChoice ?? 'online') === 'online'
+                    && $paymentChoice === 'online'
                 )
             );
+
+        // PAYMENTS Session 5 race banner (locked roadmap bullet under
+        // "Public-side race banner" in Session 5): if the customer intended
+        // online payment but the connected account is no longer accepting
+        // it (KYC failure, disconnect, country drift, capability flip
+        // between page load and form submit), surface a Laravel-standard
+        // validation error via ValidationException — that's the shape
+        // Inertia v3's `useHttp` hook consumes (`http.errors` +
+        // `http.hasErrors`). A hand-rolled `response()->json()` with a
+        // top-level `reason` / `message` wouldn't populate `http.errors`,
+        // leaving the banner dead in the browser (Round-3 codex review
+        // P1). The React client branches on the `online_payments_unavailable`
+        // error key to render the "no longer accepting online payments"
+        // banner.
+        //
+        // Business.payment_mode = CustomerChoice with an absent or
+        // explicit-offline `payment_choice` does NOT hit this branch —
+        // offline was the customer's standing choice (explicit pick) or
+        // the client never offered online (degraded account → picker not
+        // rendered), so the booking falls through to the offline path.
+        if ($customerIntendedOnline && ! $canAcceptOnline) {
+            throw ValidationException::withMessages([
+                'online_payments_unavailable' => __('This business is no longer accepting online payments right now — try again later or contact them directly.'),
+            ]);
+        }
+
+        $needsOnlinePayment = $canAcceptOnline && $customerIntendedOnline;
 
         try {
             [$booking, $customer] = DB::transaction(function () use (
@@ -380,9 +446,18 @@ class PublicBookingController extends Controller
                         // temporarily null before the first account.retrieve.
                         'currency' => $connectedAccount->default_currency ?? 'chf',
                         'stripe_connected_account_id' => $connectedAccount->stripe_account_id,
-                        'expires_at' => $business->payment_mode === PaymentMode::Online
-                            ? now()->addMinutes(90)
-                            : null,
+                        // PAYMENTS Session 5 branching audit: explicit match()
+                        // makes the locked-decision-#13 rule visible — only
+                        // `online` mode sets `expires_at`; customer_choice
+                        // relies on Checkout-session expiry + failure
+                        // branching, and the reaper (Session 2b) targets
+                        // online only. The Offline arm is defensively
+                        // unreachable inside this `$needsOnlinePayment`
+                        // branch but kept for exhaustiveness.
+                        'expires_at' => match ($business->payment_mode) {
+                            PaymentMode::Online => now()->addMinutes(90),
+                            PaymentMode::CustomerChoice, PaymentMode::Offline => null,
+                        },
                     ];
                 } else {
                     // Offline / customer_choice-offline-pick / price-null
@@ -400,18 +475,18 @@ class PublicBookingController extends Controller
                 return [$booking, $customer];
             });
         } catch (SlotNoLongerAvailableException) {
-            return response()->json([
-                'message' => __('This time slot is no longer available. Please select another time.'),
-            ], 409);
+            throw ValidationException::withMessages([
+                'slot_taken' => __('This time slot is no longer available. Please select another time.'),
+            ]);
         } catch (NoProviderAvailableException) {
-            return response()->json([
-                'message' => __('No provider is available for this time slot.'),
-            ], 409);
+            throw ValidationException::withMessages([
+                'no_provider' => __('No provider is available for this time slot.'),
+            ]);
         } catch (QueryException $e) {
             if (($e->getPrevious()?->getCode() ?? $e->getCode()) === '23P01') {
-                return response()->json([
-                    'message' => __('This time slot is no longer available. Please select another time.'),
-                ], 409);
+                throw ValidationException::withMessages([
+                    'slot_taken' => __('This time slot is no longer available. Please select another time.'),
+                ]);
             }
             throw $e;
         }
@@ -484,16 +559,21 @@ class PublicBookingController extends Controller
             ]);
             $this->releaseSlotFor($booking);
 
-            return response()->json([
-                'message' => __("Online payments aren't available for this business right now — please contact them directly."),
-            ], 422);
+            // PAYMENTS Session 5: surface via Inertia's standard
+            // validation-error envelope so useHttp's `http.errors`
+            // populates (Round-3 codex review P1). The error KEY is the
+            // discriminator the React client branches on; the VALUE is
+            // the localized user-facing message.
+            throw ValidationException::withMessages([
+                'online_payments_unavailable' => __('This business is no longer accepting online payments right now — try again later or contact them directly.'),
+            ]);
         } catch (ApiErrorException $e) {
             report($e);
             $this->releaseSlotFor($booking);
 
-            return response()->json([
-                'message' => __("Couldn't start payment. Please try again in a moment."),
-            ], 422);
+            throw ValidationException::withMessages([
+                'checkout_failed' => __("Couldn't start payment. Please try again in a moment."),
+            ]);
         }
 
         return response()->json([

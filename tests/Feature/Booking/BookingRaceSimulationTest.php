@@ -60,8 +60,11 @@ test('public booking race: first POST wins, second returns 409', function () {
         'name' => 'Jack Doe',
     ]));
 
-    $second->assertStatus(409)
-        ->assertJsonPath('message', __('This time slot is no longer available. Please select another time.'));
+    // PAYMENTS Session 5 Round 3: slot-gone flows through
+    // ValidationException → 422 with `slot_taken` key (Inertia-native
+    // useHttp shape).
+    $second->assertStatus(422)
+        ->assertJsonValidationErrors(['slot_taken']);
 
     expect(Booking::count())->toBe(1);
 });
@@ -87,8 +90,11 @@ test('public booking race without provider_id: auto-assign still hits constraint
         'name' => 'Jack Doe',
     ]));
 
-    $second->assertStatus(409)
-        ->assertJsonPath('message', __('This time slot is no longer available. Please select another time.'));
+    // PAYMENTS Session 5 Round 3: slot-gone flows through
+    // ValidationException → 422 with `slot_taken` key (Inertia-native
+    // useHttp shape).
+    $second->assertStatus(422)
+        ->assertJsonValidationErrors(['slot_taken']);
 
     expect(Booking::count())->toBe(1);
 });

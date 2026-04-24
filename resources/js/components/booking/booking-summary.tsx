@@ -47,7 +47,23 @@ export default function BookingSummary({
     const onlinePaymentAvailable =
         business.can_accept_online_payments && servicePriceEligible;
 
-    const isOnlineMode = onlinePaymentAvailable && business.payment_mode === 'online';
+    // Session 5 Round 4 (codex review P1): `isOnlineMode` must reflect the
+    // Business's stated policy, NOT the runtime eligibility. A Business
+    // whose `payment_mode = 'online'` AND `can_accept_online_payments`
+    // is currently false (KYC failure, disconnect, country drift) is
+    // an online-only business that cannot currently accept bookings —
+    // the UI MUST NOT disguise that as an offline flow (which would
+    // wrongly promise a confirmation email and then 422 on submit).
+    // Instead, we flag `onlineModeUnavailable` and render a pre-submit
+    // "unavailable" banner + disabled CTA below. Matches D-176's
+    // server-side hard refusal for that state.
+    //
+    // `isCustomerChoiceMode` stays gated on `onlinePaymentAvailable`:
+    // a degraded customer_choice Business still accepts pay-on-site
+    // legitimately (D-176 soft path), so the picker simply hides and
+    // the offline "Confirm booking" flow is correct there.
+    const isOnlineMode = business.payment_mode === 'online' && servicePriceEligible;
+    const onlineModeUnavailable = isOnlineMode && !business.can_accept_online_payments;
     const isCustomerChoiceMode =
         onlinePaymentAvailable && business.payment_mode === 'customer_choice';
 
@@ -57,9 +73,11 @@ export default function BookingSummary({
     const [paymentChoice, setPaymentChoice] = useState<PaymentChoice>('online');
 
     // Which branch the server will take, mirrored client-side so the CTA
-    // copy + caption match the actual outcome.
+    // copy + caption match the actual outcome. Online-mode degraded does
+    // NOT redirect to Stripe — the CTA is disabled below.
     const willRedirectToStripe =
-        isOnlineMode || (isCustomerChoiceMode && paymentChoice === 'online');
+        (isOnlineMode && !onlineModeUnavailable)
+        || (isCustomerChoiceMode && paymentChoice === 'online');
 
     const getHoneypotValue = () => {
         const el = document.getElementById('booking-hp') as HTMLInputElement | null;
@@ -219,9 +237,30 @@ export default function BookingSummary({
                 </Card>
             )}
 
-            {http.hasErrors && (
+            {/* Session 5 Round 4 (codex P1): pre-submit "online unavailable"
+                banner for a `payment_mode = 'online'` Business whose
+                connected account is currently ineligible. Without this,
+                the UI would render the offline CTA ("Confirm booking") +
+                email-confirmation caption, only to 422 on submit. Mirrors
+                the server-side D-176 refusal copy so the customer sees
+                the same message at page-load as they would post-submit. */}
+            {onlineModeUnavailable && (
                 <div className="rounded-lg border border-primary bg-honey-soft px-4 py-3 text-sm text-primary-foreground">
-                    {t('This time slot is no longer available. Please select another time.')}
+                    {t('This business is no longer accepting online payments right now — try again later or contact them directly.')}
+                </div>
+            )}
+
+            {http.hasErrors && !onlineModeUnavailable && (
+                <div className="rounded-lg border border-primary bg-honey-soft px-4 py-3 text-sm text-primary-foreground">
+                    {/* The server throws ValidationException with a single
+                        message keyed by a discriminator
+                        (`online_payments_unavailable` | `checkout_failed` |
+                        `slot_taken` | `no_provider` | `provider_id` |
+                        `booking`); useHttp flattens the first message per
+                        key. Rendering the first populated message is
+                        enough for the user — the key is implicit in the
+                        copy itself. */}
+                    {Object.values(http.errors)[0]}
                 </div>
             )}
 
@@ -231,17 +270,42 @@ export default function BookingSummary({
                 className="h-12 sm:h-12 text-sm"
                 loading={http.processing}
                 onClick={handleConfirm}
+                disabled={onlineModeUnavailable}
             >
                 <Display className="tracking-tight">
                     {willRedirectToStripe ? t('Continue to payment') : t('Confirm booking')} →
                 </Display>
             </Button>
 
-            <p className="text-center text-xs leading-normal text-muted-foreground">
-                {willRedirectToStripe
-                    ? t('You will be redirected to a secure Stripe page to complete payment.')
-                    : t('You will receive a confirmation by email. You can reschedule or cancel from that message.')}
-            </p>
+            {willRedirectToStripe ? (
+                <div className="flex flex-col items-center gap-1.5 text-center">
+                    <p className="text-xs leading-normal text-muted-foreground">
+                        {/* PAYMENTS Session 5: explicit confirmation of the amount
+                            the customer's card will be charged, matching the
+                            roadmap copy. */}
+                        {t('Your card will be charged :amount on the next step.', {
+                            amount: formatPrice(service.price, t),
+                        })}
+                    </p>
+                    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                        <span>{t('Secured by Stripe')}</span>
+                        {business.twint_available && (
+                            <span className="rounded-sm border border-border/70 bg-background px-1.5 py-0.5 font-semibold tracking-normal text-foreground">
+                                TWINT
+                            </span>
+                        )}
+                    </div>
+                </div>
+            ) : onlineModeUnavailable ? (
+                // No confirmation caption — the CTA is disabled and the
+                // unavailable banner above carries the user-visible copy.
+                null
+            ) : (
+                <p className="text-center text-xs leading-normal text-muted-foreground">
+                    {t('You will receive a confirmation by email. You can reschedule or cancel from that message.')}
+                </p>
+            )}
         </div>
     );
 }
+

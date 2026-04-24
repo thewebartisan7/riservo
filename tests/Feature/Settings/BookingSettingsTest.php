@@ -20,6 +20,55 @@ test('admin can view booking settings', function () {
         ->assertInertia(fn ($page) => $page
             ->component('dashboard/settings/booking')
             ->has('settings')
+            // PAYMENTS Session 5: eligibility prop drives the React UI
+            // priority-ordered tooltip for disabled non-offline options.
+            ->has('paymentEligibility', fn ($block) => $block
+                ->where('has_verified_account', false)
+                ->where('country_supported', false)
+                ->where('can_accept_online_payments', false)
+                ->where('connected_account_country', null)
+                ->where('supported_countries', ['CH'])
+            )
+        );
+});
+
+test('Settings → Booking eligibility prop reports an active CH account as eligible (Session 5)', function () {
+    StripeConnectedAccount::factory()
+        ->active()
+        ->for($this->business)
+        ->create();
+
+    $this->actingAs($this->admin)
+        ->get('/dashboard/settings/booking')
+        ->assertOk()
+        ->assertInertia(fn ($page) => $page
+            ->has('paymentEligibility', fn ($block) => $block
+                ->where('has_verified_account', true)
+                ->where('country_supported', true)
+                ->where('can_accept_online_payments', true)
+                ->where('connected_account_country', 'CH')
+                ->where('supported_countries', ['CH'])
+            )
+        );
+});
+
+test('Settings → Booking eligibility prop reports a DE active account as ineligible (Session 5, locked decision #43)', function () {
+    StripeConnectedAccount::factory()
+        ->active()
+        ->for($this->business)
+        ->create(['country' => 'DE']);
+
+    $this->actingAs($this->admin)
+        ->get('/dashboard/settings/booking')
+        ->assertOk()
+        ->assertInertia(fn ($page) => $page
+            ->has('paymentEligibility', fn ($block) => $block
+                ->where('has_verified_account', true)
+                ->where('country_supported', false)
+                ->where('can_accept_online_payments', false)
+                ->where('connected_account_country', 'DE')
+                ->where('supported_countries', ['CH'])
+            )
         );
 });
 
@@ -87,12 +136,9 @@ test('empty reminder_hours clears reminders', function () {
     expect($this->business->fresh()->reminder_hours)->toBe([]);
 });
 
-test('PUT payment_mode=online is rejected when the business has no verified Stripe Connect account (D-130, codex Round 4)', function () {
-    // Codex Round 4 finding: the UI hide is cosmetic; the server validator
-    // used to accept any PaymentMode enum value. A direct PUT could bypass
-    // the rollout gate. Now non-offline values require the business to pass
-    // canAcceptOnlinePayments() (which folds in Stripe capabilities + the
-    // supported-country gate per D-127).
+test('admin CANNOT PUT payment_mode=online when the business has no connected Stripe account (Session 5)', function () {
+    // Session 5 gate-lift: non-offline is accepted iff canAcceptOnlinePayments()
+    // returns true. No connected account = the helper returns false.
     $this->actingAs($this->admin)
         ->put('/dashboard/settings/booking', [
             'confirmation_mode' => 'auto',
@@ -107,7 +153,7 @@ test('PUT payment_mode=online is rejected when the business has no verified Stri
     expect($this->business->fresh()->payment_mode)->toBe(PaymentMode::Offline);
 });
 
-test('PUT payment_mode=customer_choice is rejected without a verified Stripe Connect account (D-130)', function () {
+test('admin CANNOT PUT payment_mode=customer_choice without a verified connected account (Session 5)', function () {
     $this->actingAs($this->admin)
         ->put('/dashboard/settings/booking', [
             'confirmation_mode' => 'auto',
@@ -120,13 +166,9 @@ test('PUT payment_mode=customer_choice is rejected without a verified Stripe Con
         ->assertSessionHasErrors('payment_mode');
 });
 
-test('PUT payment_mode=online is rejected even when the business has a verified Stripe Connect account (D-132, codex Round 5)', function () {
-    // Codex Round 5 finding: the prior carve-out that allowed verified
-    // Stripe businesses to set non-offline values was a false-ready
-    // surface — no booking flow consumes `payment_mode` yet (Session 2a
-    // wires Checkout). Verified Stripe is a prerequisite, not a green
-    // light. The hard-block applies regardless of Stripe verification
-    // until Session 5 ships.
+test('admin can PUT payment_mode=online when the business has a verified CH connected account (Session 5 gate-lift)', function () {
+    // D-132's transitional hard-block is retired. Verified CH account =
+    // canAcceptOnlinePayments() returns true = non-offline is accepted.
     StripeConnectedAccount::factory()
         ->active()
         ->for($this->business)
@@ -141,9 +183,85 @@ test('PUT payment_mode=online is rejected even when the business has a verified 
             'assignment_strategy' => 'first_available',
             'reminder_hours' => [],
         ])
-        ->assertSessionHasErrors('payment_mode');
+        ->assertSessionDoesntHaveErrors();
+
+    expect($this->business->fresh()->payment_mode)->toBe(PaymentMode::Online);
+});
+
+test('admin can PUT payment_mode=customer_choice when the business has a verified CH connected account (Session 5)', function () {
+    StripeConnectedAccount::factory()
+        ->active()
+        ->for($this->business)
+        ->create();
+
+    $this->actingAs($this->admin)
+        ->put('/dashboard/settings/booking', [
+            'confirmation_mode' => 'auto',
+            'allow_provider_choice' => true,
+            'cancellation_window_hours' => 24,
+            'payment_mode' => 'customer_choice',
+            'assignment_strategy' => 'first_available',
+            'reminder_hours' => [],
+        ])
+        ->assertSessionDoesntHaveErrors();
+
+    expect($this->business->fresh()->payment_mode)->toBe(PaymentMode::CustomerChoice);
+});
+
+test('admin CANNOT PUT payment_mode=online when the connected account country is not in config payments.supported_countries (Session 5, locked decision #43)', function () {
+    // Defense-in-depth: the client-side UI disables the option with a
+    // tooltip, but the server-side validator is the enforcement edge. A
+    // direct PUT with a non-CH account is rejected.
+    StripeConnectedAccount::factory()
+        ->active()
+        ->for($this->business)
+        ->create(['country' => 'DE']);
+
+    $response = $this->actingAs($this->admin)
+        ->put('/dashboard/settings/booking', [
+            'confirmation_mode' => 'auto',
+            'allow_provider_choice' => true,
+            'cancellation_window_hours' => 24,
+            'payment_mode' => 'online',
+            'assignment_strategy' => 'first_available',
+            'reminder_hours' => [],
+        ]);
+
+    $response->assertSessionHasErrors('payment_mode');
+
+    // Round-3 P3: the message must match the actual blocker. A verified
+    // Stripe account in the wrong country is NOT "Connect Stripe…" — it
+    // is the non-CH blocker.
+    $errors = session('errors')->get('payment_mode');
+    expect($errors[0])->toBe(__('Online payments in MVP support CH-located businesses only.'));
 
     expect($this->business->fresh()->payment_mode)->toBe(PaymentMode::Offline);
+});
+
+test('config flip opens the seam for non-CH accounts (Session 5 proves the gate is config-driven, no hardcoded CH)', function () {
+    // Locked decision #43 / D-112 seam-open contract: flipping
+    // `config('payments.supported_countries')` is the SINGLE switch. No
+    // hardcoded 'CH' literal anywhere. A DE account becomes eligible when
+    // DE is added to the supported set.
+    config(['payments.supported_countries' => ['CH', 'DE']]);
+
+    StripeConnectedAccount::factory()
+        ->active()
+        ->for($this->business)
+        ->create(['country' => 'DE']);
+
+    $this->actingAs($this->admin)
+        ->put('/dashboard/settings/booking', [
+            'confirmation_mode' => 'auto',
+            'allow_provider_choice' => true,
+            'cancellation_window_hours' => 24,
+            'payment_mode' => 'online',
+            'assignment_strategy' => 'first_available',
+            'reminder_hours' => [],
+        ])
+        ->assertSessionDoesntHaveErrors();
+
+    expect($this->business->fresh()->payment_mode)->toBe(PaymentMode::Online);
 });
 
 test('PUT payment_mode passthrough is allowed for already-persisted non-offline values (D-130)', function () {

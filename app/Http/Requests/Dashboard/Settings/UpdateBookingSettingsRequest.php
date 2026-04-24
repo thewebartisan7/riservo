@@ -38,34 +38,37 @@ class UpdateBookingSettingsRequest extends FormRequest
     }
 
     /**
-     * Codex Round-4 (D-130) + Round-5 (D-132): the booking.tsx UI hides the
-     * `online` / `customer_choice` options for Sessions 1–4 (locked roadmap
-     * decision #27), and the server-side validator hard-blocks them
-     * to match.
+     * PAYMENTS Session 5 gate (locked roadmap decisions #27 / #43): non-offline
+     * `payment_mode` values are accepted iff the business is genuinely
+     * eligible for online payments. `canAcceptOnlinePayments()` (D-127) is
+     * the single reader that folds in:
+     *   - an active connected-account row exists,
+     *   - Stripe capability booleans (charges_enabled / payouts_enabled /
+     *     details_submitted) are all on,
+     *   - `requirements_disabled_reason` is null (D-138),
+     *   - the account's country is in `config('payments.supported_countries')`
+     *     (D-141 / D-150).
      *
-     * Round-4 originally allowed verified-Stripe businesses to set
-     * non-offline via direct PUT as a "dogfooding" carve-out. Codex Round 5
-     * flagged this as a false-ready surface: no booking flow consumes
-     * `payment_mode` yet (Session 2a wires Checkout, Session 5 lifts the
-     * UI hide). An admin who flipped to `online` would believe customer
-     * bookings were prepaid while the public flow still booked them
-     * without collecting money. The carve-out is removed.
+     * This replaces the D-132 transitional hard-block that covered Sessions
+     * 1–4 (UI hide in force, no booking flow consuming `payment_mode`). The
+     * Session-5 React page mirrors this gate to disable options client-side
+     * with a tooltip, but the server-side rule is the enforcement edge
+     * (client-side disable is convenience; a direct PUT still 422s).
      *
-     * Idempotent passthrough is kept: a PUT that re-sends the
-     * currently-persisted value is allowed even if it's non-offline. This
-     * keeps the form usable when the persisted value is `online` /
-     * `customer_choice` (DB-seeded for development of Session 2a) and the
-     * admin edits other booking-settings fields. The form's hidden input
-     * round-trips the persisted value; the validator must accept it.
-     *
-     * Session 5 will swap this for an end-to-end check that includes
-     * `canAcceptOnlinePayments()` (the country + Stripe capability gate)
-     * AND a "Session 2a has shipped" feature flag — at that point the
-     * carve-out becomes safe.
+     * Idempotent passthrough is kept verbatim: a PUT that re-sends the
+     * currently-persisted value is always accepted. This keeps the form
+     * usable when the persisted value is non-offline but the admin is
+     * editing unrelated fields, and handles the case of a legitimately-set
+     * business whose eligibility later lapsed (connected account was
+     * disconnected, country config tightened) — they can still edit other
+     * fields without getting a 422 on the round-tripped hidden input. The
+     * demotion-to-offline paths (Connect webhook + disconnect controller)
+     * are the mechanisms that ACTUALLY reset the persisted value, not
+     * a form-submit edge.
      */
     private function paymentModeRolloutRule(): Closure
     {
-        return function (string $attribute, mixed $value, Closure $fail) {
+        return function (string $attribute, mixed $value, Closure $fail): void {
             if ($value === PaymentMode::Offline->value) {
                 return;
             }
@@ -77,7 +80,44 @@ class UpdateBookingSettingsRequest extends FormRequest
                 return;
             }
 
-            $fail(__('Online payment modes are not yet available. They will activate in a later release once the booking flow can collect payments.'));
+            if ($business !== null && $business->canAcceptOnlinePayments()) {
+                return;
+            }
+
+            // Round-3 codex review P3: pick the right reason copy. A
+            // verified-but-non-CH account is already connected and KYC'd,
+            // so "Connect Stripe" misleads the admin. The priority order
+            // mirrors the React tooltip (not connected → non-CH → other)
+            // so the server-side 422 message matches the UI they saw.
+            //
+            // NOTE on CH-centric copy (locked roadmap decision #43): the
+            // non-CH message below is DELIBERATELY CH-specific for MVP.
+            // D-43 draws an explicit distinction — the `supported_countries`
+            // config gate stays the single source of truth for the STATE
+            // (gate, branching, tests), while "this roadmap's copy, UX,
+            // and tax assumptions are all CH-centric". The fast-follow
+            // roadmap that extends to IT / DE / FR / AT / LI is defined
+            // as "config change + TWINT fallback verification +
+            // locale-list audit" — meaning the copy is updated WHEN the
+            // config is extended, not before. Rendering the supported
+            // list dynamically here is YAGNI for MVP (config is `['CH']`)
+            // and contradicts D-43's locale-audit contract. Do not flag
+            // as a review issue — this is intentional.
+            $row = $business?->stripeConnectedAccount;
+            $isVerifiedStripe = $row !== null
+                && $row->charges_enabled
+                && $row->payouts_enabled
+                && $row->details_submitted
+                && $row->requirements_disabled_reason === null;
+            $supported = (array) config('payments.supported_countries');
+
+            if ($isVerifiedStripe && ! in_array($row->country, $supported, true)) {
+                $fail(__('Online payments in MVP support CH-located businesses only.'));
+
+                return;
+            }
+
+            $fail(__('Connect Stripe and complete verification before enabling online payments.'));
         };
     }
 }

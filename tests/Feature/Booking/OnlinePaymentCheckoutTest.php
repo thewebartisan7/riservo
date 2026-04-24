@@ -241,26 +241,90 @@ test('Stripe API failure on Checkout create cancels the booking and returns 422'
 
     $response = $this->postJson("/booking/{$this->business->slug}/book", book2a());
 
+    // PAYMENTS Session 5: the server throws ValidationException so
+    // Inertia v3's useHttp consumes `http.errors` natively. The error KEY
+    // is the discriminator the React banner picks up.
     $response->assertStatus(422);
+    $response->assertJsonValidationErrors(['checkout_failed']);
     expect(Booking::firstOrFail()->status)->toBe(BookingStatus::Cancelled);
 });
 
-test('can_accept_online_payments false drops the online branch even when payment_mode = online', function () {
+test('payment_mode=online + can_accept_online_payments=false surfaces the race banner instead of silent offline downgrade (Session 5)', function () {
+    // PAYMENTS Session 5 behaviour change. Pre-Session-5, an Online
+    // Business whose connected account became ineligible mid-session
+    // silently fell through to the offline path — the slot booked, but
+    // the Business's "require online" contract was silently violated and
+    // the customer was never asked to pay.
+    //
+    // Session 5 replaces that silent downgrade with an explicit 422
+    // carrying `reason = 'online_payments_unavailable'`; the public
+    // booking page renders the race banner and the slot is not held
+    // (the server returns before the booking row is created).
+    //
     // Unsupported-market drift (D-150): account still 'active' on Stripe
-    // but country not in supported_countries. canAcceptOnlinePayments()
-    // already returns false; the controller must fall through to offline
-    // rather than attempt Checkout.
+    // but country not in supported_countries; same user-visible outcome
+    // as KYC failure / disconnect / capability flip.
     $this->connectedAccount->update(['country' => 'DE']);
     // No Stripe mock — a call would fail the expectation.
 
-    $this->postJson("/booking/{$this->business->slug}/book", book2a())
+    $response = $this->postJson("/booking/{$this->business->slug}/book", book2a());
+
+    $response->assertStatus(422);
+    $response->assertJsonValidationErrors(['online_payments_unavailable']);
+
+    // No booking row persisted — the 422 fires before the transaction.
+    expect(Booking::count())->toBe(0);
+});
+
+test('customer_choice + pay-on-site still lands offline when connected account is ineligible (Session 5 — explicit offline choice, no race banner)', function () {
+    // The race-banner 422 only fires when the CUSTOMER intended online
+    // and the server can't fulfil it. A customer_choice Business whose
+    // customer explicitly picked "pay on site" is NOT a race — offline
+    // was the stated choice.
+    $this->business->update(['payment_mode' => PaymentMode::CustomerChoice]);
+    $this->connectedAccount->update(['country' => 'DE']);
+
+    $this->postJson(
+        "/booking/{$this->business->slug}/book",
+        book2a(['payment_choice' => 'offline']),
+    )->assertCreated();
+
+    $booking = Booking::firstOrFail();
+    expect($booking->payment_status)->toBe(PaymentStatus::NotApplicable)
+        ->and($booking->stripe_checkout_session_id)->toBeNull()
+        // Locked decision #14: the snapshot mirrors Business.payment_mode
+        // at booking time, NOT the customer's checkout-step choice.
+        ->and($booking->payment_mode_at_creation)->toBe('customer_choice');
+});
+
+test('customer_choice + degraded account + omitted payment_choice lands offline without 422 (Session 5 Round 2 fix)', function () {
+    // Codex adversarial-review Round 2 Finding 1: when a customer_choice
+    // Business's connected account is already ineligible at page load,
+    // `booking-summary.tsx` never renders the pay-now / pay-on-site
+    // picker (`isCustomerChoiceMode` gates on `onlinePaymentAvailable`),
+    // and the `useHttp` payload sends `payment_choice: null`. Treating a
+    // null `payment_choice` as 'online' escalated a degraded Stripe
+    // state into a hard 422, blocking customers from completing an
+    // otherwise-valid pay-on-site booking.
+    //
+    // Fix: the server's `$customerIntendedOnline` check requires an
+    // EXPLICIT `payment_choice === 'online'` for the customer_choice
+    // branch. Null / absent → offline path.
+    $this->business->update(['payment_mode' => PaymentMode::CustomerChoice]);
+    $this->connectedAccount->update(['country' => 'DE']);
+
+    // No `payment_choice` key at all — simulates the cached/stale client
+    // AND the degraded-at-load case (picker not rendered).
+    $payload = book2a();
+    expect($payload)->not->toHaveKey('payment_choice');
+
+    $this->postJson("/booking/{$this->business->slug}/book", $payload)
         ->assertCreated();
 
     $booking = Booking::firstOrFail();
-    // Offline-path outcome: no checkout, payment_status = not_applicable,
-    // status follows the Business's confirmation_mode (default auto).
     expect($booking->payment_status)->toBe(PaymentStatus::NotApplicable)
-        ->and($booking->stripe_checkout_session_id)->toBeNull();
+        ->and($booking->stripe_checkout_session_id)->toBeNull()
+        ->and($booking->payment_mode_at_creation)->toBe('customer_choice');
 });
 
 test('snapshot column does not change when Business.payment_mode changes after booking creation', function () {
@@ -305,6 +369,28 @@ test('google_calendar booking writes payment_mode_at_creation=offline (decision 
         ->and($booking->payment_status)->toBe(PaymentStatus::NotApplicable);
 });
 
+test('race: connected account loses capabilities between load and submit → 422 with reason=online_payments_unavailable (Session 5)', function () {
+    // PAYMENTS Session 5 race-banner test via the KYC-failure vector
+    // (D-138 `requirements_disabled_reason` becomes non-null, e.g. the
+    // Connect webhook fires `account.updated` with a fresh disable
+    // reason between the page load and the customer POST).
+    //
+    // The error KEY `online_payments_unavailable` is what useHttp surfaces
+    // on `http.errors` so the React client's banner picks up the right
+    // copy — no substring matching on the message.
+    $this->connectedAccount->update(['requirements_disabled_reason' => 'rejected.fraud']);
+
+    $response = $this->postJson("/booking/{$this->business->slug}/book", book2a());
+
+    $response->assertStatus(422);
+    $response->assertJsonValidationErrors(['online_payments_unavailable']);
+
+    // The 422 fires BEFORE the booking row is created — no slot is
+    // ever reserved, so the customer can immediately retry (or contact
+    // the business) without waiting for a slot reaper.
+    expect(Booking::count())->toBe(0);
+});
+
 test('GIST constraint holds the slot while the booking sits pending + awaiting_payment', function () {
     // Locked roadmap decision #12: the reserve-then-pay pattern relies on
     // the existing D-065/D-066 GIST exclusion constraint
@@ -320,12 +406,15 @@ test('GIST constraint holds the slot while the booking sits pending + awaiting_p
         ->assertCreated();
 
     // The first booking is now pending + awaiting_payment. A concurrent
-    // attempt on the SAME slot must be rejected with 409 by the GIST
-    // invariant before it reaches any Stripe call.
+    // attempt on the SAME slot must be rejected by the GIST invariant
+    // before it reaches any Stripe call. Round-3: the controller now
+    // throws ValidationException (so useHttp consumes the error envelope),
+    // turning the former 409 into a 422 with the `slot_taken` key.
     $response = $this->postJson("/booking/{$this->business->slug}/book", book2a([
         'email' => 'second-customer@example.test',
         'name' => 'Second Customer',
     ]));
 
-    $response->assertStatus(409);
+    $response->assertStatus(422);
+    $response->assertJsonValidationErrors(['slot_taken']);
 });

@@ -100,6 +100,10 @@ export interface PublicBusiness {
     payment_mode: 'offline' | 'online' | 'customer_choice';
     can_accept_online_payments: boolean;
     currency: string | null;
+    // PAYMENTS Session 5: server-computed TWINT availability (read from
+    // `config('payments.twint_countries')` in PHP, D-154). Gate for the
+    // TWINT badge on the booking summary CTA.
+    twint_available: boolean;
 }
 
 export interface PublicService {

@@ -88,7 +88,10 @@ test('HTTP: booking inside another booking buffer window returns 409', function 
         'website' => '',
     ]);
 
-    $response->assertStatus(409);
+    // PAYMENTS Session 5 Round 3: slot-gone now flows through
+    // ValidationException → 422 with `slot_taken` key.
+    $response->assertStatus(422);
+    $response->assertJsonValidationErrors(['slot_taken']);
     expect(Booking::count())->toBe(1);
 });
 

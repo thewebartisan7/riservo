@@ -25,22 +25,42 @@ import { Form } from '@inertiajs/react';
 import { update } from '@/actions/App/Http/Controllers/Dashboard/Settings/BookingSettingsController';
 import { useState } from 'react';
 
+type PaymentModeValue = 'offline' | 'online' | 'customer_choice';
+type ConfirmationModeValue = 'auto' | 'manual';
+
+interface PaymentEligibility {
+    has_verified_account: boolean;
+    country_supported: boolean;
+    can_accept_online_payments: boolean;
+    connected_account_country: string | null;
+    supported_countries: string[];
+}
+
 interface Props {
     settings: {
-        confirmation_mode: string;
+        confirmation_mode: ConfirmationModeValue;
         allow_provider_choice: boolean;
         cancellation_window_hours: number;
-        payment_mode: string;
+        payment_mode: PaymentModeValue;
         assignment_strategy: string;
         reminder_hours: number[];
     };
+    paymentEligibility: PaymentEligibility;
 }
 
-export default function BookingSettings({ settings }: Props) {
+export default function BookingSettings({ settings, paymentEligibility }: Props) {
     const { t } = useTrans();
     const [providerChoice, setProviderChoice] = useState(settings.allow_provider_choice);
 
-    const confirmationModeItems = [
+    // PAYMENTS Session 5: the confirmation_mode × payment_mode combination
+    // drives the locked-decision-#29 inline hint. Both need to be state so
+    // the hint re-renders live as the admin edits either control.
+    const [confirmationMode, setConfirmationMode] = useState<ConfirmationModeValue>(
+        settings.confirmation_mode,
+    );
+    const [paymentMode, setPaymentMode] = useState<PaymentModeValue>(settings.payment_mode);
+
+    const confirmationModeItems: { value: ConfirmationModeValue; label: string }[] = [
         { value: 'auto', label: t('Auto-confirm') },
         { value: 'manual', label: t('Manual confirmation') },
     ];
@@ -48,14 +68,65 @@ export default function BookingSettings({ settings }: Props) {
         { value: 'first_available', label: t('First available') },
         { value: 'round_robin', label: t('Round robin (least busy)') },
     ];
-    // Online and customer_choice are hidden from the UI until PAYMENTS Session 5
-    // lifts the ban (locked roadmap decision #27). The <Select> trigger still
-    // renders the persisted value as its label when the DB row carries a hidden
-    // option, so existing rows read back without error — they simply cannot be
-    // changed to a hidden option from this UI.
-    const paymentModeItems = [
-        { value: 'offline', label: t('Pay on-site') },
+
+    // PAYMENTS Session 5: priority-ordered tooltip copy for disabled options.
+    // Priority: not connected → non-supported country → reserved future gates.
+    // The `can_accept_online_payments` aggregate is the authoritative final
+    // bit; the other two flags select the correct explanation.
+    //
+    // Note on CH-centric copy (locked roadmap decision #43): the non-CH
+    // reason below is DELIBERATELY CH-specific for MVP. D-43 keeps the
+    // `supported_countries` config as the gate STATE but marks copy / UX
+    // / tax assumptions as CH-centric; the fast-follow roadmap does a
+    // "locale-list audit" when the config extends. Do not rewrite this
+    // to render the config list dynamically — YAGNI for MVP (config is
+    // `['CH']`) and contradicts D-43's locale-audit contract.
+    const disabledReason = (): string | null => {
+        if (!paymentEligibility.has_verified_account) {
+            return t('Connect Stripe and finish onboarding to enable online payments.');
+        }
+        if (!paymentEligibility.country_supported) {
+            return t('Online payments in MVP support CH-located businesses only.');
+        }
+        return null;
+    };
+
+    const nonOfflineDisabled = !paymentEligibility.can_accept_online_payments;
+    const nonOfflineTooltip = nonOfflineDisabled ? disabledReason() : null;
+
+    const paymentModeItems: {
+        value: PaymentModeValue;
+        label: string;
+        disabled: boolean;
+        reason: string | null;
+    }[] = [
+        {
+            value: 'offline',
+            label: t('Customers pay on-site'),
+            disabled: false,
+            reason: null,
+        },
+        {
+            value: 'online',
+            label: t('Customers pay when booking'),
+            disabled: nonOfflineDisabled,
+            reason: nonOfflineTooltip,
+        },
+        {
+            value: 'customer_choice',
+            label: t('Customers choose at checkout'),
+            disabled: nonOfflineDisabled,
+            reason: nonOfflineTooltip,
+        },
     ];
+
+    // Locked decision #29: when confirmation is manual AND payment is
+    // online / customer_choice, the customer is charged at booking and an
+    // admin rejection triggers an automatic full refund. Surface the
+    // contract inline so the admin sees the consequence of the combination.
+    const showManualOnlineHint =
+        confirmationMode === 'manual'
+        && (paymentMode === 'online' || paymentMode === 'customer_choice');
 
     return (
         <SettingsLayout
@@ -82,6 +153,9 @@ export default function BookingSettings({ settings }: Props) {
                                         name="confirmation_mode"
                                         defaultValue={settings.confirmation_mode}
                                         items={confirmationModeItems}
+                                        onValueChange={(value) =>
+                                            setConfirmationMode(value as ConfirmationModeValue)
+                                        }
                                     >
                                         <SelectTrigger>
                                             <SelectValue />
@@ -195,18 +269,38 @@ export default function BookingSettings({ settings }: Props) {
                                         name="payment_mode"
                                         defaultValue={settings.payment_mode}
                                         items={paymentModeItems}
+                                        onValueChange={(value) =>
+                                            setPaymentMode(value as PaymentModeValue)
+                                        }
                                     >
                                         <SelectTrigger>
                                             <SelectValue />
                                         </SelectTrigger>
                                         <SelectPopup>
                                             {paymentModeItems.map((item) => (
-                                                <SelectItem key={item.value} value={item.value}>
-                                                    {item.label}
+                                                <SelectItem
+                                                    key={item.value}
+                                                    value={item.value}
+                                                    disabled={item.disabled}
+                                                    title={item.reason ?? undefined}
+                                                >
+                                                    <span className="flex flex-col gap-0.5">
+                                                        <span>{item.label}</span>
+                                                        {item.disabled && item.reason && (
+                                                            <span className="text-xs text-muted-foreground">
+                                                                {item.reason}
+                                                            </span>
+                                                        )}
+                                                    </span>
                                                 </SelectItem>
                                             ))}
                                         </SelectPopup>
                                     </Select>
+                                    {showManualOnlineHint && (
+                                        <FieldDescription>
+                                            {t("Customers will be charged at booking; if you reject a booking, they'll receive an automatic full refund.")}
+                                        </FieldDescription>
+                                    )}
                                     {errors.payment_mode && <FieldError match>{errors.payment_mode}</FieldError>}
                                 </Field>
                             </section>

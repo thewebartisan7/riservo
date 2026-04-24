@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Enums\ConfirmationMode;
+use App\Models\StripeConnectedAccount;
 use Tests\Browser\Support\BusinessSetup;
 
 // Covers: settings.booking, settings.booking.update (E2E-5).
@@ -89,8 +90,12 @@ it('updates reminder_hours to a narrower set', function () {
     expect($business->fresh()->reminder_hours)->toBe([24]);
 });
 
-it('updates payment_mode to online', function () {
+it('updates payment_mode to online when the business has a verified CH connected account', function () {
+    // PAYMENTS Session 5 gate-lift: the `online` option requires the
+    // business to pass canAcceptOnlinePayments(). Seed a CH-active
+    // connected account so the validator accepts the change.
     ['business' => $business, 'admin' => $admin] = BusinessSetup::createLaunchedBusiness();
+    StripeConnectedAccount::factory()->active()->for($business)->create();
 
     $this->actingAs($admin)
         ->put('/dashboard/settings/booking', [

@@ -24,7 +24,7 @@ import {
     SidebarRail,
     SidebarTrigger,
 } from '@/components/ui/sidebar';
-import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { DashboardBanner } from '@/components/dashboard/dashboard-banner';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Display } from '@/components/ui/display';
 import { ToastProvider } from '@/components/ui/toast';
@@ -33,7 +33,6 @@ import { getInitials } from '@/lib/booking-format';
 import { billing as settingsBilling, services as settingsServices } from '@/routes/settings';
 import type { SubscriptionState } from '@/types';
 import {
-    AlertTriangleIcon,
     CalendarDaysIcon,
     ClipboardListIcon,
     HomeIcon,
@@ -207,84 +206,61 @@ export default function AuthenticatedLayout({
                         }
                     >
                         {subscriptionBanner && (
-                            <div
-                                className={
-                                    fullBleed
-                                        ? 'border-b border-border/60 px-5 pb-3 pt-3 sm:px-8'
-                                        : 'mx-auto w-full max-w-6xl px-5 pt-5 sm:px-8 sm:pt-8'
+                            <DashboardBanner
+                                fullBleed={fullBleed}
+                                variant={subscriptionBanner.variant}
+                                testId={subscriptionBanner.testId}
+                                title={subscriptionBanner.title}
+                                description={<p>{subscriptionBanner.description}</p>}
+                                action={
+                                    subscriptionBanner.action ? (
+                                        <Link
+                                            href={settingsBilling().url}
+                                            className={
+                                                subscriptionBanner.variant === 'error'
+                                                    ? 'inline-flex items-center text-xs font-medium uppercase tracking-[0.22em] text-destructive underline-offset-4 hover:underline'
+                                                    : 'inline-flex items-center text-xs font-medium uppercase tracking-[0.22em] text-warning underline-offset-4 hover:underline'
+                                            }
+                                        >
+                                            {subscriptionBanner.action === 'resubscribe'
+                                                ? t('Resubscribe')
+                                                : t('Manage')}
+                                        </Link>
+                                    ) : undefined
                                 }
-                                data-testid={subscriptionBanner.testId}
-                            >
-                                <Alert variant={subscriptionBanner.variant}>
-                                    <AlertTriangleIcon aria-hidden="true" />
-                                    <AlertTitle>{subscriptionBanner.title}</AlertTitle>
-                                    <AlertDescription>
-                                        <p>{subscriptionBanner.description}</p>
-                                    </AlertDescription>
-                                    {subscriptionBanner.action && (
-                                        <AlertAction>
-                                            <Link
-                                                href={settingsBilling().url}
-                                                className={
-                                                    subscriptionBanner.variant === 'error'
-                                                        ? 'inline-flex items-center text-xs font-medium uppercase tracking-[0.22em] text-destructive underline-offset-4 hover:underline'
-                                                        : 'inline-flex items-center text-xs font-medium uppercase tracking-[0.22em] text-warning underline-offset-4 hover:underline'
-                                                }
-                                            >
-                                                {subscriptionBanner.action === 'resubscribe'
-                                                    ? t('Resubscribe')
-                                                    : t('Manage')}
-                                            </Link>
-                                        </AlertAction>
-                                    )}
-                                </Alert>
-                            </div>
+                            />
                         )}
                         {paymentModeMismatch && (
-                            <div
-                                className={
-                                    fullBleed
-                                        ? 'border-b border-border/60 px-5 pb-3 pt-3 sm:px-8'
-                                        : 'mx-auto w-full max-w-6xl px-5 pt-5 sm:px-8 sm:pt-8'
+                            <DashboardBanner
+                                fullBleed={fullBleed}
+                                variant="warning"
+                                testId="payment-mode-mismatch-banner"
+                                title={t('Online payments need attention')}
+                                description={
+                                    <p>
+                                        {t(
+                                            'Your business is set to accept online payments, but your Stripe connected account is not ready yet. Customers trying to pay online will be refused at checkout until this is resolved.',
+                                        )}
+                                    </p>
                                 }
-                                data-testid="payment-mode-mismatch-banner"
-                            >
-                                <Alert variant="warning" role="alert">
-                                    <AlertTriangleIcon aria-hidden="true" />
-                                    <AlertTitle>{t('Online payments need attention')}</AlertTitle>
-                                    <AlertDescription>
-                                        <p>
-                                            {t(
-                                                'Your business is set to accept online payments, but your Stripe connected account is not ready yet. New bookings will fall back to offline until this is resolved.',
-                                            )}
-                                        </p>
-                                    </AlertDescription>
-                                    <AlertAction>
-                                        <Link
-                                            href="/dashboard/settings/connected-account"
-                                            className="inline-flex items-center text-xs font-medium uppercase tracking-[0.22em] text-warning underline-offset-4 hover:underline"
-                                        >
-                                            {t('Resolve in settings')}
-                                        </Link>
-                                    </AlertAction>
-                                </Alert>
-                            </div>
+                                action={
+                                    <Link
+                                        href="/dashboard/settings/connected-account"
+                                        className="inline-flex items-center text-xs font-medium uppercase tracking-[0.22em] text-warning underline-offset-4 hover:underline"
+                                    >
+                                        {t('Resolve in settings')}
+                                    </Link>
+                                }
+                            />
                         )}
                         {unbookableServices.length > 0 && (
-                            <div
-                                className={
-                                    fullBleed
-                                        ? 'border-b border-border/60 px-5 pb-3 pt-3 sm:px-8'
-                                        : 'mx-auto w-full max-w-6xl px-5 pt-5 sm:px-8 sm:pt-8'
-                                }
-                                data-testid="unbookable-banner"
-                            >
-                                <Alert variant="warning">
-                                    <AlertTriangleIcon aria-hidden="true" />
-                                    <AlertTitle>
-                                        {t("Some services can't be booked yet")}
-                                    </AlertTitle>
-                                    <AlertDescription>
+                            <DashboardBanner
+                                fullBleed={fullBleed}
+                                variant="warning"
+                                testId="unbookable-banner"
+                                title={t("Some services can't be booked yet")}
+                                description={
+                                    <>
                                         <p>
                                             {t(
                                                 "Customers can't see these services until a provider with available hours is assigned:",
@@ -295,17 +271,17 @@ export default function AuthenticatedLayout({
                                                 .map((service) => service.name)
                                                 .join(', ')}
                                         </p>
-                                    </AlertDescription>
-                                    <AlertAction>
-                                        <Link
-                                            href={settingsServices().url}
-                                            className="inline-flex items-center text-xs font-medium uppercase tracking-[0.22em] text-warning underline-offset-4 hover:underline"
-                                        >
-                                            {t('Fix')}
-                                        </Link>
-                                    </AlertAction>
-                                </Alert>
-                            </div>
+                                    </>
+                                }
+                                action={
+                                    <Link
+                                        href={settingsServices().url}
+                                        className="inline-flex items-center text-xs font-medium uppercase tracking-[0.22em] text-warning underline-offset-4 hover:underline"
+                                    >
+                                        {t('Fix')}
+                                    </Link>
+                                }
+                            />
                         )}
                         {fullBleed ? (
                             <div className="flex min-h-0 flex-1 flex-col animate-rise">
