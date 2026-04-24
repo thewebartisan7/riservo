@@ -7,6 +7,10 @@
 # {{ __('Payment received') }}
 
 {{ __('We received your payment. **:business** will confirm your booking shortly. If they cannot accept it, you will receive an automatic full refund.', ['business' => $businessName]) }}
+@elseif ($context === 'pending_unpaid_awaiting_confirmation')
+# {{ __('Booking request received') }}
+
+{{ __('Your booking request at **:business** has been received and is pending their confirmation. Your online payment did not complete — if the business accepts your booking, you can pay at the appointment.', ['business' => $businessName]) }}
 @else
 # {{ __('New Booking Received') }}
 

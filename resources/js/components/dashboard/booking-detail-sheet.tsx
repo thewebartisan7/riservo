@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { router, useHttp } from '@inertiajs/react';
 import { updateStatus, updateNotes } from '@/actions/App/Http/Controllers/Dashboard/BookingController';
+import { resolve as resolvePaymentPendingAction } from '@/actions/App/Http/Controllers/Dashboard/PaymentPendingActionController';
 import { useTrans } from '@/hooks/use-trans';
 import {
     Sheet,
@@ -15,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Display } from '@/components/ui/display';
 import { BookingStatusBadge, BookingSourceBadge } from './booking-status-badge';
+import { PaymentStatusBadge } from './payment-status-badge';
 import { formatDateTimeMedium, formatTimeShort } from '@/lib/datetime-format';
 import { formatPrice, formatDurationShort } from '@/lib/booking-format';
 import { CalendarDaysIcon, ExternalLinkIcon } from 'lucide-react';
@@ -106,6 +108,36 @@ export default function BookingDetailSheet({
         setEditingNotes(true);
     }
 
+    // PAYMENTS Session 2b — admin-only payment surfaces. Staff don't see
+    // the panel or the banner; the server payload still carries them but
+    // the UI gates rendering on admin context via the Sheet's caller.
+    const payment = booking?.payment;
+    const pendingPaymentAction = booking?.pending_payment_action ?? null;
+    const paidAmountFormatted =
+        payment && payment.paid_amount_cents !== null && payment.currency !== null
+            ? `${payment.currency.toUpperCase()} ${(payment.paid_amount_cents / 100).toFixed(2)}`
+            : null;
+    const stripeDashboardDeepLink =
+        payment && payment.stripe_connected_account_id
+            ? payment.stripe_charge_id
+                ? `https://dashboard.stripe.com/${payment.stripe_connected_account_id}/payments/${payment.stripe_charge_id}`
+                : payment.stripe_payment_intent_id
+                    ? `https://dashboard.stripe.com/${payment.stripe_connected_account_id}/payments/${payment.stripe_payment_intent_id}`
+                    : null
+            : null;
+
+    function handleResolvePendingAction() {
+        if (!pendingPaymentAction) return;
+        router.patch(
+            resolvePaymentPendingAction.url(pendingPaymentAction.id),
+            {},
+            {
+                preserveScroll: true,
+                onSuccess: () => onOpenChange(false),
+            },
+        );
+    }
+
     return (
         <Sheet open={open} onOpenChange={onOpenChange}>
             <SheetPopup side="right" className="w-full sm:max-w-md">
@@ -133,6 +165,28 @@ export default function BookingDetailSheet({
                 </SheetHeader>
 
                 <div className="flex flex-col gap-6 border-t border-border/60 px-6 py-6">
+                    {pendingPaymentAction && (
+                        <div
+                            role="alert"
+                            className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/8 px-4 py-3 text-sm text-warning-foreground"
+                        >
+                            <p className="font-medium">
+                                {pendingPaymentAction.type === 'payment.cancelled_after_payment'
+                                    ? t('A cancelled booking was paid after the fact. A refund has been dispatched — reach out to the customer to confirm.')
+                                    : t('The automatic refund for this booking could not be processed. Resolve in Stripe, then mark as resolved here.')}
+                            </p>
+                            <div>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleResolvePendingAction}
+                                >
+                                    {t('Mark as resolved')}
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+
                     <Meta label={t('When')}>
                         <div className="flex items-baseline gap-2">
                             <Display className="font-display tabular-nums text-base font-semibold">
@@ -192,6 +246,50 @@ export default function BookingDetailSheet({
                                 <p className="text-xs text-muted-foreground">
                                     {booking.customer.phone}
                                 </p>
+                            )}
+                        </Meta>
+                    )}
+
+                    {payment && payment.status !== 'not_applicable' && (
+                        <Meta label={t('Payment')}>
+                            <div className="flex items-center gap-2">
+                                <PaymentStatusBadge status={payment.status} />
+                                {paidAmountFormatted && (
+                                    <span className="text-sm font-medium tabular-nums">
+                                        {paidAmountFormatted}
+                                    </span>
+                                )}
+                            </div>
+                            {payment.status === 'awaiting_payment' && (
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                    {t('Customer was sent to Stripe Checkout; booking confirms when payment settles.')}
+                                </p>
+                            )}
+                            {payment.status === 'unpaid' && (
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                    {t('Customer attempted online payment but did not complete — payment due at the appointment.')}
+                                </p>
+                            )}
+                            {payment.status === 'paid' && booking.status === 'pending' && (
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                    {t('Payment received. Confirming the booking finalises the transaction; rejecting it triggers an automatic full refund.')}
+                                </p>
+                            )}
+                            {payment.status === 'refund_failed' && (
+                                <p className="mt-1 text-xs text-destructive-foreground">
+                                    {t('Stripe refused the automatic refund. See the banner above to resolve.')}
+                                </p>
+                            )}
+                            {stripeDashboardDeepLink && (
+                                <a
+                                    href={stripeDashboardDeepLink}
+                                    target="_blank"
+                                    rel="noreferrer noopener"
+                                    className="mt-1 inline-flex items-center gap-1.5 text-xs font-medium text-foreground underline-offset-4 hover:underline"
+                                >
+                                    {t('Open in Stripe')}
+                                    <ExternalLinkIcon aria-hidden="true" className="size-3.5" />
+                                </a>
                             )}
                         </Meta>
                     )}

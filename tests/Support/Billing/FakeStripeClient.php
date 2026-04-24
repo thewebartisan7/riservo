@@ -8,6 +8,8 @@ use Stripe\Account as StripeAccount;
 use Stripe\AccountLink as StripeAccountLink;
 use Stripe\BillingPortal\Session as StripeBillingPortalSession;
 use Stripe\Checkout\Session as StripeCheckoutSession;
+use Stripe\Exception\PermissionException;
+use Stripe\Refund as StripeRefund;
 use Stripe\StripeClient;
 use Tests\TestCase;
 
@@ -39,6 +41,8 @@ class FakeStripeClient
     private ?MockInterface $accounts = null;
 
     private ?MockInterface $accountLinks = null;
+
+    private ?MockInterface $refunds = null;
 
     public function __construct()
     {
@@ -418,11 +422,89 @@ class FakeStripeClient
 
         $this->checkoutSessions
             ->shouldReceive('retrieve')
-            ->withArgs(function ($id, $opts = []) use ($expectedAccountId, $sessionId) {
+            ->withArgs(function ($id, $params = null, $opts = null) use ($expectedAccountId, $sessionId) {
+                // Codex Round 3 (F1): Stripe SDK signature is
+                // `retrieve($id, $params, $opts)`. The `stripe_account`
+                // header MUST ride on the 3rd arg. Passing it as the 2nd
+                // arg drops the header in production. Assert strictly:
+                // $params === null and $opts carries the header.
                 return $id === $sessionId
-                    && $this->assertConnectedAccountLevel((array) $opts, $expectedAccountId);
+                    && $params === null
+                    && is_array($opts)
+                    && $this->assertConnectedAccountLevel($opts, $expectedAccountId);
             })
             ->andReturn($session);
+
+        return $this;
+    }
+
+    /**
+     * Stub `$stripe->refunds->create([...], ['stripe_account' => $acct,
+     * 'idempotency_key' => 'riservo_refund_{uuid}'])` per locked roadmap
+     * decision #36.
+     *
+     * Asserts:
+     *  - the `stripe_account` per-request option is PRESENT and matches;
+     *  - `$opts['idempotency_key']` starts with `'riservo_refund_'`;
+     *  - when `$expectedIdempotencyKeyExact !== null`, the key matches
+     *    exactly (use this in tests that need to tie the call back to a
+     *    specific `booking_refunds.uuid`).
+     *
+     * @param  array<string, mixed>  $response
+     */
+    public function mockRefundCreate(
+        string $expectedAccountId,
+        ?string $expectedIdempotencyKeyExact = null,
+        array $response = [],
+    ): self {
+        $this->ensureRefunds();
+
+        $id = (string) ($response['id'] ?? 're_test_'.uniqid());
+        $refund = StripeRefund::constructFrom(array_merge([
+            'id' => $id,
+            'status' => 'succeeded',
+            'amount' => 5000,
+            'currency' => 'chf',
+        ], $response));
+
+        $this->refunds
+            ->shouldReceive('create')
+            ->withArgs(function ($params, $opts = []) use ($expectedAccountId, $expectedIdempotencyKeyExact) {
+                if (! $this->assertConnectedAccountLevel((array) $opts, $expectedAccountId)) {
+                    return false;
+                }
+                $key = $opts['idempotency_key'] ?? null;
+                if (! is_string($key) || ! str_starts_with($key, 'riservo_refund_')) {
+                    return false;
+                }
+                if ($expectedIdempotencyKeyExact !== null && $key !== $expectedIdempotencyKeyExact) {
+                    return false;
+                }
+
+                return true;
+            })
+            ->andReturn($refund);
+
+        return $this;
+    }
+
+    /**
+     * Stub `$stripe->refunds->create(...)` to throw a Stripe permission
+     * error — used to exercise the disconnected-account fallback path in
+     * `RefundService::refund` (locked roadmap decision #36).
+     */
+    public function mockRefundCreateFails(
+        string $expectedAccountId,
+        string $message = 'This account does not have permission to perform this operation.',
+    ): self {
+        $this->ensureRefunds();
+
+        $this->refunds
+            ->shouldReceive('create')
+            ->withArgs(function ($params, $opts = []) use ($expectedAccountId) {
+                return $this->assertConnectedAccountLevel((array) $opts, $expectedAccountId);
+            })
+            ->andThrow(new PermissionException($message));
 
         return $this;
     }
@@ -502,5 +584,15 @@ class FakeStripeClient
 
         $this->customers = Mockery::mock();
         $this->client->customers = $this->customers;
+    }
+
+    private function ensureRefunds(): void
+    {
+        if ($this->refunds !== null) {
+            return;
+        }
+
+        $this->refunds = Mockery::mock();
+        $this->client->refunds = $this->refunds;
     }
 }

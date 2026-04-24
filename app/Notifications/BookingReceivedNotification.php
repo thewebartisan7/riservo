@@ -37,12 +37,22 @@ class BookingReceivedNotification extends Notification implements ShouldQueue
         // `pending + paid`. The customer has paid BUT the business still has
         // to approve; the notification must make that contract explicit so
         // the customer isn't surprised by a refund if the admin rejects.
+        // PAYMENTS Session 2b: `pending_unpaid_awaiting_confirmation` is the
+        // context for customer_choice + manual-confirm bookings whose Checkout
+        // failed (locked decision #29 variant + #14). The customer didn't pay
+        // but the booking is pending confirmation; they can pay at the
+        // appointment if accepted. Distinct from `paid_awaiting_confirmation`
+        // which promises a refund on rejection — here there's nothing to
+        // refund.
         $subject = match ($this->context) {
             'confirmed' => __('Booking Confirmed — :service on :date', [
                 'service' => $this->booking->service->name,
                 'date' => $startsAt->format('d.m.Y'),
             ]),
             'paid_awaiting_confirmation' => __('Payment received — :business will confirm your booking', [
+                'business' => $business->name,
+            ]),
+            'pending_unpaid_awaiting_confirmation' => __('Booking request received — :business will confirm', [
                 'business' => $business->name,
             ]),
             default => __('New Booking — :service on :date', [

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\BookingRefundStatus;
 use App\Enums\BookingSource;
 use App\Enums\BookingStatus;
 use App\Enums\PaymentStatus;
@@ -115,6 +116,26 @@ class Booking extends Model
         return $this->hasMany(BookingReminder::class);
     }
 
+    /** @return HasMany<BookingRefund, $this> */
+    public function bookingRefunds(): HasMany
+    {
+        return $this->hasMany(BookingRefund::class);
+    }
+
+    /**
+     * Pending Actions scoped to this booking. PAYMENTS Session 2b reads this
+     * through a type-bucket filter (`PaymentCancelledAfterPayment` +
+     * `PaymentRefundFailed`) on the dashboard booking-detail sheet;
+     * calendar-typed PAs exist on the same table (D-113) but are not
+     * surfaced here — they're owned by `CalendarPendingActionController`.
+     *
+     * @return HasMany<PendingAction, $this>
+     */
+    public function pendingActions(): HasMany
+    {
+        return $this->hasMany(PendingAction::class);
+    }
+
     /**
      * Whether this booking should push to the provider's external calendar.
      *
@@ -184,13 +205,30 @@ class Booking extends Model
 
     /**
      * Refund clamp per locked decision #37: refunds are always computed from
-     * `paid_amount_cents`, never from `Service.price`. Session 2a returns
-     * the raw column; Session 2b expands to subtract
-     * SUM(booking_refunds.amount_cents WHERE status IN (pending, succeeded))
-     * once that table lands.
+     * `paid_amount_cents`, never from `Service.price`. Session 2b expands the
+     * Session 2a stub to subtract in-flight + succeeded refund attempts, so
+     * partial-refund UIs (Session 3) and the late-webhook refund path
+     * (Session 2b's `RefundService`) can safely sum against this clamp
+     * without double-counting.
+     *
+     * Failed refund attempts do NOT reduce the clamp — the money never left
+     * the connected account, so it's still refundable via a fresh attempt.
+     *
+     * The `max(0, …)` guard is defensive: a stray over-refund row (duplicate
+     * insert, partial migration, manual DB edit) shouldn't surface as a
+     * negative refundable amount to a downstream caller.
      */
     public function remainingRefundableCents(): int
     {
-        return $this->paid_amount_cents ?? 0;
+        $paid = $this->paid_amount_cents ?? 0;
+
+        $consumed = (int) $this->bookingRefunds()
+            ->whereIn('status', [
+                BookingRefundStatus::Pending->value,
+                BookingRefundStatus::Succeeded->value,
+            ])
+            ->sum('amount_cents');
+
+        return max(0, $paid - $consumed);
     }
 }

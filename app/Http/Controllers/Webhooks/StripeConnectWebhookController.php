@@ -2,21 +2,33 @@
 
 namespace App\Http\Controllers\Webhooks;
 
+use App\Enums\BookingStatus;
+use App\Enums\ConfirmationMode;
 use App\Enums\PaymentMode;
 use App\Enums\PaymentStatus;
 use App\Enums\PendingActionStatus;
 use App\Enums\PendingActionType;
+use App\Jobs\Calendar\PushBookingToCalendarJob;
 use App\Models\Booking;
 use App\Models\PendingAction;
 use App\Models\StripeConnectedAccount;
+use App\Notifications\BookingConfirmedNotification;
+use App\Notifications\BookingReceivedNotification;
+use App\Notifications\Payments\CancelledAfterPaymentNotification;
 use App\Services\Payments\CheckoutPromoter;
+use App\Services\Payments\RefundResult;
+use App\Services\Payments\RefundService;
 use App\Support\Billing\DedupesStripeWebhookEvents;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Notification;
 use Stripe\Checkout\Session as StripeCheckoutSession;
 use Stripe\Event as StripeEvent;
+use Stripe\Exception\ApiConnectionException;
+use Stripe\Exception\ApiErrorException;
+use Stripe\Exception\RateLimitException;
 use Stripe\Exception\SignatureVerificationException;
 use Stripe\StripeClient;
 use Stripe\Webhook as StripeWebhook;
@@ -58,6 +70,7 @@ class StripeConnectWebhookController
     public function __construct(
         private readonly StripeClient $stripe,
         private readonly CheckoutPromoter $checkoutPromoter,
+        private readonly RefundService $refundService,
     ) {}
 
     public function __invoke(Request $request): Response
@@ -131,6 +144,23 @@ class StripeConnectWebhookController
             // the promotion path.
             'checkout.session.completed',
             'checkout.session.async_payment_succeeded' => $this->handleCheckoutSessionCompleted($event),
+            // PAYMENTS Session 2b: failure-branching. `online` bookings get
+            // cancelled (slot released via GIST); `customer_choice` bookings
+            // are promoted to `Confirmed + Unpaid` (or `Pending + Unpaid`
+            // under manual-confirm per locked decision #29) — slot stays
+            // held. Locked decision #14 binds the branching.
+            //
+            // Codex Round 1 (F1): `payment_intent.*` arms were dropped.
+            // Bookings persist `stripe_payment_intent_id` only at promotion
+            // time (Session 2a happy-path handler or `applyLateWebhookRefund`
+            // below), so resolving a booking from a PI id in the failure
+            // or late-success case would return null. The two Checkout-
+            // level events below cover every case we handle today — both
+            // carry `client_reference_id` and resolve deterministically.
+            // The late-webhook refund path is still live via the
+            // Cancelled-branch inside `handleCheckoutSessionCompleted`.
+            'checkout.session.expired',
+            'checkout.session.async_payment_failed' => $this->handleCheckoutSessionFailed($event),
             default => new Response('Webhook unhandled.', 200),
         };
     }
@@ -544,6 +574,53 @@ class StripeConnectWebhookController
             return new Response('Cross-account mismatch.', 200);
         }
 
+        // PAYMENTS Session 2b: late-webhook refund path (locked decision
+        // #31.3). If the reaper already cancelled this booking but the
+        // Checkout session eventually completed, route to the refund
+        // branch — `CheckoutPromoter::promote` would otherwise reject via
+        // its session-id / DB-state guard (booking is Cancelled + not
+        // AwaitingPayment) which surfaces as a misleading `'mismatch'`
+        // critical log.
+        //
+        // Codex Round 2 (F2): the Cancelled-branch check runs BEFORE the
+        // generic "already paid" short-circuit. On a retry after a
+        // transient Stripe error during `RefundService::refund`, the
+        // booking is `Cancelled + Paid` with a `booking_refunds` row
+        // sitting at `pending`; `applyLateWebhookRefund` plus the
+        // service's pending-row-reuse path will retry the refund with the
+        // same UUID so Stripe's idempotency key collapses the duplicate.
+        //
+        // Codex Round 4 (F2): the happy-path promotion routes through
+        // `CheckoutPromoter::promote` which enforces the D-156 session-id
+        // match. The Cancelled-branch bypasses the promoter, so it must
+        // enforce the same trust boundary here — a cross-session-id
+        // `client_reference_id` collision on the same connected account
+        // could otherwise mark the wrong cancelled booking Paid + refund.
+        if ($booking->status === BookingStatus::Cancelled) {
+            $sessionId = is_string($session->id ?? null) ? $session->id : null;
+            if ($sessionId === null
+                || $booking->stripe_checkout_session_id === null
+                || $sessionId !== $booking->stripe_checkout_session_id) {
+                Log::critical('Connect checkout.session.completed (Cancelled-branch): session id mismatch — refusing to refund', [
+                    'event_id' => $event->id,
+                    'booking_id' => $booking->id,
+                    'session_id' => $sessionId,
+                    'expected_session_id' => $booking->stripe_checkout_session_id,
+                ]);
+
+                return new Response('Session id mismatch.', 200);
+            }
+
+            return $this->applyLateWebhookRefund(
+                $booking,
+                $session->payment_intent,
+                $session->amount_total,
+                $session->currency,
+                $session->latest_charge ?? null,
+                $event->id,
+            );
+        }
+
         // Outcome-level fast path before touching the promoter: if the
         // booking is already Paid, short-circuit without locking. The
         // promoter re-checks under a lock for race-safety regardless.
@@ -554,6 +631,459 @@ class StripeConnectWebhookController
         $this->checkoutPromoter->promote($booking, $session);
 
         return new Response('OK', 200);
+    }
+
+    /**
+     * PAYMENTS Session 2b: Checkout-side failure events for the same booking
+     * shape the happy-path handler saw — `checkout.session.expired` and
+     * `checkout.session.async_payment_failed`.
+     *
+     * Branching on `payment_mode_at_creation` per locked decision #14:
+     *  - `'online'` → Cancel the booking (slot releases via the GIST
+     *     exclusion on status IN (pending, confirmed)). No notifications.
+     *  - `'customer_choice'` → Promote to `Confirmed + Unpaid` (or
+     *     `Pending + Unpaid` under manual-confirm per locked decision #29).
+     *     Slot stays held; the customer pays at the appointment. Standard
+     *     booking-confirmed notifications fire (or the pending-awaiting-
+     *     confirmation variant for manual).
+     *  - `'offline'` → defensive: a Checkout session should never exist for
+     *     an offline-at-creation booking. Log critical + 200.
+     */
+    private function handleCheckoutSessionFailed(StripeEvent $event): Response
+    {
+        $session = $event->data->object ?? null;
+
+        if (! $session instanceof StripeCheckoutSession) {
+            Log::warning('Connect checkout.session failure: data.object is not a Checkout Session', [
+                'event_id' => $event->id,
+                'event_type' => $event->type,
+            ]);
+
+            return new Response('Invalid session payload.', 200);
+        }
+
+        $bookingRef = $session->client_reference_id ?? null;
+        if (! is_string($bookingRef) || ! ctype_digit($bookingRef)) {
+            Log::warning('Connect checkout.session failure missing or non-numeric client_reference_id', [
+                'event_id' => $event->id,
+                'event_type' => $event->type,
+                'session_id' => $session->id ?? null,
+            ]);
+
+            return new Response('Missing client_reference_id.', 200);
+        }
+
+        $booking = Booking::find((int) $bookingRef);
+        if ($booking === null) {
+            Log::critical('Connect checkout.session failure for unknown booking id — manual reconciliation required', [
+                'event_id' => $event->id,
+                'event_type' => $event->type,
+                'session_id' => $session->id ?? null,
+                'client_reference_id' => $bookingRef,
+            ]);
+
+            return new Response('Unknown booking.', 200);
+        }
+
+        // D-158 cross-account guard mirrors the happy-path handler.
+        $expectedAccountId = $booking->stripe_connected_account_id;
+        $sessionAccountId = $session->account ?? ($event->account ?? null);
+
+        if (! is_string($expectedAccountId) || $expectedAccountId === '' || $sessionAccountId !== $expectedAccountId) {
+            Log::critical('Connect checkout.session failure cross-account mismatch — refusing to act', [
+                'event_id' => $event->id,
+                'event_type' => $event->type,
+                'booking_id' => $booking->id,
+                'session_account' => $sessionAccountId,
+                'expected_account' => $expectedAccountId,
+            ]);
+
+            return new Response('Cross-account mismatch.', 200);
+        }
+
+        // Codex Round 4 (F3): session-id trust boundary — mirrors the
+        // D-156 guard that `CheckoutPromoter::promote` enforces on the
+        // happy-path. An unrelated Checkout session on the same account
+        // with a colliding `client_reference_id` could otherwise cancel
+        // or promote the wrong booking.
+        $sessionId = is_string($session->id ?? null) ? $session->id : null;
+        if ($sessionId === null
+            || $booking->stripe_checkout_session_id === null
+            || $sessionId !== $booking->stripe_checkout_session_id) {
+            Log::critical('Connect checkout.session failure: session id mismatch — refusing to act', [
+                'event_id' => $event->id,
+                'event_type' => $event->type,
+                'booking_id' => $booking->id,
+                'session_id' => $sessionId,
+                'expected_session_id' => $booking->stripe_checkout_session_id,
+            ]);
+
+            return new Response('Session id mismatch.', 200);
+        }
+
+        return $this->applyCheckoutFailureBranch($booking, $event->id);
+    }
+
+    /**
+     * Shared branch-on-snapshot body for Checkout-side failure events.
+     * Outcome-level guards at the top; `DB::transaction + lockForUpdate`
+     * around the write; notifications dispatched OUTSIDE the lock per the
+     * D-151 shape.
+     */
+    private function applyCheckoutFailureBranch(Booking $booking, string $eventId): Response
+    {
+        // Outcome-level idempotency (locked decision #33). Already-paid,
+        // already-cancelled, and already-unpaid bookings are all terminal
+        // for this flow.
+        if ($booking->payment_status === PaymentStatus::Paid) {
+            return new Response('Already paid.', 200);
+        }
+
+        if ($booking->status === BookingStatus::Cancelled) {
+            return new Response('Already cancelled.', 200);
+        }
+
+        // Codex Round 4 (F4): `customer_choice` failure branches land the
+        // booking at `Confirmed/Pending + Unpaid`. That state is terminal
+        // for this flow — a replay (fresh event id after the 24h dedup
+        // cache TTL expires) must NOT re-dispatch the customer + staff
+        // notifications. The cache-layer dedup catches same-id replays;
+        // the outcome-level guard catches fresh-id replays.
+        if ($booking->payment_status === PaymentStatus::Unpaid) {
+            return new Response('Already unpaid (customer_choice failure handled).', 200);
+        }
+
+        $mode = $booking->payment_mode_at_creation;
+
+        if ($mode === 'offline') {
+            // Defensive: a Checkout session should never exist for an
+            // offline-at-creation booking. Surface critical for operator
+            // investigation; do not act.
+            Log::critical('Connect Checkout failure for a booking with payment_mode_at_creation=offline — data anomaly', [
+                'event_id' => $eventId,
+                'booking_id' => $booking->id,
+            ]);
+
+            return new Response('Unexpected offline snapshot.', 200);
+        }
+
+        $targetStatus = null;
+        $targetPaymentStatus = null;
+        $promoted = null;
+
+        DB::transaction(function () use ($booking, $mode, &$targetStatus, &$targetPaymentStatus, &$promoted): void {
+            $locked = Booking::query()
+                ->whereKey($booking->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($locked === null) {
+                return;
+            }
+
+            // Re-check outcome inside the lock (concurrent reaper cancel or
+            // concurrent success-page promotion may have moved the row).
+            if ($locked->payment_status === PaymentStatus::Paid) {
+                return;
+            }
+
+            if ($locked->status === BookingStatus::Cancelled) {
+                return;
+            }
+
+            if ($mode === 'online') {
+                $targetStatus = BookingStatus::Cancelled;
+                $targetPaymentStatus = PaymentStatus::NotApplicable;
+            } else {
+                // customer_choice branch: locked decision #14 + #29.
+                $targetStatus = $locked->business->confirmation_mode === ConfirmationMode::Manual
+                    ? BookingStatus::Pending
+                    : BookingStatus::Confirmed;
+                $targetPaymentStatus = PaymentStatus::Unpaid;
+            }
+
+            $locked->forceFill([
+                'status' => $targetStatus,
+                'payment_status' => $targetPaymentStatus,
+                'expires_at' => null,
+            ])->save();
+
+            $promoted = $locked;
+        });
+
+        if ($promoted !== null && $mode === 'customer_choice') {
+            $this->dispatchCustomerChoiceFailureNotifications($promoted);
+        }
+
+        return new Response('OK', 200);
+    }
+
+    /**
+     * Locked decision #14 + #29: customer_choice bookings landing at
+     * `Confirmed + Unpaid` or `Pending + Unpaid` notify as if they were
+     * real bookings (they are — the customer committed to the slot).
+     *
+     * - Confirmed: customer gets `BookingConfirmedNotification`; staff gets
+     *   `BookingReceivedNotification('new')`.
+     * - Pending: staff gets `BookingReceivedNotification('new')`; customer
+     *   gets `BookingReceivedNotification('pending_unpaid_awaiting_
+     *   confirmation')` — distinct from the paid-variant which promises
+     *   a refund on rejection, whereas here there's nothing to refund.
+     */
+    private function dispatchCustomerChoiceFailureNotifications(Booking $booking): void
+    {
+        $booking->loadMissing(['customer', 'business.admins', 'provider.user', 'service']);
+
+        // Codex Round 3 (F4): a customer_choice booking that lands at
+        // `Confirmed + Unpaid` via the failure branch is a real booking
+        // from the provider's perspective — the slot is held and the
+        // customer will show up to pay. MVPC-2's outbound Google Calendar
+        // sync pushes Confirmed bookings on the create path
+        // (`PublicBookingController::store`) and on admin-approval
+        // (`Dashboard\BookingController::updateStatus`). This path must
+        // match — `shouldPushToCalendar()` folds in the integration +
+        // source gates (D-083 + D-088). Pending-under-manual-confirm
+        // doesn't push here; it'll push on admin approval, same as every
+        // other pending booking.
+        if ($booking->status === BookingStatus::Confirmed && $booking->shouldPushToCalendar()) {
+            PushBookingToCalendarJob::dispatch($booking->id, 'create');
+        }
+
+        if ($booking->shouldSuppressCustomerNotifications()) {
+            return;
+        }
+
+        $customer = $booking->customer;
+
+        if ($booking->status === BookingStatus::Confirmed) {
+            if ($customer !== null) {
+                Notification::route('mail', $customer->email)
+                    ->notify(new BookingConfirmedNotification($booking));
+            }
+            $this->notifyStaff($booking, new BookingReceivedNotification($booking, 'new'));
+
+            return;
+        }
+
+        // Pending + Unpaid: manual-confirm + customer_choice + failed Checkout.
+        if ($customer !== null) {
+            Notification::route('mail', $customer->email)
+                ->notify(new BookingReceivedNotification($booking, 'pending_unpaid_awaiting_confirmation'));
+        }
+        $this->notifyStaff($booking, new BookingReceivedNotification($booking, 'new'));
+    }
+
+    private function notifyStaff(Booking $booking, BookingReceivedNotification $notification): void
+    {
+        $staffUsers = $booking->business->admins
+            ->when($booking->provider?->user, fn ($c) => $c->merge([$booking->provider->user]))
+            ->unique('id');
+
+        Notification::send($staffUsers, $notification);
+    }
+
+    /**
+     * Late-webhook refund body (locked decision #31.3). Called from the
+     * Cancelled-branch inside `handleCheckoutSessionCompleted` —
+     * `payment_intent.succeeded` is NOT a caller as of Codex Round 1 F1
+     * (the PI id is null on bookings pre-promotion, so a PI-keyed lookup
+     * cannot resolve a reaper-cancelled booking). The Checkout-level
+     * event carries `client_reference_id` and resolves reliably.
+     *
+     * Steps:
+     *  1. `DB::transaction + lockForUpdate`: flip booking to Paid, populate
+     *     charge columns. Booking stays `Cancelled` (the slot may be re-
+     *     booked).
+     *  2. Dispatch `RefundService::refund($booking, null, 'cancelled-after-
+     *     payment')` — the service inserts a booking_refunds row with a
+     *     UUID idempotency key, calls Stripe, writes the outcome.
+     *  3. Upsert a `payment.cancelled_after_payment` Pending Action
+     *     (admin-visible).
+     *  4. Dispatch `CancelledAfterPaymentNotification` to admins.
+     */
+    private function applyLateWebhookRefund(
+        Booking $booking,
+        mixed $paymentIntentId,
+        mixed $amountCents,
+        mixed $currency,
+        mixed $chargeId,
+        string $eventId,
+    ): Response {
+        // Defensive shape checks — Stripe's PHP SDK usually constructs
+        // these, but the tolerant webhook-testing path (missing secret)
+        // goes through json_decode which loses the type hints.
+        $piId = is_string($paymentIntentId) ? $paymentIntentId : null;
+        $amount = is_int($amountCents) ? $amountCents : (int) $amountCents;
+        $currencyLower = is_string($currency) ? strtolower($currency) : null;
+        $chargeIdValue = is_string($chargeId) ? $chargeId : null;
+
+        if ($piId === null || $amount <= 0 || $currencyLower === null) {
+            Log::warning('Connect late-webhook refund: insufficient payload to act', [
+                'event_id' => $eventId,
+                'booking_id' => $booking->id,
+                'payment_intent_id' => $paymentIntentId,
+                'amount_cents' => $amountCents,
+                'currency' => $currency,
+            ]);
+
+            return new Response('Insufficient payload.', 200);
+        }
+
+        $shouldDispatchRefund = false;
+
+        DB::transaction(function () use ($booking, $piId, $amount, $currencyLower, $chargeIdValue, &$shouldDispatchRefund): void {
+            $locked = Booking::query()
+                ->whereKey($booking->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($locked === null) {
+                return;
+            }
+
+            if ($locked->status !== BookingStatus::Cancelled) {
+                return;
+            }
+
+            // Codex Round 2 (F2): a terminal refund outcome (Refunded,
+            // RefundFailed) short-circuits — either success or operator
+            // has been notified. But a retry after a TRANSIENT Stripe
+            // error lands here with `payment_status = Paid` and a
+            // `booking_refunds` row still at `pending`; that path re-
+            // dispatches the refund so Stripe's idempotency key (same
+            // row UUID) collapses the duplicate.
+            if ($locked->payment_status === PaymentStatus::Refunded
+                || $locked->payment_status === PaymentStatus::RefundFailed) {
+                return;
+            }
+
+            if ($locked->payment_status === PaymentStatus::Paid) {
+                // Codex Round 4 (F1): dispatch whenever we're not at a
+                // terminal refund outcome — NOT only when a pending row
+                // already exists. If the process crashed after the
+                // Paid-flip transaction committed but before
+                // RefundService inserted its row, a replay finds Paid +
+                // no row and must still dispatch (the service's
+                // retry-path lookup handles both "existing pending row"
+                // and "fresh insert" transparently). Gating on row-
+                // presence leaves the customer permanently charged.
+                $shouldDispatchRefund = true;
+
+                return;
+            }
+
+            $locked->forceFill([
+                'payment_status' => PaymentStatus::Paid,
+                'stripe_payment_intent_id' => $piId,
+                'stripe_charge_id' => $chargeIdValue,
+                'paid_amount_cents' => $amount,
+                'currency' => $currencyLower,
+                'paid_at' => now(),
+            ])->save();
+
+            $shouldDispatchRefund = true;
+        });
+
+        if (! $shouldDispatchRefund) {
+            // Either the booking was already refunded/refund_failed or not
+            // in the right shape; guards inside the transaction logged as
+            // needed.
+            return new Response('OK', 200);
+        }
+
+        $booking = $booking->fresh() ?? $booking;
+
+        try {
+            $result = $this->refundService->refund($booking, null, 'cancelled-after-payment');
+        } catch (ApiConnectionException|RateLimitException|ApiErrorException $e) {
+            // Transient Stripe error — `RefundService` left the row at
+            // `pending`, ready for retry with the same UUID. Return 5xx
+            // so Stripe re-delivers this webhook; the next delivery will
+            // land on the `Paid + pending refund row` branch above and
+            // re-dispatch with the same idempotency key.
+            Log::warning('Connect late-webhook refund: transient Stripe error on refunds.create — returning 503 to force Stripe retry', [
+                'event_id' => $eventId,
+                'booking_id' => $booking->id,
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+
+            return new Response('Transient Stripe error — retry.', 503, ['Retry-After' => '60']);
+        }
+
+        if ($result->bookingRefund !== null) {
+            $this->upsertCancelledAfterPaymentPendingAction($booking, $result);
+            $this->dispatchCancelledAfterPaymentEmail($booking, $result);
+        }
+
+        return new Response('OK', 200);
+    }
+
+    /**
+     * One `payment.cancelled_after_payment` Pending Action per booking.
+     * `updateOrCreate` on `(business_id, type, payload->>booking_id)` is
+     * the idempotency key; replays of the same event id (or fresh ids on
+     * an already-refunded booking) converge on the existing row.
+     */
+    private function upsertCancelledAfterPaymentPendingAction(
+        Booking $booking,
+        RefundResult $result,
+    ): void {
+        $row = $result->bookingRefund;
+        if ($row === null) {
+            return;
+        }
+
+        $payload = [
+            'booking_id' => $booking->id,
+            'booking_refund_id' => $row->id,
+            'customer_name' => $booking->customer?->name,
+            'customer_email' => $booking->customer?->email,
+            'customer_phone' => $booking->customer?->phone,
+            'amount_cents' => $row->amount_cents,
+            'currency' => $row->currency,
+            'starts_at' => $booking->starts_at->toIso8601String(),
+            'refund_outcome' => $result->outcome,
+            'stripe_refund_id' => $row->stripe_refund_id,
+        ];
+
+        $existing = PendingAction::where('business_id', $booking->business_id)
+            ->where('type', PendingActionType::PaymentCancelledAfterPayment->value)
+            ->where('payload->booking_id', $booking->id)
+            ->first();
+
+        if ($existing !== null) {
+            $existing->forceFill(['payload' => $payload])->save();
+
+            return;
+        }
+
+        PendingAction::create([
+            'business_id' => $booking->business_id,
+            'booking_id' => $booking->id,
+            'type' => PendingActionType::PaymentCancelledAfterPayment,
+            'payload' => $payload,
+            'status' => PendingActionStatus::Pending,
+        ]);
+    }
+
+    private function dispatchCancelledAfterPaymentEmail(
+        Booking $booking,
+        RefundResult $result,
+    ): void {
+        $row = $result->bookingRefund;
+        if ($row === null) {
+            return;
+        }
+
+        $booking->loadMissing(['business.admins']);
+        $admins = $booking->business->admins;
+
+        if ($admins->isEmpty()) {
+            return;
+        }
+
+        Notification::send($admins, new CancelledAfterPaymentNotification($booking, $row));
     }
 
     private function extractAccountId(StripeEvent $event): ?string

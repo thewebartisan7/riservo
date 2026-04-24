@@ -784,3 +784,95 @@ Distinct from `DECISIONS-FOUNDATIONS.md`, which carries the SaaS subscription bi
   - No sentinel state to explain to future readers; every enum value has a concrete meaning.
   - Session 2b's failure-branching writes use the same vocabulary (`AwaitingPayment` → `Unpaid` / `NotApplicable` per locked decision #14's three outcomes).
   - Factory gains two states `awaitingPayment()` + `paid()` for the Session 2a test matrix; `manual()` and `external()` now explicitly write the `offline` snapshot + `not_applicable` status per locked decision #30's carve-out.
+
+---
+
+### D-162 — `booking_refunds.uuid` seeds the Stripe refund idempotency key
+
+- **Date**: 2026-04-23 (PAYMENTS Session 2b)
+- **Status**: accepted
+- **Context**: Locked roadmap decision #36 mandates one row per refund ATTEMPT with a dedicated UUID column whose value forms the Stripe `idempotency_key`. Two schemes considered: (a) use the auto-increment `id` directly; (b) mint a UUID at insert time. The UUID survives seed-from-dump / schema manipulation, so (b).
+- **Decision**: `booking_refunds.uuid` is a unique UUID column populated at `RefundService::refund` insert time via `(string) Str::uuid()`. Stripe is called with `['idempotency_key' => 'riservo_refund_'.$row->uuid]`. Retries of the same attempt (scheduler re-run mid-response, double-click, webhook re-delivery during the Stripe call) reuse the row — so the UUID — so Stripe collapses duplicates. Two legitimately-distinct refund intents (e.g., admin issues two $50 partials in Session 3) get two rows and two UUIDs. A synthetic `(booking_id, amount, initiator)` hash would collapse a legitimate second partial refund into the first; the row-UUID approach avoids that foot-gun by construction.
+- **Consequences**:
+  - `FakeStripeClient::mockRefundCreate` asserts the idempotency key starts with `riservo_refund_`; an optional exact-match parameter lets tests tie a Stripe call back to a specific `booking_refunds.uuid`.
+  - Session 3 extends `RefundService` with the other four reasons (`customer-requested`, `business-cancelled`, `admin-manual`, `business-rejected-pending`) — the row shape + UUID seeding stay identical.
+
+---
+
+### D-163 — Late-webhook refund reads the D-158 pinned account id, not a business lookup
+
+- **Date**: 2026-04-23 (PAYMENTS Session 2b)
+- **Status**: accepted
+- **Context**: `StripeConnectWebhookController::applyLateWebhookRefund` (the reaper-cancelled-but-Stripe-eventually-paid path per locked decision #31.3) needs to dispatch a refund against the ORIGINAL minting account. A business with disconnect+reconnect history has multiple `stripe_connected_accounts` rows — reading the `stripe_account_id` via `withTrashed()->where('business_id', $id)->value('stripe_account_id')` is non-deterministic (Codex Round 2 / D-158 resolved the same class of bug in the happy-path handler).
+- **Decision**: The late-webhook refund path reads `booking.stripe_connected_account_id` (D-158 pin) directly — both the cross-account event-guard and `RefundService`'s resolve-target-account logic use the same column. No business-level lookup. If the pin is null the service returns `guard_rejected` with a critical log; that is an anomaly worth surfacing rather than silently using a different account.
+- **Consequences**:
+  - Reconnect history is handled deterministically across the whole payment-lifecycle surface (happy-path, success-page, reaper pre-flight, late-webhook refund).
+  - A refund against a soft-deleted connected-account row still works: Stripe retains the `acct_id` and the locked roadmap decision #36 disconnected-account fallback runs when Stripe refuses the call.
+
+---
+
+### D-164 — Cancel-URL controller branches flash copy on `payment_mode_at_creation` snapshot, not current booking status
+
+- **Date**: 2026-04-23 (PAYMENTS Session 2b)
+- **Status**: accepted
+- **Context**: Stripe hits `cancel_url` when the customer abandons the hosted Checkout page. The webhook (`checkout.session.expired` or `async_payment_failed`) typically arrives AFTER the customer lands on the cancel URL, so reading `booking.status` / `booking.payment_status` would show stale copy. The controller has two choices: (a) mutate state inline (which would duplicate the webhook path and violate D-151 "CheckoutPromoter is the single source of truth"); (b) read the immutable snapshot and pick copy that matches the INTENT at booking creation.
+- **Decision**: `BookingPaymentReturnController::cancel` mutates nothing. It reads `booking.payment_mode_at_creation` (the locked-decision-#14 snapshot, immutable by construction) and picks the flash:
+  - `online` → error flash "Payment not completed. Your slot has been released." (the webhook failure arm will Cancel the booking).
+  - `customer_choice` → success flash "Your booking is confirmed — pay at the appointment." (the webhook failure arm promotes to Confirmed + Unpaid).
+  - Connected account has no active row (disconnected between creation and return) → error flash "This business is no longer accepting online payments — contact them directly."
+  The redirect target is `route('bookings.show', $token)` so the customer lands on a page that will reflect the webhook-driven final state once it fires.
+- **Consequences**:
+  - No double-transition paths; the D-151 invariant is preserved.
+  - Customer sees coherent copy even if they return within milliseconds of abandoning Checkout.
+  - Session 5 polishes the disconnected-account copy; the 2b default is stable.
+
+---
+
+### D-165 — `RefundService::refund` returns a readonly `RefundResult` DTO (not a scalar)
+
+- **Date**: 2026-04-23 (PAYMENTS Session 2b)
+- **Status**: accepted
+- **Context**: D-151 set a scalar-return precedent for `CheckoutPromoter::promote` to dodge PHPStan level-5 generic-inference limits on `DB::transaction` callback returns. `RefundService::refund` has four terminal outcomes (`succeeded`, `failed`, `disconnected`, `guard_rejected`) plus a `BookingRefund` row reference and an optional failure message — forcing this into a scalar would either collapse information or grow a parallel `out` parameter.
+- **Decision**: Return a readonly DTO `App\Services\Payments\RefundResult { string $outcome; ?BookingRefund $bookingRefund; ?string $failureReason; }`. The DTO is constructed OUTSIDE the `DB::transaction` callback (the closure captures the row via `use (&$row)`), so PHPStan's generic-inference constraint on callback returns still holds. Session 3 extends the outcome set without breaking callers — the DTO is the stable contract.
+- **Consequences**:
+  - Webhook handlers + the admin refund UI (Session 3) read the same outcome vocabulary.
+  - No `is_string` / `===` outcome-string checks spread across callers; `$result->outcome === 'succeeded'` is the one pattern.
+
+---
+
+### D-166 — Reaper SKIPS the cancel for every `CheckoutPromoter::promote` return value, including `'mismatch'`
+
+- **Date**: 2026-04-23 (PAYMENTS Session 2b)
+- **Status**: accepted
+- **Context**: The reaper's pre-flight retrieve asks Stripe for the Checkout session state. If Stripe reports `status = complete` OR `payment_status = paid`, the reaper runs `CheckoutPromoter::promote` inline. The promoter can return `'paid'`, `'already_paid'`, `'not_paid'`, or `'mismatch'` (D-156). The reaper then needs to decide: should it still cancel the booking when the promoter refused?
+- **Decision**: The reaper SKIPS the cancel regardless of the promoter's return value. Rationale:
+  - `'paid'` / `'already_paid'` — the booking is now terminal; cancelling would produce `Cancelled + Paid`.
+  - `'not_paid'` — async session still settling; cancelling before it settles would strand funds.
+  - `'mismatch'` — the promoter already logged critical for operator reconciliation; cancelling the booking could free a slot that has real money attached to it. The conservative choice is to leave the booking at `AwaitingPayment` until operators investigate.
+- **Consequences**:
+  - A mismatched booking will re-appear in every subsequent reaper tick until operators either fix the underlying anomaly (hostile `client_reference_id` collision, duplicate Stripe integration, code bug) OR the Stripe session eventually expires and Stripe responds with a non-paid status on retrieve — at which point the cancel proceeds normally.
+  - The noisy-but-correct outcome is preferred over the quiet-but-wrong one (same philosophy as D-149 for `account.updated` unknown-account events).
+
+---
+
+### D-167 — `BookingRefund.status` is a native PHP enum, not a string column
+
+- **Date**: 2026-04-23 (PAYMENTS Session 2b gate-1 revision)
+- **Status**: accepted
+- **Context**: Initial plan had `status` as a plain string column with a PHPDoc union, arguing that Session 3 might grow the value set. Gate-1 feedback: the values surfaced by riservo's flow are exactly three (`pending`, `succeeded`, `failed`) across Sessions 2b + 3 — Stripe refund states `requires_action` and `canceled` are not modelled because our flow does not trigger them.
+- **Decision**: New enum `App\Enums\BookingRefundStatus` with cases `Pending = 'pending'`, `Succeeded = 'succeeded'`, `Failed = 'failed'`. `BookingRefund` casts the `status` column through the enum. `Booking::remainingRefundableCents()` reads `BookingRefundStatus::Pending->value` + `::Succeeded->value`. The factory's `pending()` / `succeeded()` / `failed()` states write enum instances.
+- **Consequences**:
+  - PHPStan `match` exhaustiveness applies wherever callers branch on the status.
+  - Session 3 adding a 4th value (if Stripe semantics ever require it) forces a compile-time `match` update — the desired property, not a drawback.
+
+---
+
+### D-168 — `BookingReceivedNotification` gains `pending_unpaid_awaiting_confirmation` context for manual-confirm + customer_choice failed Checkout
+
+- **Date**: 2026-04-23 (PAYMENTS Session 2b)
+- **Status**: accepted
+- **Context**: Locked decision #14 + #29 land `customer_choice + manual-confirm + failed Checkout` bookings at `Pending + Unpaid`. The existing `'new'` context on `BookingReceivedNotification` is staff-facing; `'paid_awaiting_confirmation'` (Session 2a / D-151) promises the customer an automatic refund on rejection — wrong copy for a booking that has no payment on file.
+- **Decision**: Add a fourth context value `'pending_unpaid_awaiting_confirmation'`. Subject: "Booking request received — :business will confirm". Body: "Your booking request at :business has been received and is pending their confirmation. Your online payment did not complete — if the business accepts your booking, you can pay at the appointment." The Session 2b webhook dispatcher (`StripeConnectWebhookController::dispatchCustomerChoiceFailureNotifications`) selects this context when the target status is `Pending`.
+- **Consequences**:
+  - Four contexts total on `BookingReceivedNotification`: `'new'` (default, staff-facing), `'confirmed'` (auto-confirm customer-facing), `'paid_awaiting_confirmation'` (manual-confirm + paid), `'pending_unpaid_awaiting_confirmation'` (manual-confirm + customer_choice + failed Checkout).
+  - The blade template branches on `$context` with `@elseif`; an unknown context falls through to the `'new'` default.

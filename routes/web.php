@@ -16,6 +16,7 @@ use App\Http\Controllers\Dashboard\CalendarController;
 use App\Http\Controllers\Dashboard\CalendarPendingActionController;
 use App\Http\Controllers\Dashboard\CustomerController as DashboardCustomerController;
 use App\Http\Controllers\Dashboard\DashboardController;
+use App\Http\Controllers\Dashboard\PaymentPendingActionController;
 use App\Http\Controllers\Dashboard\Settings\AccountController;
 use App\Http\Controllers\Dashboard\Settings\AvailabilityController;
 use App\Http\Controllers\Dashboard\Settings\BillingController;
@@ -144,6 +145,13 @@ Route::middleware('auth')->group(function () {
             // enforced in controller per D-085 extension + D-088).
             Route::post('/dashboard/calendar-pending-actions/{action}/resolve', [CalendarPendingActionController::class, 'resolve'])
                 ->name('dashboard.calendar-pending-actions.resolve');
+
+            // PAYMENTS Session 2b — resolve payment-typed Pending Actions.
+            // Admin-only per locked roadmap decisions #19 / #31 / #35; the
+            // check lives inside the controller (tenant + role abort) so the
+            // route shape mirrors the calendar sibling above.
+            Route::patch('/dashboard/payment-pending-actions/{action}/resolve', [PaymentPendingActionController::class, 'resolve'])
+                ->name('dashboard.payment-pending-actions.resolve');
 
             // Dashboard API (JSON)
             Route::get('/dashboard/api/available-dates', [DashboardBookingController::class, 'availableDates'])->name('dashboard.api.available-dates');

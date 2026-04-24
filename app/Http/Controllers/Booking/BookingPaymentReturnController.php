@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Booking;
 
 use App\Enums\BookingStatus;
+use App\Enums\ConfirmationMode;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Services\Payments\CheckoutPromoter;
@@ -67,6 +68,22 @@ final class BookingPaymentReturnController extends Controller
             return redirect()->route('bookings.show', $token);
         }
 
+        // Codex Round 3 (F2): Session 2b's late-webhook refund path lands
+        // bookings at `Cancelled + Refunded` / `Cancelled + RefundFailed`
+        // / transient `Cancelled + Paid`. The customer's browser still
+        // redirects here with the same `session_id`; without this guard
+        // the promoter would see `payment_status !== Paid` (if Refunded),
+        // call retrieve, and `forceFill(['status' => Confirmed, ...])` —
+        // reopening a slot the reaper already released and potentially
+        // already refunded. Redirect to the booking-detail page with a
+        // neutral flash; the booking page itself shows the accurate
+        // Cancelled + Refunded state.
+        if ($booking->status === BookingStatus::Cancelled) {
+            return redirect()
+                ->route('bookings.show', $token)
+                ->with('error', __("Your booking wasn't confirmed in time. Your slot has been released; please contact the business if you have questions."));
+        }
+
         // Outcome-level fast path: the webhook (or a prior success-page
         // hit) may already have promoted the booking. No retrieve needed.
         if ($booking->payment_status->value === 'paid') {
@@ -96,8 +113,17 @@ final class BookingPaymentReturnController extends Controller
         }
 
         try {
+            // Codex Round 3 (F1 sibling): Stripe PHP SDK signature is
+            // `retrieve($id, $params = null, $opts = null)`. Pass the
+            // `stripe_account` header as the 3rd arg (options), not the
+            // 2nd (params) — otherwise Stripe treats it as a request
+            // parameter, drops the header, and the call falls back to
+            // the platform account which 404s. The existing Session 2a
+            // FakeStripeClient mock matched positional args loosely so
+            // the bug didn't surface in tests.
             $session = $this->stripe->checkout->sessions->retrieve(
                 $sessionId,
+                null,
                 ['stripe_account' => $acct],
             );
         } catch (ApiErrorException $e) {
@@ -147,9 +173,27 @@ final class BookingPaymentReturnController extends Controller
     }
 
     /**
-     * Session 2a stub for Stripe's `cancel_url`. Session 2b wires the
-     * branching (online → slot released; customer_choice → confirmed +
-     * unpaid) on the webhook path; this URL is informational only.
+     * PAYMENTS Session 2b: `cancel_url` landing. The state transition is
+     * OWNED by the webhook path (locked decision #31 idempotency contract +
+     * D-151 — `CheckoutPromoter` is the single source of truth). This
+     * handler mutates nothing; it only chooses the flash copy based on
+     * the booking's immutable `payment_mode_at_creation` snapshot.
+     *
+     * Why branch on the snapshot and not on current status: the cancel_url
+     * typically lands BEFORE the webhook's state transition has fired.
+     * Reading `status` or `payment_status` here would show stale copy;
+     * the snapshot reflects the business's INTENT at booking time and
+     * drives the expected landing regardless of race timing.
+     *
+     * Copy branches per the roadmap:
+     *  - `online` → "Payment not completed. Your slot has been released."
+     *    (The webhook failure arm will Cancel the booking; slot frees.)
+     *  - `customer_choice` → "Your booking is confirmed — pay at the
+     *    appointment." (The webhook failure arm promotes to
+     *    `Confirmed + Unpaid` or `Pending + Unpaid` under manual-confirm.)
+     *  - Disconnected-account race (business disconnected Stripe between
+     *    booking creation and customer return) → a stable "contact them
+     *    directly" copy. Session 5 polishes.
      */
     public function cancel(string $token): RedirectResponse
     {
@@ -157,8 +201,38 @@ final class BookingPaymentReturnController extends Controller
             ->with('business')
             ->firstOrFail();
 
+        // Default-scoped `stripeConnectedAccount` relation is SoftDeletes-
+        // aware — returns null when the business has no active connected
+        // account (disconnected between booking creation and return).
+        // Distinct from the D-158 pinned column on the booking, which is
+        // always populated for online bookings and survives disconnect.
+        $connectedAccount = $booking->business->stripeConnectedAccount;
+
+        if ($connectedAccount === null) {
+            return redirect()
+                ->route('bookings.show', $token)
+                ->with('error', __('This business is no longer accepting online payments — please contact them directly.'));
+        }
+
+        if ($booking->payment_mode_at_creation === 'customer_choice') {
+            // Codex Round 2 (F4): the webhook failure branch lands
+            // customer_choice + manual-confirm bookings at
+            // `Pending + Unpaid` per locked decision #29 variant, not
+            // `Confirmed`. Flashing "your booking is confirmed" would
+            // contradict the booking-detail page + the pending-awaiting-
+            // confirmation customer email. Branch on the business's
+            // confirmation_mode snapshot.
+            $copy = $booking->business->confirmation_mode === ConfirmationMode::Manual
+                ? __('Your booking request has been received — the business will confirm, and you can pay at the appointment.')
+                : __('Your booking is confirmed — pay at the appointment.');
+
+            return redirect()
+                ->route('bookings.show', $token)
+                ->with('success', $copy);
+        }
+
         return redirect()
-            ->route('booking.show', ['slug' => $booking->business->slug])
+            ->route('bookings.show', $token)
             ->with('error', __('Payment not completed. Your slot has been released.'));
     }
 

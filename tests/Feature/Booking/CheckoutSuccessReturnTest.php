@@ -216,3 +216,35 @@ test('codex round 2 D-160: auto-confirmation flash copy says confirmed', functio
     $response->assertRedirect("/bookings/{$booking->cancellation_token}")
         ->assertSessionHas('success', __('Payment received — your booking is confirmed.'));
 });
+
+test('Cancelled booking landing on the success page does NOT re-activate the slot (Codex Round 3 F2)', function () {
+    // Scenario: reaper already cancelled (`Cancelled + NotApplicable`), or
+    // late-webhook refund already ran (`Cancelled + Refunded`). Stripe
+    // still redirects the customer to the success URL with the same
+    // session_id. Without the Cancelled guard, CheckoutPromoter::promote
+    // would forceFill status=Confirmed and reopen the slot.
+    $booking = Booking::factory()->create([
+        'business_id' => $this->business->id,
+        'stripe_checkout_session_id' => 'cs_test_return',
+        'stripe_connected_account_id' => 'acct_test_sr',
+        'payment_mode_at_creation' => 'online',
+        'status' => BookingStatus::Cancelled,
+        'payment_status' => PaymentStatus::NotApplicable,
+    ]);
+
+    // No Stripe mock set up — if the controller tried to call retrieve,
+    // Mockery would surface it as "method not expected".
+    FakeStripeClient::for($this);
+
+    $response = $this->get("/bookings/{$booking->cancellation_token}/payment-success?session_id=cs_test_return");
+
+    $response->assertRedirect("/bookings/{$booking->cancellation_token}");
+
+    $booking->refresh();
+    // Critical: status stays Cancelled, payment_status stays NotApplicable.
+    // The promoter was not called; the slot remains released.
+    expect($booking->status)->toBe(BookingStatus::Cancelled);
+    expect($booking->payment_status)->toBe(PaymentStatus::NotApplicable);
+
+    Notification::assertNothingSent();
+});

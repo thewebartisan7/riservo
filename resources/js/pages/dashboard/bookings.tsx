@@ -5,6 +5,7 @@ import AuthenticatedLayout from '@/layouts/authenticated-layout';
 import BookingDetailSheet from '@/components/dashboard/booking-detail-sheet';
 import ManualBookingDialog from '@/components/dashboard/manual-booking-dialog';
 import { BookingStatusBadge, BookingSourceBadge } from '@/components/dashboard/booking-status-badge';
+import { PaymentStatusBadge } from '@/components/dashboard/payment-status-badge';
 import { useTrans } from '@/hooks/use-trans';
 import { CalendarIcon, PlusIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -49,6 +50,7 @@ interface BookingsPageProps extends PageProps {
     providers: FilterOption[];
     filters: {
         status: string;
+        payment_status: string;
         service_id: string;
         provider_id: string;
         date_from: string;
@@ -108,10 +110,26 @@ export default function BookingsPage() {
         { value: 'no_show', label: t('No Show') },
     ];
 
+    // PAYMENTS Session 2b: admin-only payment filter (locked roadmap
+    // decision #19 — payment surfaces are admin-only). The 'offline' value
+    // maps to `not_applicable` server-side so the chip label reads
+    // naturally across the list + filter UI.
+    const paymentStatuses = [
+        { value: '', label: t('All payments') },
+        { value: 'paid', label: t('Paid') },
+        { value: 'awaiting_payment', label: t('Awaiting payment') },
+        { value: 'unpaid', label: t('Unpaid') },
+        { value: 'refunded', label: t('Refunded') },
+        { value: 'partially_refunded', label: t('Partial refund') },
+        { value: 'refund_failed', label: t('Refund failed') },
+        { value: 'offline', label: t('Offline') },
+    ];
+
     const hasActiveFilters =
         filters.date_from !== '' ||
         filters.date_to !== '' ||
         filters.status !== '' ||
+        filters.payment_status !== '' ||
         filters.service_id !== '' ||
         filters.provider_id !== '';
 
@@ -204,6 +222,28 @@ export default function BookingsPage() {
                             </SelectPopup>
                         </Select>
                     </Field>
+                    {isAdmin && (
+                        <Field className="w-44">
+                            <FieldLabel className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                                {t('Payment')}
+                            </FieldLabel>
+                            <Select
+                                value={filters.payment_status}
+                                onValueChange={(val) => applyFilter('payment_status', val ?? '')}
+                            >
+                                <SelectTrigger className="w-full">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectPopup>
+                                    {paymentStatuses.map((s) => (
+                                        <SelectItem key={s.value} value={s.value}>
+                                            {s.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectPopup>
+                            </Select>
+                        </Field>
+                    )}
                     <Field className="w-40">
                         <FieldLabel className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                             {t('Service')}
@@ -271,6 +311,7 @@ export default function BookingsPage() {
                                 <TableHead>{t('Service')}</TableHead>
                                 {isAdmin && <TableHead>{t('Provider')}</TableHead>}
                                 <TableHead>{t('Status')}</TableHead>
+                                {isAdmin && <TableHead>{t('Payment')}</TableHead>}
                                 <TableHead>{t('Source')}</TableHead>
                             </TableRow>
                         </TableHeader>
@@ -278,7 +319,7 @@ export default function BookingsPage() {
                             {bookings.data.length === 0 ? (
                                 <TableRow>
                                     <TableCell
-                                        colSpan={isAdmin ? 6 : 5}
+                                        colSpan={isAdmin ? 7 : 5}
                                         className="py-10 text-center"
                                     >
                                         <div className="flex flex-col items-center gap-1">
@@ -332,6 +373,15 @@ export default function BookingsPage() {
                                         <TableCell>
                                             <BookingStatusBadge status={booking.status} />
                                         </TableCell>
+                                        {isAdmin && (
+                                            <TableCell>
+                                                {booking.payment ? (
+                                                    <PaymentStatusBadge status={booking.payment.status} />
+                                                ) : (
+                                                    <span className="text-muted-foreground">—</span>
+                                                )}
+                                            </TableCell>
+                                        )}
                                         <TableCell>
                                             <BookingSourceBadge source={booking.source} />
                                         </TableCell>

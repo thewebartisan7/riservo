@@ -127,6 +127,34 @@ export interface DashboardBooking {
     service: { id: number; name: string; duration_minutes: number; price: number | null } | null;
     provider: { id: number; name: string; avatar_url: string | null; is_active: boolean };
     customer: { id: number; name: string; email: string; phone: string | null } | null;
+    // PAYMENTS Session 2b — payment panel on the booking-detail sheet +
+    // Payment column on the bookings list. Admin-only; the backend
+    // returns null for non-admin viewers (Codex Round 1 F2 — staff see
+    // their own bookings and must not receive Stripe ids).
+    payment: {
+        status:
+            | 'not_applicable'
+            | 'awaiting_payment'
+            | 'paid'
+            | 'unpaid'
+            | 'refunded'
+            | 'partially_refunded'
+            | 'refund_failed';
+        paid_amount_cents: number | null;
+        currency: string | null;
+        paid_at: string | null;
+        stripe_charge_id: string | null;
+        stripe_payment_intent_id: string | null;
+        stripe_connected_account_id: string | null;
+    } | null;
+    pending_payment_action: PendingPaymentAction | null;
+}
+
+export interface PendingPaymentAction {
+    id: number;
+    type: 'payment.cancelled_after_payment' | 'payment.refund_failed';
+    payload: Record<string, unknown>;
+    created_at: string;
 }
 
 export interface TodayBooking {

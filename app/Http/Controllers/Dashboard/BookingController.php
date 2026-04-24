@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Dashboard;
 use App\Enums\BookingSource;
 use App\Enums\BookingStatus;
 use App\Enums\PaymentStatus;
+use App\Enums\PendingActionStatus;
+use App\Enums\PendingActionType;
 use App\Exceptions\Booking\NoProviderAvailableException;
 use App\Exceptions\Booking\SlotNoLongerAvailableException;
 use App\Http\Controllers\Controller;
@@ -55,12 +57,62 @@ class BookingController extends Controller
                 'customer:id,name,email,phone',
             ]);
 
+        if ($isAdmin) {
+            // PAYMENTS Session 2b: admin-only payment panel + banner in
+            // the booking-detail sheet reads the first pending payment-
+            // typed action. Type-bucket filter keeps calendar PAs out of
+            // this relation even though the underlying `pending_actions`
+            // table is generalised (D-113). Eager-loaded only for admins
+            // per locked decisions #19 / #31 / #35 (payment surfaces are
+            // admin-only).
+            //
+            // Codex Round 1 (F3): when the late-refund itself fails, both
+            // PAs exist on the same booking (`payment.refund_failed`
+            // created first by RefundService::recordFailure, then
+            // `payment.cancelled_after_payment` by applyLateWebhookRefund).
+            // `refund_failed` is the more urgent one to surface — admins
+            // need to reconnect Stripe or refund offline. Ordering the
+            // eager-load so `refund_failed` sorts first guarantees
+            // `pendingActions->first()` returns the urgent PA.
+            $query->with([
+                'pendingActions' => fn ($q) => $q
+                    ->whereIn('type', [
+                        PendingActionType::PaymentRefundFailed->value,
+                        PendingActionType::PaymentCancelledAfterPayment->value,
+                    ])
+                    ->where('status', PendingActionStatus::Pending->value)
+                    ->orderByRaw(
+                        'CASE WHEN type = ? THEN 0 ELSE 1 END',
+                        [PendingActionType::PaymentRefundFailed->value],
+                    )
+                    ->latest('id'),
+            ]);
+        }
+
         if (! $isAdmin) {
             $query->whereHas('provider', fn ($q) => $q->where('user_id', $user->id));
         }
 
         if ($request->filled('status')) {
             $query->where('status', $request->string('status'));
+        }
+
+        // PAYMENTS Session 2b: admin-only payment filter per locked
+        // roadmap decision #19. Codex Round 2 (F3): the filter must also
+        // be server-gated on `$isAdmin` — otherwise a provider could
+        // request `?payment_status=paid` and infer the payment state of
+        // their bookings from which rows remain, even with the `payment`
+        // sub-object nulled out in the serializer (F2 fix). Staff
+        // requests silently drop the filter — same pattern as the
+        // `provider_id` filter's `&& $isAdmin` guard further down.
+        if ($isAdmin && $request->filled('payment_status')) {
+            $paymentFilter = $request->string('payment_status')->toString();
+            // UI maps 'offline' to the `not_applicable` value so the chip
+            // label reads naturally.
+            if ($paymentFilter === 'offline') {
+                $paymentFilter = PaymentStatus::NotApplicable->value;
+            }
+            $query->where('payment_status', $paymentFilter);
         }
 
         if ($request->filled('service_id')) {
@@ -114,44 +166,77 @@ class BookingController extends Controller
             : collect();
 
         return Inertia::render('dashboard/bookings', [
-            'bookings' => $bookings->through(fn (Booking $booking) => [
-                'id' => $booking->id,
-                'starts_at' => $booking->starts_at->toIso8601String(),
-                'ends_at' => $booking->ends_at->toIso8601String(),
-                'status' => $booking->status->value,
-                'source' => $booking->source->value,
-                'external' => $booking->source === BookingSource::GoogleCalendar,
-                'external_title' => $booking->external_title,
-                'external_html_link' => $booking->external_html_link,
-                'notes' => $booking->notes,
-                'internal_notes' => $booking->internal_notes,
-                'created_at' => $booking->created_at->toIso8601String(),
-                'cancellation_token' => $booking->cancellation_token,
-                'service' => $booking->service
-                    ? [
-                        'id' => $booking->service->id,
-                        'name' => $booking->service->name,
-                        'duration_minutes' => $booking->service->duration_minutes,
-                        'price' => $booking->service->price,
-                    ]
-                    : null,
-                'provider' => [
-                    'id' => $booking->provider->id,
-                    'name' => $booking->provider->user->name ?? '',
-                    'avatar_url' => $booking->provider->user?->avatar
-                        ? Storage::disk('public')->url($booking->provider->user->avatar)
+            'bookings' => $bookings->through(function (Booking $booking) use ($isAdmin) {
+                // Codex Round 1 (F2): the `payment` + `pending_payment_
+                // action` sub-objects are admin-only. Staff can view their
+                // own bookings via `/dashboard/bookings`, so including
+                // Stripe ids in the payload unconditionally would leak the
+                // money surface past the locked-roadmap-decision #19 gate.
+                $pendingAction = $isAdmin ? $booking->pendingActions->first() : null;
+
+                return [
+                    'id' => $booking->id,
+                    'starts_at' => $booking->starts_at->toIso8601String(),
+                    'ends_at' => $booking->ends_at->toIso8601String(),
+                    'status' => $booking->status->value,
+                    'source' => $booking->source->value,
+                    'external' => $booking->source === BookingSource::GoogleCalendar,
+                    'external_title' => $booking->external_title,
+                    'external_html_link' => $booking->external_html_link,
+                    'notes' => $booking->notes,
+                    'internal_notes' => $booking->internal_notes,
+                    'created_at' => $booking->created_at->toIso8601String(),
+                    'cancellation_token' => $booking->cancellation_token,
+                    'service' => $booking->service
+                        ? [
+                            'id' => $booking->service->id,
+                            'name' => $booking->service->name,
+                            'duration_minutes' => $booking->service->duration_minutes,
+                            'price' => $booking->service->price,
+                        ]
                         : null,
-                    'is_active' => ! $booking->provider->trashed(),
-                ],
-                'customer' => $booking->customer
-                    ? [
-                        'id' => $booking->customer->id,
-                        'name' => $booking->customer->name,
-                        'email' => $booking->customer->email,
-                        'phone' => $booking->customer->phone,
-                    ]
-                    : null,
-            ]),
+                    'provider' => [
+                        'id' => $booking->provider->id,
+                        'name' => $booking->provider->user->name ?? '',
+                        'avatar_url' => $booking->provider->user?->avatar
+                            ? Storage::disk('public')->url($booking->provider->user->avatar)
+                            : null,
+                        'is_active' => ! $booking->provider->trashed(),
+                    ],
+                    'customer' => $booking->customer
+                        ? [
+                            'id' => $booking->customer->id,
+                            'name' => $booking->customer->name,
+                            'email' => $booking->customer->email,
+                            'phone' => $booking->customer->phone,
+                        ]
+                        : null,
+                    // PAYMENTS Session 2b: admin-only payment panel on the
+                    // booking-detail sheet reads these. Codex Round 1 (F2)
+                    // gated the sub-object on `$isAdmin` so staff can't see
+                    // Stripe ids for their own bookings (locked decision
+                    // #19: payment surfaces are admin-only).
+                    'payment' => $isAdmin
+                        ? [
+                            'status' => $booking->payment_status->value,
+                            'paid_amount_cents' => $booking->paid_amount_cents,
+                            'currency' => $booking->currency,
+                            'paid_at' => $booking->paid_at?->toIso8601String(),
+                            'stripe_charge_id' => $booking->stripe_charge_id,
+                            'stripe_payment_intent_id' => $booking->stripe_payment_intent_id,
+                            'stripe_connected_account_id' => $booking->stripe_connected_account_id,
+                        ]
+                        : null,
+                    'pending_payment_action' => $pendingAction !== null
+                        ? [
+                            'id' => $pendingAction->id,
+                            'type' => $pendingAction->type->value,
+                            'payload' => $pendingAction->payload,
+                            'created_at' => $pendingAction->created_at->toIso8601String(),
+                        ]
+                        : null,
+                ];
+            }),
             'services' => $services->map(fn (Service $service) => [
                 'id' => $service->id,
                 'name' => $service->name,
@@ -168,6 +253,7 @@ class BookingController extends Controller
             ])->values(),
             'filters' => [
                 'status' => $request->string('status', ''),
+                'payment_status' => $request->string('payment_status', ''),
                 'service_id' => $request->string('service_id', ''),
                 'provider_id' => $request->string('provider_id', ''),
                 'date_from' => $request->string('date_from', ''),
