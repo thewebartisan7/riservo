@@ -3,6 +3,7 @@ import { index as dashboardIndex } from '@/actions/App/Http/Controllers/Dashboar
 import { index as bookingsIndex } from '@/actions/App/Http/Controllers/Dashboard/BookingController';
 import { index as calendarIndex } from '@/actions/App/Http/Controllers/Dashboard/CalendarController';
 import { index as customersIndex } from '@/actions/App/Http/Controllers/Dashboard/CustomerController';
+import { index as payoutsIndex } from '@/actions/App/Http/Controllers/Dashboard/PayoutsController';
 import { destroy } from '@/actions/App/Http/Controllers/Auth/LoginController';
 import { home } from '@/routes/index';
 import type { PropsWithChildren, ReactNode } from 'react';
@@ -39,6 +40,7 @@ import {
     LogOutIcon,
     Settings2Icon,
     UsersIcon,
+    WalletIcon,
     type LucideIcon,
 } from 'lucide-react';
 
@@ -87,6 +89,12 @@ export default function AuthenticatedLayout({
         { label: t('Calendar'), href: calendarIndex.url(), active: currentPath.startsWith('/dashboard/calendar'), icon: CalendarDaysIcon },
         ...(isAdmin
             ? [{ label: t('Customers'), href: customersIndex.url(), active: currentPath.startsWith('/dashboard/customers'), icon: UsersIcon }]
+            : []),
+        // PAYMENTS Session 4: admin-only Payouts entry, visible only when a
+        // connected-account row exists (`auth.business.connected_account`
+        // is null when none does — see HandleInertiaRequests::resolveBusinessConnectedAccount).
+        ...(isAdmin && connectedAccount !== null
+            ? [{ label: t('Payouts'), href: payoutsIndex.url(), active: currentPath.startsWith('/dashboard/payouts'), icon: WalletIcon }]
             : []),
         ...(isAdmin
             ? [{ label: t('Settings'), href: '/dashboard/settings/profile', active: currentPath.startsWith('/dashboard/settings'), icon: Settings2Icon }]

@@ -18,6 +18,7 @@ use App\Http\Controllers\Dashboard\CalendarPendingActionController;
 use App\Http\Controllers\Dashboard\CustomerController as DashboardCustomerController;
 use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Dashboard\PaymentPendingActionController;
+use App\Http\Controllers\Dashboard\PayoutsController;
 use App\Http\Controllers\Dashboard\Settings\AccountController;
 use App\Http\Controllers\Dashboard\Settings\AvailabilityController;
 use App\Http\Controllers\Dashboard\Settings\BillingController;
@@ -158,6 +159,17 @@ Route::middleware('auth')->group(function () {
             // route shape mirrors the calendar sibling above.
             Route::patch('/dashboard/payment-pending-actions/{action}/resolve', [PaymentPendingActionController::class, 'resolve'])
                 ->name('dashboard.payment-pending-actions.resolve');
+
+            // PAYMENTS Session 4 — admin-only payouts surface (locked
+            // decisions #22 / #24 / #45). Read-only on the connected
+            // account; the only side effect is minting a fresh Stripe
+            // Express dashboard login link on click.
+            Route::middleware('role:admin')->group(function () {
+                Route::get('/dashboard/payouts', [PayoutsController::class, 'index'])
+                    ->name('dashboard.payouts');
+                Route::post('/dashboard/payouts/login-link', [PayoutsController::class, 'loginLink'])
+                    ->name('dashboard.payouts.login-link');
+            });
 
             // Dashboard API (JSON)
             Route::get('/dashboard/api/available-dates', [DashboardBookingController::class, 'availableDates'])->name('dashboard.api.available-dates');

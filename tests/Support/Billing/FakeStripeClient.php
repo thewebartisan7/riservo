@@ -6,11 +6,16 @@ use Mockery;
 use Mockery\MockInterface;
 use Stripe\Account as StripeAccount;
 use Stripe\AccountLink as StripeAccountLink;
+use Stripe\Balance as StripeBalance;
 use Stripe\BillingPortal\Session as StripeBillingPortalSession;
 use Stripe\Checkout\Session as StripeCheckoutSession;
+use Stripe\Collection as StripeCollection;
 use Stripe\Exception\PermissionException;
+use Stripe\LoginLink as StripeLoginLink;
+use Stripe\Payout as StripePayout;
 use Stripe\Refund as StripeRefund;
 use Stripe\StripeClient;
+use Stripe\Tax\Settings as StripeTaxSettings;
 use Tests\TestCase;
 
 /**
@@ -43,6 +48,12 @@ class FakeStripeClient
     private ?MockInterface $accountLinks = null;
 
     private ?MockInterface $refunds = null;
+
+    private ?MockInterface $balance = null;
+
+    private ?MockInterface $payouts = null;
+
+    private ?MockInterface $taxSettings = null;
 
     public function __construct()
     {
@@ -175,13 +186,10 @@ class FakeStripeClient
     // or checkout.sessions.create without one) is a test failure by
     // construction.
     //
-    // Remaining members of the Session 2+ contract (not implemented yet):
-    //   - mockRefundCreate                      (Session 2b — also asserts
-    //       idempotency_key = 'riservo_refund_'.{booking_refund_uuid}
-    //       per locked roadmap decision #36)
-    //   - mockTaxSettingsRetrieve               (Session 4)
-    //   - mockBalanceRetrieve                   (Session 4)
-    //   - mockPayoutsList                       (Session 4)
+    // Session 2b added mockRefundCreate / mockRefundCreateFails. Session 4
+    // adds mockBalanceRetrieve / mockPayoutsList / mockTaxSettingsRetrieve
+    // (connected-account-level, header asserted PRESENT) and
+    // mockLoginLinkCreate (platform-level, header asserted ABSENT).
     // ================================================================
 
     /**
@@ -339,6 +347,36 @@ class FakeStripeClient
         $accountOk = isset($parts['account']) && $parts['account'] === $expectedAccount;
 
         return $signatureOk && $accountOk;
+    }
+
+    /**
+     * Stub `$stripe->accounts->createLoginLink($acct, ...)`. Platform-level —
+     * asserts the `stripe_account` per-request option is absent (PAYMENTS
+     * Session 4: the Stripe Express dashboard login link is minted on the
+     * platform, with the connected account id passed as the first POSITIONAL
+     * arg, not as a header).
+     *
+     * @param  array<string, mixed>  $response
+     */
+    public function mockLoginLinkCreate(string $expectedAccountId, array $response = []): self
+    {
+        $this->ensureAccounts();
+
+        $link = StripeLoginLink::constructFrom(array_merge([
+            'object' => 'login_link',
+            'created' => time(),
+            'url' => 'https://connect.stripe.com/express/'.$expectedAccountId.'/login_'.uniqid(),
+        ], $response));
+
+        $this->accounts
+            ->shouldReceive('createLoginLink')
+            ->withArgs(function ($parentId, $params = null, $opts = null) use ($expectedAccountId) {
+                return $parentId === $expectedAccountId
+                    && $this->assertPlatformLevel((array) ($opts ?? []));
+            })
+            ->andReturn($link);
+
+        return $this;
     }
 
     private function assertPlatformLevel(array $opts): bool
@@ -519,6 +557,136 @@ class FakeStripeClient
     }
 
     /**
+     * Stub `$stripe->balance->retrieve(null, ['stripe_account' => $acct])`
+     * (PAYMENTS Session 4 — locked roadmap decision #24). Connected-account-
+     * level — asserts the header is PRESENT and matches.
+     *
+     * Default response carries one available + one pending arm denominated in
+     * CHF so the happy-path tests don't need to override anything.
+     *
+     * @param  array<string, mixed>  $response
+     */
+    public function mockBalanceRetrieve(string $expectedAccountId, array $response = []): self
+    {
+        $this->ensureBalance();
+
+        $balance = StripeBalance::constructFrom(array_merge([
+            'object' => 'balance',
+            'available' => [
+                ['amount' => 31200, 'currency' => 'chf', 'source_types' => (object) ['card' => 31200]],
+            ],
+            'pending' => [
+                ['amount' => 5400, 'currency' => 'chf', 'source_types' => (object) ['card' => 5400]],
+            ],
+        ], $response));
+
+        $this->balance
+            ->shouldReceive('retrieve')
+            ->withArgs(function ($params = null, $opts = null) use ($expectedAccountId) {
+                return $params === null
+                    && is_array($opts)
+                    && $this->assertConnectedAccountLevel($opts, $expectedAccountId);
+            })
+            ->andReturn($balance);
+
+        return $this;
+    }
+
+    /**
+     * Stub `$stripe->payouts->all(['limit' => …], ['stripe_account' => $acct])`
+     * (PAYMENTS Session 4 — locked roadmap decision #24). Connected-account-
+     * level — asserts the header is PRESENT and matches; the matcher is
+     * permissive on `$params` because the controller may pass `limit` or
+     * other pagination args.
+     *
+     * Default response = three realistic payout rows. Override `data` to test
+     * empty-state / many-row branches.
+     *
+     * @param  array<string, mixed>  $response
+     */
+    public function mockPayoutsList(string $expectedAccountId, array $response = []): self
+    {
+        $this->ensurePayouts();
+
+        $defaultData = [
+            StripePayout::constructFrom([
+                'id' => 'po_test_'.uniqid(),
+                'amount' => 12500,
+                'currency' => 'chf',
+                'status' => 'paid',
+                'arrival_date' => time() + 86400,
+                'created' => time() - 3600,
+            ]),
+            StripePayout::constructFrom([
+                'id' => 'po_test_'.uniqid(),
+                'amount' => 8700,
+                'currency' => 'chf',
+                'status' => 'in_transit',
+                'arrival_date' => time() + 172800,
+                'created' => time() - 7200,
+            ]),
+            StripePayout::constructFrom([
+                'id' => 'po_test_'.uniqid(),
+                'amount' => 21000,
+                'currency' => 'chf',
+                'status' => 'paid',
+                'arrival_date' => time() - 86400,
+                'created' => time() - 172800,
+            ]),
+        ];
+
+        $collection = StripeCollection::constructFrom(array_merge([
+            'object' => 'list',
+            'data' => $defaultData,
+            'has_more' => false,
+            'url' => '/v1/payouts',
+        ], $response));
+
+        $this->payouts
+            ->shouldReceive('all')
+            ->withArgs(function ($params = null, $opts = null) use ($expectedAccountId) {
+                return is_array($opts)
+                    && $this->assertConnectedAccountLevel($opts, $expectedAccountId);
+            })
+            ->andReturn($collection);
+
+        return $this;
+    }
+
+    /**
+     * Stub `$stripe->tax->settings->retrieve(null, ['stripe_account' => $acct])`
+     * (PAYMENTS Session 4 — locked roadmap decision #11: Stripe Tax not
+     * configured surfaces a warning banner, never a hard block).
+     * Connected-account-level — asserts the header is PRESENT and matches.
+     *
+     * Default response uses `status = 'active'`; pass `['status' => 'pending']`
+     * to exercise the not-configured banner.
+     *
+     * @param  array<string, mixed>  $response
+     */
+    public function mockTaxSettingsRetrieve(string $expectedAccountId, array $response = []): self
+    {
+        $this->ensureTaxSettings();
+
+        $settings = StripeTaxSettings::constructFrom(array_merge([
+            'object' => 'tax.settings',
+            'status' => 'active',
+            'defaults' => (object) ['tax_behavior' => 'inclusive', 'tax_code' => null],
+        ], $response));
+
+        $this->taxSettings
+            ->shouldReceive('retrieve')
+            ->withArgs(function ($params = null, $opts = null) use ($expectedAccountId) {
+                return $params === null
+                    && is_array($opts)
+                    && $this->assertConnectedAccountLevel($opts, $expectedAccountId);
+            })
+            ->andReturn($settings);
+
+        return $this;
+    }
+
+    /**
      * Connected-account-level calls MUST carry `stripe_account => $acct` in
      * the per-request options. A missing key or mismatched value fails the
      * Mockery `withArgs` matcher, surfacing as a "method not expected"
@@ -603,5 +771,40 @@ class FakeStripeClient
 
         $this->refunds = Mockery::mock();
         $this->client->refunds = $this->refunds;
+    }
+
+    private function ensureBalance(): void
+    {
+        if ($this->balance !== null) {
+            return;
+        }
+
+        $this->balance = Mockery::mock();
+        $this->client->balance = $this->balance;
+    }
+
+    private function ensurePayouts(): void
+    {
+        if ($this->payouts !== null) {
+            return;
+        }
+
+        $this->payouts = Mockery::mock();
+        $this->client->payouts = $this->payouts;
+    }
+
+    private function ensureTaxSettings(): void
+    {
+        if ($this->taxSettings !== null) {
+            return;
+        }
+
+        // The SDK exposes Tax\Settings via `$stripe->tax->settings->retrieve`.
+        // Mock the chain: tax service factory carries a `settings` property
+        // that responds to `retrieve`.
+        $taxFactory = Mockery::mock();
+        $this->taxSettings = Mockery::mock();
+        $taxFactory->settings = $this->taxSettings;
+        $this->client->tax = $taxFactory;
     }
 }
