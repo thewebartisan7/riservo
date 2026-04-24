@@ -17,6 +17,7 @@ import {
 import { useTrans } from '@/hooks/use-trans';
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, Link, router, usePage } from '@inertiajs/react';
+import type { FormDataConvertible } from '@inertiajs/core';
 import { store, enableOwnerAsProvider } from '@/actions/App/Http/Controllers/OnboardingController';
 import { WeekScheduleEditor } from '@/components/onboarding/week-schedule-editor';
 import type { DaySchedule } from '@/components/onboarding/day-row';
@@ -147,7 +148,13 @@ export default function Step3({ service, adminProvider, businessHoursSchedule, h
                         buffer_after: bufferAfter,
                         slot_interval_minutes: data.slot_interval_minutes,
                         provider_opt_in: providerOptIn,
-                        provider_schedule: providerOptIn ? providerSchedule : null,
+                        // DaySchedule is a closed interface so TS can't verify its
+                        // fields satisfy FormDataConvertible's recursive shape.
+                        // Runtime-wise these are plain serialisable objects — the
+                        // backend already consumes them as JSON via the onboarding
+                        // step-3 controller. Cast explicitly so the Form.transform
+                        // contract compiles without loosening DaySchedule itself.
+                        provider_schedule: (providerOptIn ? providerSchedule : null) as FormDataConvertible,
                     })}
                 >
                     {({ errors, processing }) => (

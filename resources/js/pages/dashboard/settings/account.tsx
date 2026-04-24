@@ -249,9 +249,7 @@ export default function Account({
                                         <Form
                                             action={removeAvatarAction()}
                                             method="delete"
-                                            options={{
-                                                onSuccess: () => setAvatarUrl(null),
-                                            }}
+                                            onSuccess={() => setAvatarUrl(null)}
                                         >
                                             {({ processing }) => (
                                                 <Button

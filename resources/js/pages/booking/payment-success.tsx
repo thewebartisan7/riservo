@@ -26,7 +26,7 @@ export default function BookingPaymentSuccess() {
     const { booking } = usePage<PaymentSuccessProps>().props;
 
     return (
-        <BookingLayout>
+        <BookingLayout businessName={booking.business.name}>
             <div className="mx-auto max-w-md px-4 py-12">
                 <Card>
                     <CardPanel className="flex flex-col items-center gap-4 p-8 text-center">
