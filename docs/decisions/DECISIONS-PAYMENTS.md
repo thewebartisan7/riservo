@@ -876,3 +876,111 @@ Distinct from `DECISIONS-FOUNDATIONS.md`, which carries the SaaS subscription bi
 - **Consequences**:
   - Four contexts total on `BookingReceivedNotification`: `'new'` (default, staff-facing), `'confirmed'` (auto-confirm customer-facing), `'paid_awaiting_confirmation'` (manual-confirm + paid), `'pending_unpaid_awaiting_confirmation'` (manual-confirm + customer_choice + failed Checkout).
   - The blade template branches on `$context` with `@elseif`; an unknown context falls through to the `'new'` default.
+
+---
+
+### D-169 — `RefundService` rejects partial-refund overflow with a 422 `ValidationException` instead of silently clamping
+
+- **Date**: 2026-04-24 (PAYMENTS Session 3)
+- **Status**: accepted
+- **Supersedes**: the silent-clamp branch added in Session 2b (`RefundService.php` pre-Session-3 lines 154–165).
+- **Context**: Locked roadmap decision #37 mandates a server-side second check for partial refunds. The Session 2b implementation clamped a `$amountCents > remaining` request down to `$remaining` and logged a warning. That silent clamp is safe for Session 2b (the only caller was `applyLateWebhookRefund`, always passing `$amountCents = null`) but misleading for Session 3's `admin-manual` path — if the admin's client-side clamp ever drifts from the server's view (stale `remainingRefundableCents` after a concurrent refund by another admin), silently refunding a smaller amount hides the bug: the dialog reports success for the wrong figure, and operators can only reconcile by reading Stripe's dashboard directly.
+- **Decision**: `RefundService::refund` splits the amount-resolution branch:
+    - `$amountCents === null` → refund `$remaining` (the Session 2b contract for system-dispatched paths); no overflow possible by construction.
+    - `$amountCents !== null && $amountCents > $remaining` → `throw ValidationException::withMessages(['amount_cents' => [__('Refund exceeds the remaining refundable amount. Maximum allowed is :max.', ['max' => ...])]])`. Laravel renders it as a 422; the admin-manual dialog surfaces the error under the amount field via `useForm`.
+    - `$amountCents !== null && $amountCents <= $remaining` → insert + dispatch as before.
+    The throw happens INSIDE the `DB::transaction + lockForUpdate` callback so the row insert rolls back on overflow — no orphan.
+- **Consequences**:
+    - `tests/Unit/Services/Payments/RefundServicePartialTest.php` asserts the 422 + no-row-inserted contract.
+    - `tests/Feature/Dashboard/AdminManualRefundTest.php` asserts the 422 surface on the HTTP boundary + the `amount_cents` error-bag key.
+    - System-dispatched paths (customer cancel, business cancel, late-webhook refund, manual-confirm rejection) cannot trip this path — they all pass `$amountCents = null` by construction.
+    - The `@throws` docblock on `refund()` now lists `ValidationException | ApiConnectionException | RateLimitException | ApiErrorException`, which is what callers' catch blocks need to compile clean under PHPStan level 5.
+
+---
+
+### D-170 — `PaymentPendingActionController::resolve` accepts `PaymentDisputeOpened` for admin-manual dismiss with `resolution_note='dismissed-by-admin'`
+
+- **Date**: 2026-04-24 (PAYMENTS Session 3)
+- **Status**: accepted
+- **Context**: Locked roadmap decision #35 puts `payment.dispute_opened` Pending Actions on a webhook-driven lifecycle: Stripe closes the dispute → `charge.dispute.closed` resolves the PA with `resolution_note = 'closed:<stripe_status>'`. There was no dashboard-initiated resolution path for stuck PAs (webhook lost, dispute closed out-of-band, etc.); the only surface was the Stripe Express dashboard, which is fine functionally but leaves the riservo banner up forever.
+- **Decision**: `Dashboard\PaymentPendingActionController::resolve` extends the accepted-types allow-list to `{PaymentCancelledAfterPayment, PaymentRefundFailed, PaymentDisputeOpened}`. When resolving a `PaymentDisputeOpened` row, the controller writes `resolution_note = 'dismissed-by-admin'` instead of inheriting the existing value — this distinguishes admin-manual escape-hatch dismissal from webhook-driven resolution in the audit trail. The dispute-PA UI banner on `BookingDetailSheet` exposes a "Dismiss" button backed by this endpoint. Staff users continue to receive 403 per locked decision #19.
+- **Consequences**:
+    - Webhook-driven resolution is still the norm (99% of disputes close via `charge.dispute.closed`); admin-manual dismiss is the operator escape hatch.
+    - The distinct `resolution_note` lets future analytics / audit tooling cleanly bucket "Stripe-closed" vs "admin-dismissed" without a boolean column.
+    - `DisputeWebhookTest::admin dismiss on dispute PA writes resolution_note=dismissed-by-admin` covers the new code path; the staff-cannot-dismiss test covers the role gate.
+
+---
+
+### D-171 — Refund-settlement webhooks match `booking_refunds` rows via `stripe_refund_id`, not via `payment_intent`
+
+- **Date**: 2026-04-24 (PAYMENTS Session 3)
+- **Status**: accepted
+- **Context**: `StripeConnectWebhookController::handleRefundEvent` lands `charge.refunded` / `charge.refund.updated` / `refund.updated` events. The arriving Stripe Refund object carries both `id` (our row's eventual `stripe_refund_id`) and `payment_intent` (the booking's `stripe_payment_intent_id`). Two match strategies were considered:
+    - Match on `stripe_refund_id` — precise; exactly one row per refund attempt (locked decision #36).
+    - Match on `payment_intent` — broader; one booking, possibly multiple refund attempts; needs further disambiguation (which row?).
+- **Decision**: Match on `booking_refunds.stripe_refund_id`. `RefundService::refund` persists this id within the second transaction immediately after Stripe accepts the refund, so by the time Stripe emits `charge.refunded` (~100ms later) the id is reliably on the row. An event whose refund id has no matching row is logged + 200'd (Stripe won't retry 2xx; the cache-layer dedup catches honest replays). A race where the webhook arrives before the commit is theoretical — Stripe's dispatcher adds its own latency — and would be handled by Stripe's natural retry on the 2xx-is-no-op path.
+- **Consequences**:
+    - Partial refunds (multiple rows per booking) disambiguate unambiguously.
+    - The D-158 pin on the booking remains the cross-account guard; the refund handler reads `row->booking->stripe_connected_account_id` vs `event.account`.
+    - `tests/Feature/Payments/RefundSettlementWebhookTest.php::refund event for unknown stripe_refund_id` covers the miss-logs-and-200 path.
+
+---
+
+### D-172 — Stripe refund statuses `requires_action` / `canceled` map onto the three-value `BookingRefundStatus` enum
+
+- **Date**: 2026-04-24 (PAYMENTS Session 3)
+- **Status**: accepted
+- **Context**: D-167 locked `BookingRefundStatus` at three values (`pending`, `succeeded`, `failed`) because riservo's flows don't trigger `requires_action` (no payer-initiated refund redirects in the hosted-Checkout configuration) and rarely trigger `canceled` (ACH NACKs, out-of-band Stripe reversals). But the refund-settlement webhook must still handle these values when Stripe DOES emit them.
+- **Decision**: `RefundService::recordStripeState` maps:
+    - `succeeded` → `recordSettlementSuccess` (row Succeeded + `reconcilePaymentStatus`).
+    - `failed` → `recordSettlementFailure` (row Failed + `payment_status = refund_failed` + PA + admin email) with the Stripe `failure_reason` persisted on the row.
+    - `canceled` → `recordSettlementFailure` (same sad-path surface) with `failure_reason = 'Stripe cancelled the refund'`. Logged critical so operators see the anomaly.
+    - `requires_action` / `pending` → no-op (row stays Pending; Stripe emits a follow-up `refund.updated` later).
+    - Anything else → logged as unknown + no-op.
+- **Consequences**:
+    - `RefundServicePartialTest::recordStripeState maps canceled → Failed (D-172)` + `recordStripeState on requires_action/pending leaves row Pending` cover the mapping.
+    - The admin banner + email surface fire correctly for the `canceled` case; operators aren't surprised by a silent Failed row.
+    - If Stripe ever emits a settlement status outside our known set, the log line identifies the booking + refund row for manual reconciliation.
+
+---
+
+### D-173 — `bookings.stripe_charge_id` backfill on promotion is deferred past Session 3
+
+- **Date**: 2026-04-24 (PAYMENTS Session 3 plan-time call)
+- **Status**: accepted
+- **Context**: The Session 2b `payment` sub-object in `Dashboard\BookingController::index` exposes `stripe_charge_id` for the booking-detail deep-link, but happy-path promotion via `CheckoutPromoter::promote` does NOT populate the column — only `stripe_payment_intent_id`. Session 3 needs to decide whether to backfill the charge id on promotion so refund-settlement webhooks can match rows via the charge id, and the dashboard deep-link renders `/payments/ch_...` instead of `/payments/pi_...`.
+- **Decision**: Do NOT backfill. The refund-settlement webhook matches via `booking_refunds.stripe_refund_id` (D-171), not via charge id; the dashboard deep-link already falls back to `stripe_payment_intent_id` when the charge id is null (`booking-detail-sheet.tsx:120–127`). Adding a second `payment_intents.retrieve` call to `CheckoutPromoter::promote` buys one prettier dashboard URL at the cost of one more cross-account Stripe call on every happy-path promotion — not worth it.
+- **Consequences**:
+    - No change to `CheckoutPromoter::promote` or the promotion-time flow.
+    - If a future session (e.g., payout-reconciliation work) needs authoritative charge ids on bookings, it can backfill via a one-shot command reading from Stripe's API.
+    - Added as a BACKLOG entry on session close for future consideration.
+
+---
+
+### D-174 — Refund reason vocabulary is five plain strings, not an enum
+
+- **Date**: 2026-04-24 (PAYMENTS Session 3)
+- **Status**: accepted
+- **Context**: Session 3 grows the `booking_refunds.reason` column value space from `{cancelled-after-payment}` (Session 2b) to five values: `customer-requested`, `business-cancelled`, `admin-manual`, `business-rejected-pending`, and the inherited `cancelled-after-payment`. Two choices:
+    - Promote to a native PHP enum mirroring `BookingRefundStatus` (D-167) for match-exhaustiveness.
+    - Keep as a plain string column with the five values as documented invariants.
+- **Decision**: Keep as strings. Rationale:
+    - The reason is a presentation-layer concern — the refund-list UI renders a human label keyed off the string (`admin-manual` → "Manual refund", etc.). An enum adds a layer that only the label helper would consume.
+    - The set is CLOSED for Session 3; Session 4 and 5 don't add new reasons per the roadmap.
+    - If a future session (e.g., "refund-on-no-show") adds a sixth reason, promoting to an enum is a mechanical edit; no schema change needed, just a cast + the call-site enum reference.
+- **Consequences**:
+    - No enum file; the five values live as documented invariants in `RefundService` + the refund-dialog UI + the reason-label mapper in `BookingDetailSheet`.
+    - PHPStan won't catch a typo'd reason at the call site (`refund(..., 'admin_manual')` with an underscore would compile). Accepted risk; covered by unit tests on the five known call-sites.
+
+---
+
+### D-175 — `BookingCancelledNotification` gains a `$refundIssued` boolean constructor arg; template renders the refund clause only for `business` cancels with `refundIssued === true`
+
+- **Date**: 2026-04-24 (PAYMENTS Session 3)
+- **Status**: accepted
+- **Context**: Locked roadmap decision #29 variant requires the customer-facing cancellation email to branch on whether a refund was issued. For `paid` business rejections, the email includes "a full refund has been issued"; for `unpaid` rejections (customer_choice + manual-confirm failed Checkout — there's nothing to refund), the refund clause MUST be omitted. An unconditional refund clause would mislead customers into expecting money they were never charged.
+- **Decision**: `BookingCancelledNotification::__construct` gains a third arg `public bool $refundIssued = false` (defaulted to false so existing test callers compile). The blade template (`resources/views/mail/booking-cancelled.blade.php`) renders the refund clause only when `$cancelledBy === 'business' && $refundIssued`. The three call sites (`BookingManagementController::cancel`, `Customer\BookingController::cancel`, `Dashboard\BookingController::updateStatus`) pass the flag based on `RefundResult::$outcome === 'succeeded'`. Customer-cancel paths (`cancelledBy = 'customer'`) never render the refund clause because the staff-facing email has different copy — the customer-facing refund signal goes via flash copy + the `refundStatusLine()` on the public booking pages.
+- **Consequences**:
+    - `PaidCancellationRefundTest` asserts `refundIssued` on every business-cancel branch (Confirmed+Paid, Pending+Paid, Pending+Unpaid, disconnected-account failure).
+    - The notification's existing test callers that instantiate `new BookingCancelledNotification($booking, 'customer')` still work — the `refundIssued` default is false.
+    - Adding a new branch (e.g., Session 4 payout-side cancels) means one more call-site wires the flag; the blade's gate is stable.

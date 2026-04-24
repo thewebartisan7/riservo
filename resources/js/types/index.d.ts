@@ -55,6 +55,10 @@ export interface BookingDetail {
         expires_at: string | null;
         stripe_checkout_session_id: string | null;
     };
+    // PAYMENTS Session 3 — customer-facing refund status line. Null when
+    // the booking has no refund attempts. Copy is server-rendered to
+    // share `__()` strings with the admin-side logic.
+    refund_status_line: string | null;
 }
 
 export interface BookingSummary {
@@ -67,6 +71,9 @@ export interface BookingSummary {
     provider: { name: string; is_active: boolean };
     business: { name: string; timezone: string };
     can_cancel: boolean;
+    // PAYMENTS Session 3 — per-booking refund status line (null when no
+    // refund attempts yet).
+    refund_status_line: string | null;
 }
 
 export interface InvitationData {
@@ -146,13 +153,39 @@ export interface DashboardBooking {
         stripe_charge_id: string | null;
         stripe_payment_intent_id: string | null;
         stripe_connected_account_id: string | null;
+        // PAYMENTS Session 3: server-computed clamp against
+        // `paid_amount_cents - SUM(pending+succeeded refunds)` (locked
+        // decision #37). Drives the Refund button's visibility + the
+        // dialog's amount clamp.
+        remaining_refundable_cents: number;
     } | null;
     pending_payment_action: PendingPaymentAction | null;
+    // PAYMENTS Session 3 Codex Round 1 P2: dispute PA rides a separate key
+    // so the detail sheet can surface BOTH a dispute banner AND a
+    // higher-priority refund banner simultaneously when both exist.
+    dispute_payment_action: PendingPaymentAction | null;
+    // PAYMENTS Session 3: admin-only refund attempts list, newest-first.
+    // The backend returns null for non-admin viewers.
+    refunds: DashboardBookingRefund[] | null;
+}
+
+export interface DashboardBookingRefund {
+    id: number;
+    created_at: string;
+    amount_cents: number;
+    currency: string;
+    status: 'pending' | 'succeeded' | 'failed';
+    reason: string;
+    initiator_name: string | null;
+    stripe_refund_id: string | null;
 }
 
 export interface PendingPaymentAction {
     id: number;
-    type: 'payment.cancelled_after_payment' | 'payment.refund_failed';
+    type:
+        | 'payment.cancelled_after_payment'
+        | 'payment.refund_failed'
+        | 'payment.dispute_opened';
     payload: Record<string, unknown>;
     created_at: string;
 }

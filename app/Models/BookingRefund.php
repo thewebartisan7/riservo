@@ -32,6 +32,8 @@ use Illuminate\Support\Carbon;
  * @property string $reason
  * @property int|null $initiated_by_user_id
  * @property string|null $failure_reason
+ * @property string|null $admin_note PAYMENTS Session 3 (Codex Round 1 P2): free-form admin note from the manual-refund dialog.
+ *                                   Distinct from `reason` (D-174 five-value enum-like string) so that vocabulary stays closed.
  * @property Carbon $created_at
  * @property Carbon $updated_at
  */
@@ -45,6 +47,7 @@ use Illuminate\Support\Carbon;
     'reason',
     'initiated_by_user_id',
     'failure_reason',
+    'admin_note',
 ])]
 class BookingRefund extends Model
 {

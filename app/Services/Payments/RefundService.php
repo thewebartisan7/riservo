@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Stripe\Exception\ApiConnectionException;
 use Stripe\Exception\ApiErrorException;
 use Stripe\Exception\AuthenticationException;
@@ -26,8 +27,10 @@ use Stripe\StripeClient;
  * `cancelled-after-payment` reason (the late-webhook path per locked roadmap
  * decision #31.3). Session 3 extends this service with additional reasons
  * (`customer-requested`, `business-cancelled`, `admin-manual`,
- * `business-rejected-pending`) and partial-refund support WITHOUT changing
- * the signature or the `booking_refunds` schema.
+ * `business-rejected-pending`), partial-refund support, an optional initiator
+ * user id, and three public settlement methods (`recordStripeState`,
+ * `recordSettlementSuccess`, `recordSettlementFailure`) consumed by the
+ * `charge.refunded` / `charge.refund.updated` / `refund.updated` webhook arms.
  *
  * Key invariants:
  *
@@ -36,7 +39,10 @@ use Stripe\StripeClient;
  *    retry reuses the row + UUID; Stripe collapses the duplicate.
  *  - Refund amount is always derived from `paid_amount_cents` / `currency`
  *    captured on the booking at creation (locked decisions #37 + #42 + D-152).
- *    `Service.price` is never read here.
+ *    `Service.price` is never read here. A partial refund exceeding
+ *    `remainingRefundableCents()` throws a 422 `ValidationException` (D-169)
+ *    rather than silently clamping — the admin's client-side clamp is the
+ *    first line of defence, this is the authoritative second check.
  *  - Connected-account id is read from `booking.stripe_connected_account_id`
  *    (D-158 pin). This works across disconnect+reconnect history and still
  *    resolves when the original row has been soft-deleted.
@@ -54,17 +60,40 @@ final class RefundService
 
     /**
      * Refund a booking. Session 2b writes `reason = 'cancelled-after-payment'`
-     * only; other callers are added in Session 3.
+     * only; Session 3 adds `customer-requested`, `business-cancelled`,
+     * `admin-manual`, `business-rejected-pending`.
      *
      * @param  int|null  $amountCents  when null, refund the full remaining
-     *                                 refundable amount (the only Session 2b
-     *                                 mode). Partial-refund support arrives
-     *                                 in Session 3.
+     *                                 refundable amount. Non-null = partial
+     *                                 refund (Session 3 admin-manual path).
+     *                                 A non-null value exceeding
+     *                                 `remainingRefundableCents()` raises a
+     *                                 422 `ValidationException` (D-169).
+     * @param  int|null  $initiatedByUserId  the admin user id for the
+     *                                       `admin-manual` path; null for every
+     *                                       system-dispatched refund.
+     * @param  string|null  $adminNote  free-form note entered by the admin in
+     *                                  the manual-refund dialog. Persisted on
+     *                                  the `booking_refunds.admin_note` column
+     *                                  so the audit trail survives. Only the
+     *                                  admin-manual caller passes this; every
+     *                                  system-dispatched refund leaves it null.
+     *
+     * @throws ValidationException on overflow (`$amountCents > remaining`).
+     * @throws ApiConnectionException on a Stripe transport-layer failure (the
+     *                                pending row is left intact so a retry converges via the Stripe
+     *                                idempotency key — callers should surface a 503 / "try again").
+     * @throws RateLimitException on a Stripe 429 (same retry contract).
+     * @throws ApiErrorException on a Stripe 5xx (same retry contract). Non-
+     *                           5xx `ApiErrorException` is caught internally and mapped to a
+     *                           `failed` outcome.
      */
     public function refund(
         Booking $booking,
         ?int $amountCents = null,
         string $reason = 'cancelled-after-payment',
+        ?int $initiatedByUserId = null,
+        ?string $adminNote = null,
     ): RefundResult {
         // Pre-flight guards: nothing to refund against.
         if ($booking->paid_amount_cents === null || $booking->paid_amount_cents <= 0) {
@@ -118,12 +147,25 @@ final class RefundService
         $row = null;
         $guardRejection = null;
 
-        DB::transaction(function () use ($booking, $amountCents, $reason, &$row, &$guardRejection): void {
+        DB::transaction(function () use ($booking, $amountCents, $reason, $initiatedByUserId, $adminNote, &$row, &$guardRejection): void {
             Booking::query()->whereKey($booking->id)->lockForUpdate()->first();
 
             // Retry-path lookup: if a pending row exists for this
-            // booking+reason, reuse it regardless of the remaining-cents
-            // clamp (the row already represents this intent).
+            // booking+reason, reuse it so Stripe's idempotency-key dedup
+            // collapses the duplicate call.
+            //
+            // Codex Round 2 P1: for `admin-manual` the reason isn't enough
+            // — an admin could submit CHF 30 while a previous CHF 20
+            // attempt is still Pending (e.g. Stripe timed out). Reusing
+            // the 20-cent row would silently re-dispatch the old amount
+            // under the new request. Two safe choices per Codex: (a)
+            // distinguish manual refunds by amount; (b) block new manual
+            // refunds while one is pending. We pick (b) by construction:
+            // any `admin-manual` pending row whose `amount_cents` differs
+            // from the newly-requested `$amountCents` raises a 422, so
+            // the admin sees "a refund of CHF 20 is already pending — wait
+            // for it to settle". A double-click with the SAME amount still
+            // collapses onto the pending row (retry idempotency preserved).
             $existing = $booking->bookingRefunds()
                 ->where('status', BookingRefundStatus::Pending->value)
                 ->where('reason', $reason)
@@ -131,13 +173,22 @@ final class RefundService
                 ->first();
 
             if ($existing !== null) {
+                if ($reason === 'admin-manual'
+                    && $amountCents !== null
+                    && $amountCents !== $existing->amount_cents) {
+                    throw ValidationException::withMessages([
+                        'amount_cents' => [__('A refund of :pending is already pending for this booking. Wait for it to settle before issuing another.', [
+                            'pending' => number_format($existing->amount_cents / 100, 2, '.', "'"),
+                        ])],
+                    ]);
+                }
+
                 $row = $existing;
 
                 return;
             }
 
             // Fresh-insert path: recompute the clamp inside the lock.
-            $requestedAmount = $amountCents ?? $booking->paid_amount_cents;
             $remaining = $booking->remainingRefundableCents();
 
             if ($remaining <= 0) {
@@ -151,17 +202,23 @@ final class RefundService
                 return;
             }
 
-            if ($requestedAmount > $remaining) {
-                // Session 2b only ever passes $amountCents = null (full
-                // refund), so this path is defensive. Session 3's admin
-                // UI clamps at the client; this is the server-side second
-                // check per locked decision #37.
-                Log::warning('RefundService: requested amount exceeds remaining refundable — clamping to remaining', [
-                    'booking_id' => $booking->id,
-                    'requested' => $requestedAmount,
-                    'remaining' => $remaining,
-                ]);
+            // `$amountCents = null` is the "refund everything remaining" contract
+            // (Session 2b's only mode + Session 3 system-dispatched paths). Non-
+            // null is a partial-refund request: if it exceeds the remaining,
+            // throw 422 per D-169 rather than silently clamp — hiding a
+            // 5000-requested/3000-remaining mismatch behind a silent clamp would
+            // misreport the refunded figure in the admin UI.
+            if ($amountCents === null) {
                 $requestedAmount = $remaining;
+            } else {
+                if ($amountCents > $remaining) {
+                    throw ValidationException::withMessages([
+                        'amount_cents' => [__('Refund exceeds the remaining refundable amount. Maximum allowed is :max.', [
+                            'max' => number_format($remaining / 100, 2, '.', "'"),
+                        ])],
+                    ]);
+                }
+                $requestedAmount = $amountCents;
             }
 
             $newRow = new BookingRefund;
@@ -173,8 +230,9 @@ final class RefundService
                 'currency' => $booking->currency ?? 'chf',
                 'status' => BookingRefundStatus::Pending,
                 'reason' => $reason,
-                'initiated_by_user_id' => null,
+                'initiated_by_user_id' => $initiatedByUserId,
                 'failure_reason' => null,
+                'admin_note' => $adminNote,
             ])->save();
             $row = $newRow;
         });
@@ -293,6 +351,129 @@ final class RefundService
         return $category === 'disconnected'
             ? RefundResult::disconnected($row, $message)
             : RefundResult::failed($row, $message);
+    }
+
+    /**
+     * PAYMENTS Session 3 — webhook settlement dispatcher (D-171 + D-172).
+     *
+     * Called from the refund-settlement arms on `StripeConnectWebhookController`
+     * (`charge.refunded`, `charge.refund.updated`, `refund.updated`). Maps
+     * Stripe's refund-state vocabulary onto our three-value
+     * `BookingRefundStatus` enum (locked D-167):
+     *
+     *  - `succeeded` → Succeeded (reconciles payment_status);
+     *  - `failed` / `canceled` → Failed (flips payment_status to
+     *    refund_failed, upserts PA, dispatches admin email);
+     *  - `requires_action` / `pending` → no-op (row stays Pending);
+     *  - anything else → log + no-op.
+     *
+     * Every branch is idempotent (outcome-level guards inside the settlement
+     * helpers handle already-terminal rows).
+     */
+    public function recordStripeState(
+        BookingRefund $row,
+        string $stripeStatus,
+        ?string $failureReason = null,
+    ): void {
+        switch ($stripeStatus) {
+            case 'succeeded':
+                $this->recordSettlementSuccess($row, (string) ($row->stripe_refund_id ?? ''));
+
+                return;
+            case 'failed':
+                $this->recordSettlementFailure($row, $failureReason ?? 'Stripe reported refund failed');
+
+                return;
+            case 'canceled':
+                // D-172: Stripe's `canceled` means the refund was reversed
+                // (e.g. ACH NACK). Map onto Failed so the admin-facing PA
+                // fires; operators need to know the funds are back on the
+                // connected account.
+                Log::critical('RefundService: Stripe reported refund canceled — mapping to Failed', [
+                    'booking_refund_id' => $row->id,
+                    'stripe_refund_id' => $row->stripe_refund_id,
+                ]);
+                $this->recordSettlementFailure($row, 'Stripe cancelled the refund');
+
+                return;
+            case 'requires_action':
+            case 'pending':
+                // No-op: leave the row at Pending. Stripe will follow up
+                // with a subsequent refund.updated event; we'll converge
+                // then.
+                return;
+            default:
+                Log::warning('RefundService: unknown Stripe refund status — no state change', [
+                    'booking_refund_id' => $row->id,
+                    'stripe_status' => $stripeStatus,
+                ]);
+        }
+    }
+
+    /**
+     * PAYMENTS Session 3 — idempotent settlement success.
+     *
+     * The webhook path calls this after matching a `booking_refunds` row by
+     * `stripe_refund_id`. Already-Succeeded rows are a no-op (outcome-level
+     * idempotency per locked decision #33).
+     */
+    public function recordSettlementSuccess(BookingRefund $row, string $stripeRefundId): void
+    {
+        DB::transaction(function () use ($row, $stripeRefundId): void {
+            $booking = Booking::query()->whereKey($row->booking_id)->lockForUpdate()->firstOrFail();
+
+            $fresh = $row->fresh();
+            if ($fresh !== null && $fresh->status === BookingRefundStatus::Succeeded) {
+                return;
+            }
+
+            $row->forceFill([
+                'status' => BookingRefundStatus::Succeeded,
+                'stripe_refund_id' => $stripeRefundId !== '' ? $stripeRefundId : $row->stripe_refund_id,
+            ])->save();
+
+            $this->reconcilePaymentStatus($booking);
+        });
+    }
+
+    /**
+     * PAYMENTS Session 3 — idempotent settlement failure.
+     *
+     * The webhook path calls this when `charge.refund.updated` arrives with
+     * `status = failed` / `canceled`. Flips the row to Failed, sets the
+     * booking's `payment_status` to `refund_failed`, upserts the PA, and
+     * dispatches the admin email — same sad-path surface as the synchronous
+     * disconnected-account fallback.
+     */
+    public function recordSettlementFailure(BookingRefund $row, ?string $failureReason): void
+    {
+        DB::transaction(function () use ($row, $failureReason): void {
+            $booking = Booking::query()->whereKey($row->booking_id)->lockForUpdate()->firstOrFail();
+
+            $fresh = $row->fresh();
+            if ($fresh !== null && $fresh->status === BookingRefundStatus::Failed) {
+                return;
+            }
+
+            $row->forceFill([
+                'status' => BookingRefundStatus::Failed,
+                'failure_reason' => $failureReason,
+            ])->save();
+
+            $booking->forceFill([
+                'payment_status' => PaymentStatus::RefundFailed,
+            ])->save();
+        });
+
+        $row = $row->fresh() ?? $row;
+        $row->loadMissing('booking');
+
+        if ($row->booking === null) {
+            return;
+        }
+
+        $this->upsertRefundFailedPendingAction($row->booking, $row);
+        $this->dispatchRefundFailedEmail($row->booking, $row);
     }
 
     /**

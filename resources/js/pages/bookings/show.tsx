@@ -102,6 +102,12 @@ export default function BookingShow() {
                                 )}
                         </div>
                     )}
+
+                    {booking.refund_status_line && (
+                        <p className="mt-1 text-sm text-muted-foreground">
+                            {booking.refund_status_line}
+                        </p>
+                    )}
                 </CardPanel>
                 {booking.can_cancel && (
                     <CardFooter>

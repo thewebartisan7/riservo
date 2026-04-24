@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Webhooks;
 
+use App\Enums\BookingRefundStatus;
 use App\Enums\BookingStatus;
 use App\Enums\ConfirmationMode;
 use App\Enums\PaymentMode;
@@ -10,26 +11,34 @@ use App\Enums\PendingActionStatus;
 use App\Enums\PendingActionType;
 use App\Jobs\Calendar\PushBookingToCalendarJob;
 use App\Models\Booking;
+use App\Models\BookingRefund;
+use App\Models\Business;
 use App\Models\PendingAction;
 use App\Models\StripeConnectedAccount;
+use App\Models\User;
 use App\Notifications\BookingConfirmedNotification;
 use App\Notifications\BookingReceivedNotification;
 use App\Notifications\Payments\CancelledAfterPaymentNotification;
+use App\Notifications\Payments\DisputeClosedNotification;
+use App\Notifications\Payments\DisputeOpenedNotification;
 use App\Services\Payments\CheckoutPromoter;
 use App\Services\Payments\RefundResult;
 use App\Services\Payments\RefundService;
 use App\Support\Billing\DedupesStripeWebhookEvents;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
+use Stripe\Charge as StripeCharge;
 use Stripe\Checkout\Session as StripeCheckoutSession;
 use Stripe\Event as StripeEvent;
 use Stripe\Exception\ApiConnectionException;
 use Stripe\Exception\ApiErrorException;
 use Stripe\Exception\RateLimitException;
 use Stripe\Exception\SignatureVerificationException;
+use Stripe\Refund as StripeRefund;
 use Stripe\StripeClient;
 use Stripe\Webhook as StripeWebhook;
 use Symfony\Component\HttpFoundation\Response;
@@ -161,6 +170,13 @@ class StripeConnectWebhookController
             // Cancelled-branch inside `handleCheckoutSessionCompleted`.
             'checkout.session.expired',
             'checkout.session.async_payment_failed' => $this->handleCheckoutSessionFailed($event),
+            // PAYMENTS Session 3 — refund-settlement webhook arms. `charge.
+            // refunded` delivers a Charge whose `refunds->data` carries the
+            // refund objects; the two `.refund.updated` variants deliver a
+            // Refund directly. D-171: match rows via stripe_refund_id.
+            'charge.refunded',
+            'charge.refund.updated',
+            'refund.updated' => $this->handleRefundEvent($event),
             default => new Response('Webhook unhandled.', 200),
         };
     }
@@ -421,6 +437,20 @@ class StripeConnectWebhookController
             'last_event_type' => $event->type,
         ];
 
+        // PAYMENTS Session 3: try to resolve the dispute's charge back to a
+        // booking via `stripe_payment_intent_id`. Stripe disputes carry a
+        // `payment_intent` field on the Dispute object. When found, the PA
+        // gets linked via `booking_id`. When null (rare — e.g. a dispute
+        // on a charge whose booking was deleted), the PA still lands so
+        // admins can investigate in Stripe.
+        $linkedBooking = null;
+        $paymentIntentId = is_string($dispute->payment_intent ?? null) ? $dispute->payment_intent : null;
+        if ($paymentIntentId !== null) {
+            $linkedBooking = Booking::where('stripe_payment_intent_id', $paymentIntentId)
+                ->where('business_id', $row->business_id)
+                ->first();
+        }
+
         // Codex Round-3 finding (D-126): the upsert MUST be race-safe under
         // concurrent dispute event delivery. The partial unique index on
         // `payload->>'dispute_id' WHERE type = 'payment.dispute_opened'` is
@@ -433,6 +463,7 @@ class StripeConnectWebhookController
 
         $insertAttributes = [
             'business_id' => $row->business_id,
+            'booking_id' => $linkedBooking?->id,
             'type' => PendingActionType::PaymentDisputeOpened,
             'payload' => $payload,
             'status' => $closing ? PendingActionStatus::Resolved : PendingActionStatus::Pending,
@@ -447,14 +478,37 @@ class StripeConnectWebhookController
         // Without the savepoint, Postgres aborts the entire transaction on
         // the unique error and every subsequent query in this request
         // fails with `current transaction is aborted`.
+        $wasInserted = false;
         try {
             DB::transaction(static fn () => PendingAction::create($insertAttributes));
-
-            return new Response('OK', 200);
+            $wasInserted = true;
         } catch (UniqueConstraintViolationException) {
             // Race-loser path: another request inserted first (or the test
             // pre-seeded a row). Re-read and update; same path as the
             // existing-row branch below.
+        }
+
+        // PAYMENTS Session 3 (locked decision #35): admin email on the
+        // `created` arm. `updated` only refreshes the PA payload; `closed`
+        // dispatches `DisputeClosedNotification` carrying the outcome. The
+        // cache-layer D-092 dedup collapses exact replays; the PA's "was
+        // inserted" bit tells genuine first-deliveries from race-loser
+        // re-reads so duplicate emails aren't dispatched on a second run.
+        if ($wasInserted) {
+            $pa = PendingAction::where('business_id', $row->business_id)
+                ->where('type', PendingActionType::PaymentDisputeOpened->value)
+                ->where('payload->dispute_id', $disputeId)
+                ->first();
+
+            if ($pa !== null) {
+                if ($closing) {
+                    $this->dispatchDisputeClosedEmail($row->business_id, $linkedBooking, $pa);
+                } elseif ($event->type === 'charge.dispute.created') {
+                    $this->dispatchDisputeOpenedEmail($row->business_id, $linkedBooking, $pa);
+                }
+            }
+
+            return new Response('OK', 200);
         }
 
         $existing = PendingAction::where('business_id', $row->business_id)
@@ -469,12 +523,22 @@ class StripeConnectWebhookController
         }
 
         if ($closing) {
+            // Transition from Pending → Resolved is the meaningful one; if
+            // the PA is ALREADY Resolved (stale replay), skip the email so
+            // admins don't get duplicate closing emails.
+            $wasPending = $existing->status === PendingActionStatus::Pending;
+
             $existing->forceFill([
+                'booking_id' => $existing->booking_id ?? $linkedBooking?->id,
                 'payload' => $payload,
                 'status' => PendingActionStatus::Resolved,
                 'resolution_note' => 'closed:'.($isDisputeClosed ?? 'unknown'),
                 'resolved_at' => now(),
             ])->save();
+
+            if ($wasPending) {
+                $this->dispatchDisputeClosedEmail($row->business_id, $linkedBooking, $existing);
+            }
 
             return new Response('OK', 200);
         }
@@ -486,9 +550,56 @@ class StripeConnectWebhookController
             return new Response('OK', 200);
         }
 
-        $existing->forceFill(['payload' => $payload])->save();
+        $existing->forceFill([
+            'booking_id' => $existing->booking_id ?? $linkedBooking?->id,
+            'payload' => $payload,
+        ])->save();
 
+        // `updated` arms refresh without emailing. `created` that lands on
+        // an existing Pending row is a race replay — cache-layer dedup will
+        // already have caught same-id replays; skip email.
         return new Response('OK', 200);
+    }
+
+    /**
+     * Admin email for `charge.dispute.created` (locked decision #35).
+     * Admin-only per locked decisions #19 / #35 — staff do not receive
+     * dispute emails.
+     */
+    private function dispatchDisputeOpenedEmail(int $businessId, ?Booking $booking, PendingAction $pa): void
+    {
+        $admins = $this->businessAdmins($businessId);
+        if ($admins->isEmpty()) {
+            return;
+        }
+        Notification::send($admins, new DisputeOpenedNotification($booking, $pa));
+    }
+
+    /**
+     * Admin email for `charge.dispute.closed` carrying the final outcome
+     * (won / lost / warning_closed).
+     */
+    private function dispatchDisputeClosedEmail(int $businessId, ?Booking $booking, PendingAction $pa): void
+    {
+        $admins = $this->businessAdmins($businessId);
+        if ($admins->isEmpty()) {
+            return;
+        }
+        Notification::send($admins, new DisputeClosedNotification($booking, $pa));
+    }
+
+    /**
+     * @return Collection<int, User>
+     */
+    private function businessAdmins(int $businessId): Collection
+    {
+        $business = Business::find($businessId);
+        if ($business === null) {
+            return collect();
+        }
+        $business->loadMissing('admins');
+
+        return $business->admins;
     }
 
     /**
@@ -1084,6 +1195,169 @@ class StripeConnectWebhookController
         }
 
         Notification::send($admins, new CancelledAfterPaymentNotification($booking, $row));
+    }
+
+    /**
+     * PAYMENTS Session 3 — refund-settlement webhook handler (locked
+     * decisions #33 + D-167 + D-171 + D-172).
+     *
+     * Three event shapes converge here:
+     *  - `charge.refunded`       — data.object = Charge, whose
+     *                              `refunds->data[]` carries the Refund(s);
+     *  - `charge.refund.updated` — data.object = Refund;
+     *  - `refund.updated`        — data.object = Refund.
+     *
+     * Both `.refund.updated` variants exist across Stripe API versions —
+     * subscribing to both belts-and-braces against dashboard test-endpoint
+     * drift. The D-092 event-id cache dedup collapses exact-duplicate event
+     * ids; different ids for the same state transition converge via the
+     * outcome-level guard inside `RefundService::recordStripeState`.
+     *
+     * Row match (D-171): `booking_refunds.stripe_refund_id`. If no row
+     * matches, log warning + 200 (Stripe won't retry on 2xx; an untracked
+     * refund id is either a test-environment leftover or a legitimately
+     * orphaned refund). Cross-account guard via the D-158 pin on the
+     * booking: the refund must belong to the SAME `stripe_account` that
+     * minted the original Checkout session.
+     */
+    private function handleRefundEvent(StripeEvent $event): Response
+    {
+        $refunds = $this->extractRefundsFromEvent($event);
+        if ($refunds === []) {
+            Log::warning('Connect refund event: no Refund objects extracted from payload', [
+                'event_id' => $event->id,
+                'event_type' => $event->type,
+            ]);
+
+            return new Response('OK', 200);
+        }
+
+        $actualAccount = $event->account ?? null;
+
+        foreach ($refunds as $stripeRefund) {
+            $refundId = is_string($stripeRefund->id ?? null) ? $stripeRefund->id : null;
+            if ($refundId === null) {
+                continue;
+            }
+
+            $row = BookingRefund::where('stripe_refund_id', $refundId)->first();
+            if ($row === null) {
+                // Codex Round 2 P2: `RefundService::refund` bubbles
+                // transient Stripe errors (5xx / 429 / connection drop) so
+                // the caller can return 5xx and let Stripe retry. If
+                // Stripe had actually CREATED the refund before the
+                // transport failed (response-loss), our row is left
+                // `Pending` with `stripe_refund_id = null`. A later
+                // `charge.refunded` / `refund.updated` would then miss the
+                // row and silently drop — leaving the customer refunded
+                // but the booking still `Paid`. Fall back to matching via
+                // `(payment_intent, amount_cents, status=pending)` and
+                // backfill the `stripe_refund_id` so future events
+                // converge.
+                $row = $this->resolveRefundRowByFallback($stripeRefund, $refundId, $event);
+
+                if ($row === null) {
+                    Log::warning('Connect refund event: no booking_refunds row matches stripe_refund_id (and no payment_intent/amount fallback)', [
+                        'event_id' => $event->id,
+                        'event_type' => $event->type,
+                        'stripe_refund_id' => $refundId,
+                    ]);
+
+                    continue;
+                }
+            }
+
+            // D-158 cross-account guard via the booking's pin.
+            $row->loadMissing('booking');
+            $expectedAccount = $row->booking?->stripe_connected_account_id;
+            if (! is_string($expectedAccount) || $expectedAccount === '' || $actualAccount !== $expectedAccount) {
+                Log::critical('Connect refund event cross-account mismatch', [
+                    'event_id' => $event->id,
+                    'event_type' => $event->type,
+                    'booking_refund_id' => $row->id,
+                    'expected_account' => $expectedAccount,
+                    'actual_account' => $actualAccount,
+                ]);
+
+                continue;
+            }
+
+            $stripeStatus = is_string($stripeRefund->status ?? null) ? $stripeRefund->status : '';
+            $failureReason = is_string($stripeRefund->failure_reason ?? null) ? $stripeRefund->failure_reason : null;
+
+            $this->refundService->recordStripeState($row, $stripeStatus, $failureReason);
+        }
+
+        return new Response('OK', 200);
+    }
+
+    /**
+     * Codex Round 2 P2 fallback: resolve a `booking_refunds` row when the
+     * primary `stripe_refund_id` lookup missed (response-loss scenario).
+     *
+     * The webhook's Refund object carries `payment_intent` + `amount`. Look
+     * up the booking via `stripe_payment_intent_id` (the D-152 pin),
+     * then find the most recent Pending row on that booking whose
+     * `amount_cents` matches the Stripe refund amount AND whose
+     * `stripe_refund_id` is still null. Backfill the id so subsequent
+     * events converge via the primary path.
+     *
+     * Returns null when the fallback also misses — the caller logs +
+     * continues to the next refund.
+     */
+    private function resolveRefundRowByFallback(StripeRefund $stripeRefund, string $refundId, StripeEvent $event): ?BookingRefund
+    {
+        $paymentIntentId = is_string($stripeRefund->payment_intent ?? null) ? $stripeRefund->payment_intent : null;
+        $amount = is_int($stripeRefund->amount ?? null) ? $stripeRefund->amount : null;
+
+        if ($paymentIntentId === null || $amount === null || $amount <= 0) {
+            return null;
+        }
+
+        $booking = Booking::where('stripe_payment_intent_id', $paymentIntentId)->first();
+        if ($booking === null) {
+            return null;
+        }
+
+        $row = $booking->bookingRefunds()
+            ->whereNull('stripe_refund_id')
+            ->where('amount_cents', $amount)
+            ->where('status', BookingRefundStatus::Pending->value)
+            ->latest('id')
+            ->first();
+
+        if ($row === null) {
+            return null;
+        }
+
+        $row->forceFill(['stripe_refund_id' => $refundId])->save();
+
+        Log::info('Connect refund event: resolved row via payment_intent+amount fallback; backfilled stripe_refund_id', [
+            'event_id' => $event->id,
+            'booking_refund_id' => $row->id,
+            'stripe_refund_id' => $refundId,
+        ]);
+
+        return $row;
+    }
+
+    /**
+     * @return array<int, StripeRefund>
+     */
+    private function extractRefundsFromEvent(StripeEvent $event): array
+    {
+        $object = $event->data->object ?? null;
+        if ($object instanceof StripeRefund) {
+            return [$object];
+        }
+
+        if ($object instanceof StripeCharge) {
+            // `$object->refunds->data` is typed as `Refund[]` by the Stripe
+            // SDK; return it directly.
+            return $object->refunds->data ?? [];
+        }
+
+        return [];
     }
 
     private function extractAccountId(StripeEvent $event): ?string

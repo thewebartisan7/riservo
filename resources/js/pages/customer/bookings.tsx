@@ -29,6 +29,11 @@ function BookingItem({ booking }: { booking: BookingSummary }) {
                     {formatTimeShort(booking.ends_at, tz)}
                 </span>
                 <span className="text-xs capitalize text-muted-foreground">{booking.status}</span>
+                {booking.refund_status_line && (
+                    <span className="text-xs text-muted-foreground">
+                        {booking.refund_status_line}
+                    </span>
+                )}
             </div>
             {booking.can_cancel && (
                 <Form action={cancel(booking.id)}>

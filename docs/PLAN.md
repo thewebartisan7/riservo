@@ -1,572 +1,777 @@
-# PAYMENTS Session 2b — Payment at Booking (Failure Branching + Admin Surface)
+# PAYMENTS Session 3 — Refunds (Customer / Admin-Manual / Business) + Disputes
 
-This plan lives at `docs/PLAN.md` and follows `.claude/references/PLAN.md`. It is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, `Review`, and `Outcomes & Retrospective` are kept current as work proceeds.
+This plan lives at `docs/PLAN.md` and follows `.claude/references/PLAN.md`. It is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, `Review`, and `Outcomes & Retrospective` are kept up to date as work proceeds.
 
 
 ## Purpose / Big Picture
 
-Session 2a shipped the happy path: a customer whose Stripe Checkout completes lands at `confirmed + paid` (or `pending + paid` for manual-confirmation businesses). Session 2b makes the failure and admin surfaces real.
+After this session, every cancel path on a paid booking automatically refunds the customer, admins can issue full or partial refunds manually from the dashboard, manual-confirmation rejections of paid bookings refund the customer, and disputes + refund settlements surface to admins via the existing Pending Action system. Nothing is left where a cancelled booking sits with money stuck on the professional's connected account.
 
-After this session ships:
+What someone can see working after this ships:
 
-- **An expired, failed, or abandoned Checkout stops stranding a booking at `pending + awaiting_payment`.** The Connect webhook endpoint handles `checkout.session.expired`, `checkout.session.async_payment_failed`, and `payment_intent.payment_failed`. For bookings whose snapshot is `payment_mode_at_creation = 'online'` the slot is released (`status → Cancelled`, `payment_status → NotApplicable`, no customer notifications). For `customer_choice` the booking is promoted to `confirmed + Unpaid` (or `pending + Unpaid` under manual-confirmation businesses, per locked roadmap decision #29) and the standard booking-confirmed notifications fire — the slot stays held, the customer pays at the appointment.
-- **A 90-minute expiry reaper (`bookings:expire-unpaid`) runs every 2 minutes with `withoutOverlapping()`** and cleans up `online` bookings whose Checkout window has closed. "Cleanup" means transitioning the booking to `Cancelled`, which releases the slot via the GIST exclusion constraint (D-065 / D-066 only holds while `status IN (pending, confirmed)`). The reaper's base filter includes `payment_mode_at_creation = 'online'` — it **only** touches bookings that were created against businesses configured as online-only. Three stacked mitigations against the webhook race (locked roadmap decision #31): a 5-minute grace buffer on `expires_at`, a Stripe-side pre-flight `checkout.sessions.retrieve` that promotes via `CheckoutPromoter` when Stripe already reports paid (so a slow TWINT payment doesn't get reaped), and a late-webhook refund path when `checkout.session.completed` or `payment_intent.succeeded` arrives after the reaper already cancelled.
+- **Customer in-window cancel.** A customer with a paid booking clicks "Cancel booking" on `/bookings/{token}` (or `/my-bookings/{id}/cancel` if authenticated). If the cancellation window hasn't passed, the booking flips to `cancelled`, `RefundService` dispatches a full refund against the pinned connected account, the `bookings/show` page shows a "Refund initiated — 5–10 business days" status line, and the customer receives a cancellation email including a "a full refund has been issued" clause. If the window has passed, the existing copy ("contact the business") stays as-is and no refund is attempted.
+- **Admin-triggered manual refund.** An admin opens the booking-detail sheet in `/dashboard/bookings`, clicks a new "Refund" button visible only when `payment_status ∈ {paid, partially_refunded}` AND `remainingRefundableCents() > 0`. A dialog offers a full-refund radio (default) or a partial-refund amount input (clamped at the remaining refundable amount) plus a free-text reason. Submitting hits a new `Dashboard\BookingRefundController::store` which calls `RefundService::refund` with `reason='admin-manual'` and `initiated_by_user_id=auth()->id()`. Staff users don't see the Refund button at all (the admin-only Payment panel is already hidden from staff in Session 2b).
+- **Business cancel.** An admin transitions a paid booking to `cancelled` from the dashboard detail sheet. The booking flips to `cancelled` and a full refund dispatches automatically with `reason='business-cancelled'`. The customer receives the existing `BookingCancelledNotification` with a refund clause appended; when the connected account is disconnected the fallback copy appears instead.
+- **Manual-confirmation rejection.** A business running `confirmation_mode=manual` rejects a `pending + paid` booking from the detail sheet. The booking flips to `cancelled` and a full refund dispatches with `reason='business-rejected-pending'`. The customer's cancellation email includes the refund clause. Rejecting a `pending + unpaid` booking (Session 2b's customer_choice-failed-Checkout path) cancels without any refund — the email omits the refund clause entirely. Rejecting a `pending + awaiting_payment` booking (Stripe Checkout not yet completed) cancels without a refund attempt — the Checkout session will expire naturally.
+- **Disputes.** When Stripe emits `charge.dispute.created` on a connected account, the existing `payment.dispute_opened` Pending Action stub (D-123) is upgraded: admins receive an email with the dispute reason + a deep-link to the Stripe Express dispute UI; the booking-detail sheet shows a new "Dispute" section deep-linking to Stripe. On `charge.dispute.updated` the payload refreshes (no duplicate email). On `charge.dispute.closed` the PA resolves with a "Dispute won" / "Dispute lost — funds returned to customer" summary and admins receive a closing email. Booking status + payment_status stay unchanged throughout.
+- **Refund settlements.** When Stripe later confirms or fails the refund via `charge.refunded`, `charge.refund.updated`, or `refund.updated`, the matching `booking_refunds` row flips status + `failure_reason` in-place and the booking's `payment_status` reconciles (`paid → refunded` / `paid → partially_refunded` / `paid → refund_failed`). Every handler re-reads DB state before acting (locked decision #33).
 
-  **Why the reaper only touches `online`-only bookings** (locked roadmap decision #13): a `customer_choice` business accepts offline payment too, so a failed Checkout does NOT mean "release the slot" — it means "the customer tried to prepay online, couldn't, and will now pay at the appointment". For those bookings, the webhook failure arms (`checkout.session.expired` etc.) promote the booking to `confirmed + Unpaid` (slot stays held). The reaper and the webhook failure arms are therefore complementary, NOT redundant:
+**Iteration-loop baseline at session start:** 876 passed / 3559 assertions. Expected growth ≈ 30–55 new Feature + Unit tests.
 
-  | Business `payment_mode` → booking's `payment_mode_at_creation` | Failed Checkout outcome | Slot released? | Who owns the transition |
-  |---|---|---|---|
-  | `online` → `'online'` | `Cancelled + NotApplicable` | Yes (GIST frees the slot) | Reaper **and** webhook failure arms |
-  | `customer_choice` → `'customer_choice'` (customer picked "pay now") | `Confirmed + Unpaid` (or `Pending + Unpaid` under manual-confirm) | No (slot stays held) | Webhook failure arms only |
-  | `offline` → `'offline'` | N/A (no Checkout session ever created) | N/A | N/A |
-
-  The reaper's `WHERE payment_mode_at_creation = 'online'` guard is what prevents it from ever touching a `customer_choice` booking. The webhook failure arms branch internally on the same snapshot, and for `customer_choice` they set `expires_at = null` so even if a future reaper pass loosened its filter, the row would fall out of the `expires_at < now - 5min` criterion.
-- **A minimal refunds pipeline is wired end-to-end for the one reason Session 2b owns (`cancelled-after-payment`).** New `booking_refunds` table + `App\Services\Payments\RefundService` skeleton. The service inserts a `booking_refunds` row with a populated UUID, calls Stripe with `idempotency_key = 'riservo_refund_{uuid}'` (locked roadmap decision #36), writes the outcome, and — on a disconnected-account permission error — marks the row `failed`, sets the booking's `payment_status = refund_failed`, creates a `payment.refund_failed` Pending Action, and dispatches an admin email. Session 3 expands the service with the other four reasons; it does NOT re-create the table or redefine the signature.
-- **Admins see payments in the dashboard.** The booking-detail sheet grows a Payment panel (paid amount + method + Stripe charge deep-link for paid bookings; audit-trail copy for `unpaid`; manual-confirmation copy for `pending + paid`; `cancelled-after-payment` banner + "Mark as resolved" CTA for Pending Actions). The bookings-list grows a Payment filter (chips for `paid`, `awaiting_payment`, `unpaid`, `refunded`, `offline`) and a Payment column.
-- **The `cancel_url` landing page on the public booking route shows copy that branches on `payment_mode_at_creation`.** The underlying state transition stays webhook-driven (locked roadmap decision #31 idempotency contract + D-151's "CheckoutPromoter is the single source of truth" invariant); the cancel URL is informational.
-
-You can see the feature by, from a clean `migrate:fresh --seed`:
-
-1. **Online-mode expiry branch** — Seed a Business with a verified connected account, `payment_mode = online`. Book a service at `riservo.ch/{slug}`; see the Stripe Checkout URL. Abandon the page. Run `php artisan bookings:expire-unpaid` after 95 minutes (or manually set `bookings.expires_at = now()->subMinutes(10)` and run the command — the 5-minute grace buffer is the only gate). See the reaper's pre-flight retrieve hit Stripe; see the booking flip to `Cancelled + NotApplicable`; confirm the slot is bookable again.
-2. **Customer-choice failure branch** — Same Business, flip `payment_mode = customer_choice`. Book again and pick "pay now". On Stripe's hosted page, wait for `checkout.session.expired` (or in test mode dispatch the event via `stripe trigger checkout.session.expired`). See the booking flip to `Confirmed + Unpaid` (or `Pending + Unpaid` under manual confirmation), the slot stays held, the standard booking-confirmed email fires.
-3. **Late-webhook refund** — On an online-mode booking, let the reaper cancel the row. Then dispatch a delayed `checkout.session.completed` for the same session (test mode). See: `payment_status` goes to `Paid` with the charge columns populated; a `booking_refunds` row is created with `status = succeeded` and a `stripe_refund_id`; a `payment.cancelled_after_payment` Pending Action appears on the booking-detail banner; the admin gets an email with the customer's contact and the dispatched refund id.
-4. **Admin surface** — Visit `/dashboard/bookings` as an admin. Filter by Payment chip `paid`. Open a row. See the Payment panel: amount, currency, method, Stripe dashboard deep-link. Resolve the `cancelled-after-payment` banner — it marks the Pending Action resolved.
-
-Under the hood, Session 2a's `CheckoutPromoter` is the single promotion path (D-151); Session 2b's reaper pre-flight calls it, Session 2b's late-webhook refund handler does not (the booking is already Cancelled — the handler writes the Paid columns inline and dispatches `RefundService`). No inline promotion logic is introduced anywhere.
+**New decision IDs minted this session:** D-169 onwards. Next free id lives in `docs/HANDOFF.md`.
 
 
 ## Progress
 
-Timestamps in UTC. Mark each step `[x]` as it completes; split a step into "done: X / remaining: Y" if you stop partway.
-
-### M0 — Plan & alignment
-
-- [x] (2026-04-23 12:00Z) Plan written, gate-1 approval requested.
-- [x] (2026-04-23 12:10Z) Gate-1 approved by developer — with two concrete revisions: (a) `BookingRefundStatus` is a native enum, not a string; (b) Purpose section now explicitly documents that the reaper only cancels `online`-only bookings because `customer_choice` failures keep the slot held via the webhook path. Both changes are live in this plan.
-
-### M1 — Data layer (migration + model helpers)
-
-- [x] (2026-04-23 12:20Z) Migration `database/migrations/2026_04_23_175629_create_booking_refunds_table.php` created with full column set + composite index `(booking_id, status)`.
-- [x] (2026-04-23 12:22Z) Enum `App\Enums\BookingRefundStatus` with three cases — `Pending`, `Succeeded`, `Failed`.
-- [x] (2026-04-23 12:25Z) `App\Models\BookingRefund` with fillable + casts + `booking()` + `initiatedByUser()` relations; PHPDoc pins properties + enum status.
-- [x] (2026-04-23 12:26Z) `bookingRefunds(): HasMany<BookingRefund>` relation added to `Booking`.
-- [x] (2026-04-23 12:28Z) `Booking::remainingRefundableCents()` extended to the real clamp. Smoke-tested via tinker: paid=10000 → pending 3000 → remaining 7000 → + succeeded 2000 → remaining 5000 → + failed 1000 → still 5000 (failed rows do NOT reduce the clamp). `max(0, …)` guard in place.
-- [x] (2026-04-23 12:30Z) `BookingRefundFactory` with `pending()` / `succeeded()` / `failed()` states. Default `reason = 'cancelled-after-payment'`; `booking_id` defaults to a paid booking.
-
-### M2 — `RefundService` skeleton (cancelled-after-payment only)
-
-- [x] (2026-04-23 12:45Z) `App\Services\Payments\RefundService` + `RefundResult` DTO. Idempotency key shape `riservo_refund_{uuid}`; `PermissionException` / `AuthenticationException` → disconnected; other `ApiErrorException` → failed; both share `recordFailure()` which marks the row Failed, flips booking `payment_status = RefundFailed`, upserts the `payment.refund_failed` PA, dispatches `RefundFailedNotification` to admins only. Happy path reconciles `payment_status → Refunded` (full) or `PartiallyRefunded` (defensive — Session 2b only hits full). PHPStan level-5 clean.
-- [x] (2026-04-23 12:35Z) M5 notifications pulled forward (dependency of RefundService): `RefundFailedNotification` + `CancelledAfterPaymentNotification` with markdown templates under `resources/views/mail/payments/`.
-- [ ] Inside `refund()`:
-  1. Top-level guards return `guard_rejected` when `paid_amount_cents` is null/0, when `stripe_payment_intent_id` is null (nothing to refund against), or when `remainingRefundableCents() <= 0`. Log warning + booking_id; do NOT create a row.
-  2. Wrap the `BookingRefund` insert in `DB::transaction` with a `lockForUpdate` on the booking. Insert with `status = pending`, `uuid = (string) Str::uuid()`, `amount_cents = $amountCents ?? $booking->paid_amount_cents`, `currency = $booking->currency`, `reason = $reason`. The DB::transaction callback returns nothing (D-148 / D-151 scalar-return workaround — the inserted row is captured via reference).
-  3. Outside the transaction, inside a `try` — resolve the connected-account id as `$booking->stripe_connected_account_id` (D-158; critical log + return `failed` if null); call `$this->stripe->refunds->create(['payment_intent' => $booking->stripe_payment_intent_id, 'amount' => $row->amount_cents], ['stripe_account' => $acct, 'idempotency_key' => 'riservo_refund_'.$row->uuid])`.
-  4. On `Stripe\Exception\PermissionException` OR any `ApiErrorException` whose error code indicates a permission / deauthorisation issue (`account_invalid`, `account_inactive`, `permission_error`, HTTP 401 / 403) → mark the row `failed`, `failure_reason = $e->getMessage()`, set booking's `payment_status = refund_failed`, `upsertRefundFailedPendingAction(...)`, dispatch `RefundFailedNotification` to admins, return `RefundResult::disconnected(...)`.
-  5. On any other `ApiErrorException` → same DB side-effects as #4 but return `RefundResult::failed(...)`.
-  6. On success → update the row: `status = succeeded`, `stripe_refund_id = $refund->id`; recompute booking's `payment_status` via `reconcilePaymentStatus($booking)` — full refund (the only Session 2b reason) → `Refunded`. Defensive: if the sum of succeeded refunds < `paid_amount_cents` (can't happen in 2b), set `PartiallyRefunded`. Return `RefundResult::succeeded(...)`.
-- [ ] `upsertRefundFailedPendingAction($booking, $row)` writes a `payment.refund_failed` PendingAction with `payload = ['booking_refund_id', 'booking_id', 'stripe_payment_intent_id', 'amount_cents', 'currency', 'failure_reason']`. Idempotent via `updateOrCreate` keyed on `(business_id, payload->>'booking_refund_id')`.
-
-### M3 — Failure webhook arms on `StripeConnectWebhookController`
-
-- [x] (2026-04-23 13:10Z) Four new arms wired: `checkout.session.expired` + `.async_payment_failed` → `handleCheckoutSessionFailed`; `payment_intent.payment_failed` → `handlePaymentIntentFailed`; `payment_intent.succeeded` → `handlePaymentIntentSucceeded`. `handleCheckoutSessionCompleted` routes Cancelled bookings to the late-refund branch before calling the promoter. Shared helpers: `applyCheckoutFailureBranch`, `applyLateWebhookRefund`, `upsertCancelledAfterPaymentPendingAction`, `dispatchCancelledAfterPaymentEmail`, `dispatchCustomerChoiceFailureNotifications`. New `BookingReceivedNotification` context `'pending_unpaid_awaiting_confirmation'` + blade branch for manual-confirm + customer_choice + failed-Checkout customer email. PHPStan clean; existing 66 Payments tests still green.
-
-- [x] Extend the `dispatch()` `match` with four new arms:
-  - `checkout.session.expired` → `handleCheckoutSessionExpired(...)`.
-  - `checkout.session.async_payment_failed` → shares body with expired (`handleCheckoutSessionFailed(...)`).
-  - `payment_intent.payment_failed` → `handlePaymentIntentFailed(...)` (resolves the booking via the PI id).
-  - `payment_intent.succeeded` → `handlePaymentIntentSucceeded(...)` (late-webhook refund path).
-- [ ] Shared body for the two Checkout failure events: resolve booking via `client_reference_id` (same guards as the happy-path handler for non-numeric / unknown); cross-check `stripe_connected_account_id` (D-158 pin — critical log + 200 on mismatch); outcome-level guard (`payment_status === Paid` → 200; `status === Cancelled` → 200 no-op). Then branch on `payment_mode_at_creation`:
-  - `'online'` → `DB::transaction { lockForUpdate; re-read status/payment_status guards; status = Cancelled; payment_status = NotApplicable; expires_at = null; }`; no notifications (customer knows they didn't complete payment).
-  - `'customer_choice'` → `DB::transaction { lockForUpdate; re-read guards; status = $business->confirmation_mode === Manual ? Pending : Confirmed; payment_status = Unpaid; expires_at = null; }`. Then OUTSIDE the lock dispatch the standard notifications via a new private helper `dispatchConfirmedOrReceivedNotifications($booking)` — Confirmed → `BookingConfirmedNotification` to customer + staff `BookingReceivedNotification('new')`; Pending → staff `BookingReceivedNotification('new')` + customer `BookingReceivedNotification` ('pending' context — reuse the manual-confirmation template's unpaid-awaiting-confirmation variant or add a new context value `'customer_choice_unpaid_pending'` if the existing ones don't fit).
-  - `'offline'` → defensive: should never reach here (offline bookings don't open Checkout sessions). Log critical + 200.
-- [ ] `handlePaymentIntentFailed` resolves via `Booking::where('stripe_payment_intent_id', $pi->id)->first()`. If null → log warning + 200 (the PI id is only set at Session 2a's `checkout.session.completed` promotion; a failed PI before that point doesn't have a linked booking yet). Once resolved: same body + same branching as the Checkout failure handlers.
-- [ ] `handlePaymentIntentSucceeded` → late-webhook refund path (locked roadmap decision #31.3):
-  1. Resolve booking via `stripe_payment_intent_id` (present) OR via the charge id's upstream PI → fall back to no-op if unresolvable.
-  2. Guards: if `status !== Cancelled` → 200 no-op (happy-path handler owns the `AwaitingPayment → Paid` transition). If `payment_status === Paid` → 200 no-op. Otherwise:
-  3. `DB::transaction { lockForUpdate; re-read guards; payment_status = Paid; paid_at = now(); paid_amount_cents = $pi->amount_received; currency = strtolower($pi->currency); stripe_charge_id = $pi->latest_charge; }` — booking stays `Cancelled`; the slot may already be re-booked.
-  4. Outside the lock: `$refundResult = $this->refundService->refund($booking, null, 'cancelled-after-payment');`.
-  5. Upsert a `payment.cancelled_after_payment` PendingAction with `payload = ['booking_id', 'booking_refund_id', 'customer_name', 'customer_email', 'customer_phone', 'amount_cents', 'currency', 'starts_at', 'refund_outcome']`. Idempotent via `updateOrCreate` keyed on `(business_id, payload->>'booking_id', type)` — one PA per cancelled-after-payment booking.
-  6. Dispatch `CancelledAfterPaymentNotification` to the business's admins (customer contact + booking_refund.id + amount/currency + booking detail deep-link).
-- [ ] **Also handle `checkout.session.completed` arriving late for a `Cancelled + !Paid` booking** (belt-and-braces before locked #31.3's PI-based path in case Stripe emits the Checkout-level event first without a PI one). In the existing `handleCheckoutSessionCompleted` body, branch BEFORE calling `CheckoutPromoter::promote`: if `$booking->status === Cancelled`, reuse `handlePaymentIntentSucceeded`'s late-refund branch (pulling `$session->payment_intent`, `$session->amount_total`, `$session->currency`). The promoter would otherwise reject via its session-id-mismatch or DB-state guard, surfacing a false-positive `'mismatch'` log.
-
-### M4 — Reaper command `bookings:expire-unpaid`
-
-- [x] (2026-04-23 13:25Z) `ExpireUnpaidBookings` command shipped. Base filter enforces `payment_mode_at_creation = 'online'` + 5-min grace buffer; pre-flight retrieve on pinned connected account (D-158) with explicit `InvalidRequestException` (4xx) / `ApiConnectionException` / `ApiErrorException` (5xx) branches; `CheckoutPromoter::promote` runs inline when Stripe reports paid/complete (cancel always skipped, even on `'mismatch'`). `DB::transaction + lockForUpdate` around the cancel with re-checked outcome guard inside the lock. Schedule entry `everyTwoMinutes()->withoutOverlapping()` added to `routes/console.php`. Smoke-test on empty DB: `Reaper: cancelled=0 promoted=0 skipped=0`. PHPStan clean.
-
-- [x] Create `app/Console/Commands/ExpireUnpaidBookings.php`. Signature `bookings:expire-unpaid`. Description "Cancel or recover stale pending+awaiting_payment online bookings after the 90-minute Checkout window elapsed plus a 5-minute grace buffer (locked roadmap decision #31)."
-- [ ] Command body:
-  1. Base query: `Booking::query()->where('status', BookingStatus::Pending)->where('payment_status', PaymentStatus::AwaitingPayment)->where('payment_mode_at_creation', 'online')->where('expires_at', '<', now()->subMinutes(5))`. Platform-wide scope (same convention as `AutoCompleteBookings` etc.). **The `payment_mode_at_creation = 'online'` predicate is the policy gate** per locked roadmap decision #13: it guarantees the reaper only ever cancels bookings against online-only businesses, so the slot-release is always the intended outcome. `customer_choice` bookings (`payment_mode_at_creation = 'customer_choice'`) never appear in this query — their Checkout-failure path is handled by the webhook arms in M3, which keep the slot held and promote the booking to `Confirmed + Unpaid`. If the reaper's filter were ever loosened, the `expires_at IS NULL` convention for `customer_choice` bookings (established in Session 2a per locked decision #13) would still keep them out of the `expires_at < now - 5 min` criterion.
-  2. Chunk 100 rows; each booking processed in its own `try / catch` so a single failure doesn't abort the batch. Output a table / structured log summary at the end.
-  3. **Pre-flight retrieve** (locked roadmap decision #31.2). For each booking:
-     - If `stripe_checkout_session_id` OR `stripe_connected_account_id` is null → critical log + skip (data anomaly).
-     - Try `$this->stripe->checkout->sessions->retrieve($session_id, ['stripe_account' => $acct])`.
-     - `ApiConnectionException` / HTTP 5xx → warning log + skip (leave for next tick).
-     - HTTP 4xx (session not found) → proceed with the cancel (session is gone).
-     - Otherwise:
-       - If `$session->status === 'complete'` OR `$session->payment_status === 'paid'` → call `$this->checkoutPromoter->promote($booking, $session)`. **SKIP the cancel regardless of the promoter's return** (`'paid'`, `'already_paid'`, `'not_paid'`, `'mismatch'`). The `'mismatch'` case means the promoter already logged critical; cancelling would potentially free a paid slot (see Risks & Notes).
-       - Otherwise (`status = 'expired'` or `'open' && payment_status != 'paid'`) → proceed with the cancel.
-  4. **Cancel path**: `DB::transaction { lockForUpdate; re-read status = Pending + payment_status = AwaitingPayment; then update status = Cancelled, payment_status = NotApplicable, expires_at = null; }`. No customer notifications.
-  5. Structured log for each iteration — `booking_id`, outcome (`promoted | cancelled | skipped_stripe_5xx | skipped_data_anomaly`).
-- [ ] Schedule the command in `routes/console.php` right below `calendar:renew-watches`: `Schedule::command('bookings:expire-unpaid')->everyTwoMinutes()->withoutOverlapping();`. Laravel 13's `Schedule` facade ships `everyTwoMinutes()`; if not available on this version, fall back to `->cron('*/2 * * * *')`.
-- [ ] Constructor property promotion for `StripeClient` + `CheckoutPromoter` + `LoggerInterface` (if needed) so `FakeStripeClient` and mocks drop in cleanly.
-
-### M5 — Admin notifications (two new mail notifications)
-
-- [ ] `App\Notifications\Payments\RefundFailedNotification`. Markdown mail, subject "Refund could not be processed automatically". Body: business.name, customer.name/email/phone, booking.starts_at (in business TZ), amount_cents + currency formatted, verbatim failure_reason, deep-link to `dashboard.bookings` filtered to this booking. Recipient: admins of the owning business (via `business->admins`).
-- [ ] `App\Notifications\Payments\CancelledAfterPaymentNotification`. Markdown mail, subject "A cancelled booking was paid — refund dispatched". Body: business.name, customer.name/email/phone, booking.starts_at, amount_cents + currency, `booking_refund.id`, `stripe_refund_id` if populated, deep-link to booking detail. Recipient: admins only (locked decisions #19 / #31).
-- [ ] Markdown templates under `resources/views/mail/payments/refund-failed.blade.php` + `cancelled-after-payment.blade.php`. All user-facing strings via `__()`.
-
-### M6 — Admin UI: Payment panel + list filter + Pending Action banner
-
-- [x] (2026-04-23 13:55Z) Backend: `BookingController::index` eager-loads `pendingActions` (type-bucketed to payment rows) + reads `?payment_status=` with `offline → not_applicable` mapping + each row in the payload carries a `payment` sub-object and a `pending_payment_action` sub-object (null when absent). `Booking::pendingActions(): HasMany<PendingAction>` relation added.
-- [x] (2026-04-23 13:58Z) New controller `Dashboard\PaymentPendingActionController::resolve` (admin-only + tenant-scoped); route `PATCH dashboard.payment-pending-actions.resolve`.
-- [x] (2026-04-23 14:05Z) Frontend: new `PaymentStatusBadge` component + Payment filter Select (admin-only) + Payment column (admin-only) on bookings list; Payment panel (badge + amount + Stripe deep-link + status-specific copy) + Pending Action banner with Mark-as-resolved CTA on `BookingDetailSheet`. TS `DashboardBooking.payment` + `PendingPaymentAction` interface added. Wayfinder regenerated. `npm run build` clean.
-- [ ] **Backend — Booking relation**: add `pendingActions(): HasMany<PendingAction>` to `Booking` if not already present (check first — MVPC-2 may have added it already).
-- [ ] **Backend — new controller** `app/Http/Controllers/Dashboard/PaymentPendingActionController.php` with one action `resolve(Request $request, PendingAction $action): RedirectResponse`. Admin-only (abort 403 for staff). Tenant-scoped: `abort_unless($action->business_id === tenant()->businessId(), 404)`. Mark `status = Resolved, resolved_by_user_id = $request->user()->id, resolved_at = now()`. Accept `payment.cancelled_after_payment` and `payment.refund_failed` only.
-- [ ] **Routes**: add `PATCH /dashboard/payments/pending-actions/{action}/resolve` named `dashboard.payments.pending-actions.resolve`, inside the admin-scoped route group (not under `billing.writable` — resolve is an admin confirmation, and Session 1's `ConnectedAccountController::disconnect` is the sibling pattern — but double-check the group shape in `routes/web.php` at M6 time).
-- [ ] **Frontend — Payment panel in `BookingDetailSheet`**. New section rendered when `booking.payment.status !== 'not_applicable'`. Copy branches by status. Deep-link formula: `https://dashboard.stripe.com/{stripe_connected_account_id}/payments/{stripe_charge_id}` (or `/payments/{stripe_payment_intent_id}` when charge_id is null — Session 2a only writes the PI id).
-- [ ] **Frontend — Pending Action banner in `BookingDetailSheet`**. Render at the top of the sheet body when `booking.pending_payment_action` is non-null. "Mark as resolved" button calls the new resolve route via `router.patch`.
-- [ ] **Frontend — bookings list Payment column + filter**.
-  - Column "Payment" after "Source". Renders a new `PaymentStatusBadge` component.
-  - Filter: a new `Select` with options `All payments`, `Paid`, `Awaiting payment`, `Unpaid`, `Refunded`, `Refund failed`, `Offline`. The URL param key is `payment_status`. Offline maps server-side to `not_applicable`.
-- [ ] **Frontend — types** (`resources/js/types/index.d.ts`): extend `DashboardBooking` with `payment` + `pending_payment_action`; add `PendingPaymentAction` interface; extend `BookingsPageProps.filters` with `payment_status: string`.
-
-### M7 — Cancel-URL public copy
-
-- [x] (2026-04-23 13:30Z) `BookingPaymentReturnController::cancel` now redirects to `bookings.show` (not the public slug page) and branches flash on `payment_mode_at_creation`: `online` → error "slot released"; `customer_choice` → success "confirmed — pay at appointment"; business has no active connected account → error "no longer accepting online payments — contact directly". The handler MUTATES NO STATE; the webhook path owns transitions (D-151).
-
-- [x] Update `BookingPaymentReturnController::cancel` (currently a Session 2a stub).
-- [ ] Redirect target: `route('bookings.show', $booking->cancellation_token)` (not the public slug page). Rationale: the booking exists from the moment the customer clicked Continue-to-payment; the `bookings.show` page surfaces the webhook-driven final state + the payment status.
-- [ ] Flash branches on `payment_mode_at_creation`:
-  - `'online'` → `flash.error = __('Payment not completed. Your slot has been released.')`.
-  - `'customer_choice'` → `flash.success = __('Your booking is confirmed — pay at the appointment.')`.
-- [ ] Disconnected-account race: if the SoftDeletes-scoped `$booking->business->stripeConnectedAccount` returns null (all rows trashed), override flash with `flash.error = __('This business is no longer accepting online payments — contact them directly.')`.
-- [ ] The controller MUST NOT mutate state. The webhook path owns the transition (D-151 idempotency contract). The cancel_url is informational only.
-
-### M8 — Tests
-
-- [x] (2026-04-23 14:50Z) **36 new tests** shipped across 7 files (overshoots the ~35 target): CheckoutFailureWebhookTest 10, LateWebhookRefundTest 6, ExpireUnpaidBookingsTest 6, CancelUrlLandingTest 3, BookingPaymentPanelTest 4, BookingsListPaymentFilterTest 3, RefundServiceTest 4. FakeStripeClient extended with `mockRefundCreate` + `mockRefundCreateFails`. All files green on first integrated run.
-
-Target ~35 new tests across 7 files. Pest-first discipline on the reaper + webhook handlers. Local test IDs (T01..TNN) are session-local; they are NOT `D-NNN`.
-
-- [ ] `tests/Feature/Payments/CheckoutFailureWebhookTest.php` (~10 tests — T01..T10):
-  - T01 `checkout.session.expired` for `online` booking → `Cancelled + NotApplicable`, zero notifications, slot bookable again.
-  - T02 `checkout.session.expired` for `customer_choice` auto-confirm → `Confirmed + Unpaid`, `BookingConfirmedNotification` + staff `BookingReceivedNotification('new')` fire exactly once.
-  - T03 `checkout.session.expired` for `customer_choice` manual-confirm → `Pending + Unpaid`, slot held, staff `BookingReceivedNotification` fires, customer gets pending-awaiting-confirmation variant.
-  - T04 `checkout.session.async_payment_failed` mirrors T01 / T02.
-  - T05 `payment_intent.payment_failed` resolved via `stripe_payment_intent_id` → online branch.
-  - T06 Outcome idempotency: replaying the SAME expired event after the booking is Cancelled → 200, no state change, no notifications.
-  - T07 Fresh event id on an already-Cancelled booking → 200, no state change (DB guard, not cache).
-  - T08 Cross-account mismatch (D-158): event's account id doesn't match `booking.stripe_connected_account_id` → critical log + 200.
-  - T09 Unknown `client_reference_id` → critical log + 200.
-  - T10 Expired event for a booking already Paid (race with the happy-path promoter) → outcome guard short-circuits, zero notifications.
-- [ ] `tests/Feature/Payments/LateWebhookRefundTest.php` (~6 tests — T11..T16):
-  - T11 `checkout.session.completed` for a reaper-cancelled online booking → `payment_status = Paid`; `BookingRefund` row `status = succeeded`, `stripe_refund_id` populated; Stripe call asserts `idempotency_key = riservo_refund_{uuid}`; `payment.cancelled_after_payment` PA exists; `CancelledAfterPaymentNotification` fires once; booking stays Cancelled.
-  - T12 `payment_intent.succeeded` for a reaper-cancelled online booking → same end state as T11.
-  - T13 Disconnected account: Stripe `PermissionException` on refunds.create → `BookingRefund` `status = failed`; booking's `payment_status = refund_failed`; `payment.refund_failed` PA; `RefundFailedNotification` fires.
-  - T14 Replay same `checkout.session.completed` event id after T11 → cache dedup + zero additional `BookingRefund` rows + zero additional notifications.
-  - T15 Fresh event id for the same booking → outcome guard catches it (booking already Paid), zero additional rows / notifications.
-  - T16 Late webhook for a `Cancelled + Paid` booking (double-delivery race after T11 already persisted Paid) → 200 no-op.
-- [ ] `tests/Feature/Console/ExpireUnpaidBookingsTest.php` (~6 tests — T17..T22):
-  - T17 Reaper cancels an `online` booking whose `expires_at < now - 5min` after pre-flight returns `status = 'expired'`.
-  - T18 Reaper leaves a `customer_choice` booking alone (filter on `payment_mode_at_creation = 'online'`).
-  - T19 Reaper promotes a paid-but-webhook-delayed booking inline via the pre-flight (Stripe returns `payment_status = 'paid'`); booking flips via `CheckoutPromoter`; cancel is skipped.
-  - T20 Pre-flight Stripe 5xx → booking untouched this tick; next tick with a fresh mock proceeds.
-  - T21 Pre-flight HTTP 4xx (session not found) → cancel proceeds.
-  - T22 Reaper ignores a booking whose `expires_at` is within the 5-minute grace buffer.
-- [ ] `tests/Feature/Booking/CancelUrlLandingTest.php` (~3 tests — T23..T25):
-  - T23 `online` booking: cancel_url redirects to `bookings.show`, flash.error = "slot released".
-  - T24 `customer_choice` booking: cancel_url redirects to `bookings.show`, flash.success = "confirmed; pay at the appointment".
-  - T25 Disconnected-account race: cancel_url flash.error = "business no longer accepting online payments".
-- [ ] `tests/Feature/Dashboard/BookingPaymentPanelTest.php` (~4 tests — T26..T29):
-  - T26 Admin sees Payment panel on a `paid` booking with amount + currency + Stripe deep-link.
-  - T27 Admin sees Pending-Action banner on a booking with `payment.cancelled_after_payment`; POSTing resolve marks it Resolved.
-  - T28 Cross-tenant denial (locked decision #45): admin of Business A cannot resolve Business B's PA (404).
-  - T29 Staff cannot resolve payment PAs (403).
-- [ ] `tests/Feature/Dashboard/BookingsListPaymentFilterTest.php` (~3 tests — T30..T32):
-  - T30 `?payment_status=paid` filters the list to Paid only.
-  - T31 `?payment_status=offline` filters to NotApplicable.
-  - T32 Payment column renders the expected chip for each status (dataset test).
-- [ ] `tests/Unit/Services/Payments/RefundServiceTest.php` (~4 tests — T33..T36):
-  - T33 Happy path full refund: row inserted + Stripe called + row succeeded + booking `payment_status = Refunded`.
-  - T34 Disconnected account: row failed + booking `refund_failed` + PA + notification.
-  - T35 Guard rejection: `paid_amount_cents = null` → no row, no Stripe call, outcome `guard_rejected`.
-  - T36 Idempotency key shape matches `/^riservo_refund_[0-9a-f-]{36}$/` via `mockRefundCreate` `withArgs`.
-- [ ] **Extend `tests/Support/Billing/FakeStripeClient.php`** with:
-  - `mockRefundCreate(string $expectedAccountId, ?string $expectedIdempotencyKeyExact = null, array $response = []): self` — stubs `$stripe->refunds->create([...], [...])`. Asserts the `stripe_account` header is PRESENT + matches; asserts `$opts['idempotency_key']` starts with `'riservo_refund_'` and, when `$expectedIdempotencyKeyExact !== null`, equals it. Returns a `Stripe\Refund::constructFrom([...])` default.
-  - `mockRefundCreateFails(string $expectedAccountId, string $errorCode = 'account_invalid', string $message = 'This account does not have permission to perform this operation.'): self` — throws `Stripe\Exception\PermissionException` so the disconnected-account branch can be exercised.
-
-### M9 — Iteration loop & close
-
-- [x] (2026-04-23 15:05Z) Iteration loop all green: 865 / 3469 tests; Pint clean; Wayfinder regenerated; PHPStan level-5 `app/` clean; Vite build clean.
-- [x] (2026-04-23 15:10Z) `docs/HANDOFF.md` rewritten with Session 2b summary + next-free `D-169`.
-- [x] (2026-04-23 15:12Z) `D-162..D-168` promoted into `docs/decisions/DECISIONS-PAYMENTS.md` (60 Session-PAYMENTS decisions total).
-- [x] (2026-04-23 15:14Z) `## Outcomes & Retrospective` filled in.
-- [ ] Developer stages + commits.
-
-- [ ] `php artisan test tests/Feature tests/Unit --compact` — baseline 829 / 3277 (Session 2a close); expect growth to ≈860+ tests.
-- [ ] `vendor/bin/pint --dirty --format agent`.
-- [ ] `php artisan wayfinder:generate` (new resolve route).
-- [ ] `./vendor/bin/phpstan` (level 5, `app/` only) — watch for: generic inference on `DB::transaction` callbacks (D-148 / D-151 scalar-return workaround), `BookingRefund` PHPDoc + casts, PendingActionType `match` exhaustiveness wherever new enum cases land as `match` arms.
-- [ ] `npm run build`.
-- [ ] Rewrite `docs/HANDOFF.md` (not appended) with Session 2b summary + next-free `D-NNN`.
-- [ ] Promote new `D-NNN` entries into `docs/decisions/DECISIONS-PAYMENTS.md`.
-- [ ] Fill in `## Outcomes & Retrospective`.
-- [ ] Stage with `git add -A`; report diff summary; developer commits (gate 2).
+- [x] (2026-04-24 05:15Z) Plan drafted — approved (gate 1 passed).
+- [x] (2026-04-24 05:30Z) M1 — `RefundService` expansion: partial-refund path with 422 on overflow (D-169), full reason vocabulary `customer-requested` / `business-cancelled` / `admin-manual` / `business-rejected-pending` / `cancelled-after-payment`, `initiatedByUserId` parameter, new `recordStripeState` / `recordSettlementSuccess` / `recordSettlementFailure` methods for the webhook side. 11 new unit tests (`RefundServicePartialTest`) pass. `FakeStripeClient::mockRefundCreate` capped at `->once()` so stacked mocks match in registration order.
+- [x] (2026-04-24 05:45Z) M2 — Replace D-157 / D-159 guards in `BookingManagementController::cancel`, `Customer\BookingController::cancel`, `Dashboard\BookingController::updateStatus` with `RefundService::refund` dispatches. Renamed + rewrote `PaidCancellationGuardTest` → `PaidCancellationRefundTest` (10 tests, all passing). Also rewrote the obsolete D-157 test inside `BookingManagementTest.php` to assert the new refund-dispatch behaviour.
+- [x] (2026-04-24 06:05Z) M3 — Admin-manual refund: `Dashboard\BookingRefundController::store` + `StoreBookingRefundRequest` + route + Wayfinder regen + `RefundDialog` component + `BookingDetailSheet` Refund button. Tests pending under M10.
+- [x] (2026-04-24 05:45Z) M4 — `BookingCancelledNotification` gains a `refundIssued` flag (D-175); blade template now renders the "A full refund has been issued" paragraph on `cancelledBy=business && refundIssued`; all three cancel callers pass the flag.
+- [x] (2026-04-24 06:20Z) M5 — Dispute webhook extension: `handleDisputeEvent` now dispatches `DisputeOpenedNotification` on `created`, refreshes PA on `updated`, dispatches `DisputeClosedNotification` on `closed`; resolves the dispute → booking via `stripe_payment_intent_id` for the PA's booking_id link. `PaymentPendingActionController::resolve` now accepts `PaymentDisputeOpened` (admin-manual dismiss writes `resolution_note='dismissed-by-admin'`). Blade templates added. Tests pending under M10.
+- [x] (2026-04-24 06:25Z) M6 — Refund-settlement webhook arms: `dispatch()` routes `charge.refunded` / `charge.refund.updated` / `refund.updated` to `handleRefundEvent`; matches rows by `stripe_refund_id`, enforces D-158 cross-account guard via the booking's pin, calls `RefundService::recordStripeState`. Tests pending under M10.
+- [x] (2026-04-24 06:05Z) M7 — Admin Payment & refunds panel: `Dashboard\BookingController::index` payload now carries `remaining_refundable_cents` + `refunds[]` + includes `PaymentDisputeOpened` in the pending-action eager-load; `BookingDetailSheet` renders the refund list (latest-first, Stripe deep-link per row) + a Dispute section deep-linking to the Stripe Express dispute UI with a Dismiss button. Tests pending under M10.
+- [x] (2026-04-24 06:35Z) M8 — `Booking::refundStatusLine()` computes the customer-facing copy (refunded / partial / pending / failed / disconnected-fallback); `/bookings/{token}` + `/my-bookings` both render it. TS types extended.
+- [x] (2026-04-24 06:40Z) M9 — `tests/Support/Billing/StripeEventBuilder.php` with `disputeEvent` + `refundEvent` canonical payload builders.
+- [x] (2026-04-24 06:50Z) M10 — 51 new tests across 6 files: `RefundServicePartialTest` (11), `PaidCancellationRefundTest` (10), `AdminManualRefundTest` (7), `DisputeWebhookTest` (6), `RefundSettlementWebhookTest` (8), `BookingRefundsPanelTest` (5), `BookingShowRefundLineTest` (6). Plus in-place rewrite of the D-157 test in `BookingManagementTest`.
+- [x] (2026-04-24 07:05Z) M11 — Iteration loop: 927 / 3864 Feature+Unit green; Pint clean (formatter auto-fixed 7 files); Wayfinder regenerated; PHPStan level 5 clean (fixed dead-catch `@throws`, unreachable match default, over-narrowed instanceof, unnecessary nullsafe); Vite build clean (main chunk 569.64 kB, ~17 kB growth over 2b baseline for RefundDialog + refund helpers).
+- [x] (2026-04-24 07:10Z) Promoted D-169..D-175 into `docs/decisions/DECISIONS-PAYMENTS.md`.
+- [x] (2026-04-24 07:15Z) Rewrote `docs/HANDOFF.md`.
 
 
 ## Surprises & Discoveries
 
-*(Populated as the session unfolds.)*
+- **Observation (M1):** `FakeStripeClient::mockRefundCreate` without `->once()` routes every call to the first-registered expectation.
+  **Evidence:** Stacking two `mockRefundCreate` calls in `RefundServicePartialTest::partial refunds compose` crashed on a duplicate `stripe_refund_id` — both refunds returned `re_test_null_one` because Mockery's default "0 or more" match picks the first registered expectation.
+  **Consequence:** Added `->once()` to the refunds-create expectation inside `FakeStripeClient`. Tests that register multiple mocks now see them consumed in registration order; tests that register one and call twice would now fail loudly (the desired behaviour — Stripe's idempotency-key retry path returns the cached response, not a fresh create, so a single test-level mock is correct).
 
-- Observation: Nothing to report yet.
+- **Observation (Round 1 P1):** My Session 3 rewrite of `Dashboard\BookingController::updateStatus` inherited a subtle gap from Session 2b — the controller authorises staff to cancel their own bookings (provider gate), and my new `$shouldRefund` branch ran unconditionally for any `Paid | PartiallyRefunded` booking. Codex caught the auth regression before commit.
+  **Evidence:** The pre-Session-3 D-159 block refused paid cancels for every caller, not just staff. My replacement dispatched `RefundService::refund` for the caller regardless of role, side-stepping locked decision #19 (refund is admin-only) even though the dedicated refund endpoint `BookingRefundController::store` enforces the admin gate correctly.
+  **Consequence:** Added an `$isAdmin` gate BEFORE the refund-dispatch branch; staff paid-cancel attempts return a "Ask your admin" error flash with zero Stripe calls and zero state change. The lesson: when swapping an unconditional guard for a conditional dispatch, verify every caller role still satisfies the new invariant.
+
+- **Observation (Round 1 P2 serializer):** Collapsing multiple payment PAs into a single `pending_payment_action` key with urgency sort silently hid disputes when any higher-priority refund PA coexisted.
+  **Evidence:** Codex read the sort-order `orderByRaw` in `Dashboard\BookingController::index` + the `pendingActions->first()` call in the serializer and spotted the shape — dispute PAs sorted last by design, so they never won `first()` unless they were alone.
+  **Consequence:** Split the serialised payload into two keys — `pending_payment_action` (refund-typed, urgency-sorted as before) and `dispute_payment_action` (dispute only). `BookingDetailSheet` reads both independently. Regression test asserts the both-present case.
+
+- **Observation (Round 1 P2 admin note):** The `StoreBookingRefundRequest` validated the `reason` field and the dialog labelled it an "internal note", but the controller never persisted it — the UI's audit promise was a lie. D-174 explicitly keeps `booking_refunds.reason` as a five-value enum-like string, so overloading it with free-text would break that invariant.
+  **Evidence:** Codex traced the data path from the dialog form → FormRequest → controller and noticed `$validated['reason']` was never read.
+  **Consequence:** New migration adds a nullable `admin_note` column distinct from `reason`. `RefundService::refund` gains a 5th optional arg threaded through to the row at insert time. Two regression tests assert persistence + null on empty input.
+
+- **Observation (M1):** My initial D-169 overflow check mis-treated `$amountCents = null`.
+  **Evidence:** `D-169 does NOT fire for $amountCents = null` test failed with the 422 message because the internal `$requestedAmount = $amountCents ?? $booking->paid_amount_cents` yielded the FULL paid amount (5000) on a booking where 3000 remained, tripping the overflow check.
+  **Consequence:** Split the branch: `$amountCents === null` → refund `$remaining` (Session 2b contract preserved); non-null → clamp-check against `$remaining` and throw on overflow. System-dispatched paths (always `null`) can never hit the 422.
 
 
 ## Decision Log
 
-*(Populated as the session unfolds. Decisions that survive commit get promoted to `docs/decisions/DECISIONS-PAYMENTS.md`. Next free ID is D-162 per HANDOFF.)*
+Provisional (pre-approval) decisions framed here; each is promoted into `docs/decisions/DECISIONS-PAYMENTS.md` with its final `D-NNN` during exec.
 
-Design choices I expect to record during implementation (provisional IDs):
-
-- **D-162 (provisional)** — `booking_refunds.uuid` is the source of the Stripe `idempotency_key`; never reuse the row id or a synthetic `(booking_id, amount, initiator)` hash. Directly implements locked roadmap decision #36.
-- **D-163 (provisional)** — Late-webhook refund path reads `$booking->stripe_connected_account_id` (the D-158 pin) rather than doing a `withTrashed()->where('business_id')` lookup on the business. The pin is deterministic across reconnect history.
-- **D-164 (provisional)** — The cancel_url controller redirects to `bookings.show` (not the public slug page) and branches the flash on `payment_mode_at_creation` (the snapshot), NOT on the current booking status. The cancel_url often lands BEFORE the webhook has fired — reading `status` would yield stale copy. The snapshot is the intent of the booking at creation; the customer's expected landing copy follows the intent, not the (possibly-not-yet-updated) outcome.
-- **D-165 (provisional)** — `RefundService::refund` returns a readonly `RefundResult` DTO rather than a scalar. Session 3's multi-trigger expansion reads the outcome + reason + failure payload cleanly from a single value. Constructed OUTSIDE the `DB::transaction` callback so PHPStan's generic-inference constraint on callback returns still applies.
-- **D-166 (provisional)** — The reaper SKIPS the cancel for all four `CheckoutPromoter::promote` return values, including `'mismatch'`. The promoter logged critical on mismatch; cancelling anyway could free a paid slot. Leaving the booking at `awaiting_payment` until operators reconcile is the conservative choice.
-- **D-167 (dropped)** — earlier draft had `BookingRefund.status` as a plain string column. Gate-1 feedback: the three values are fixed across Sessions 2b + 3 (Stripe's refund states we care about are `pending`, `succeeded`, `failed` — `requires_action` and `canceled` are not surfaced in our flow), so a native PHP enum `App\Enums\BookingRefundStatus` is the right shape. No decision record needed.
-
-Final IDs are assigned at commit time (in HANDOFF's next-free-ID sequence).
+- **D-169 (proposed) — `RefundService` rejects overflow with a 422 `ValidationException` rather than silently clamping.** *Rationale:* locked roadmap decision #37 mandates a server-side second check for partial refunds. The Session 2b implementation (`RefundService.php:154–165`) currently *clamps* `$requestedAmount` down to `$remaining` and logs a warning. That silent clamp is safe for Session 2b (only the `cancelled-after-payment` path runs, always with `$amountCents = null`) but misleading for Session 3's `admin-manual` path — if the admin's client-side clamp bug sends 6000 on a 5000-paid booking, silently refunding 5000 hides the bug and the admin's UI reports success with the wrong number. Instead, the service raises `ValidationException::withMessages(['amount' => ...])` and the controller surfaces it as a 422 with the existing clamp value echoed back; the admin sees the real remaining amount and retries. `$amountCents = null` is unchanged (it always refunds `$remaining`, so overflow is impossible).
+- **D-170 (proposed) — `payment.dispute_opened` Pending Actions resolve primarily on `charge.dispute.closed`; `PaymentPendingActionController::resolve` accepts the type for an admin-manual dismiss.** *Rationale:* the normal lifecycle is webhook-driven per locked decision #35 (Stripe closes the dispute → we resolve the PA). Admin-manual dismiss exists as an escape hatch for stuck PAs (Stripe event lost, manual reconciliation). The admin-manual dismiss writes `resolution_note = 'dismissed-by-admin'` so the audit trail distinguishes it from a webhook-driven `resolution_note = 'closed:won'` / `'closed:lost'` resolution.
+- **D-171 (proposed) — Refund-settlement webhooks match rows via `booking_refunds.stripe_refund_id`, not via `payment_intent`.** *Rationale:* by the time Stripe emits `charge.refunded` the id has already been persisted by `RefundService::refund` (second transaction after the successful create). If a race hits (webhook arrives before the commit — not observed in practice, Stripe's webhook dispatch is ~100ms after the API call returns), the handler 200s without writing and relies on Stripe retrying. This is the same race-safety posture as the late-webhook refund path.
+- **D-172 (proposed) — Stripe refund statuses `requires_action` / `canceled` map to our three-value enum `{pending, succeeded, failed}` per D-167.** *Rationale:* riservo's flows don't trigger `requires_action` (no payer-initiated refund redirects in our Checkout config) and `canceled` means Stripe reversed the refund (rare, e.g. ACH NACK). Mapping: `requires_action` → no-op, leave `Pending`; `canceled` → `Failed` with `failure_reason = 'Stripe cancelled the refund'` + `payment_status = refund_failed` + `payment.refund_failed` PA. Log critical in both cases so operators see the anomaly.
+- **D-173 (proposed) — Do NOT backfill `bookings.stripe_charge_id` on promotion for Session 3.** *Rationale:* the roadmap asked "decide at plan time". The refund-settlement webhooks can resolve everything via `stripe_refund_id` on our `booking_refunds` rows or via `payment_intent` (already on the booking row from D-152). The only user-visible benefit of `stripe_charge_id` is a slightly prettier Stripe dashboard deep-link on `BookingDetailSheet` — we already fall back to `payment_intent` when the charge id is null (`booking-detail-sheet.tsx:120–127`). Adding a second `payment_intents.retrieve` call to `CheckoutPromoter::promote` buys one dashboard URL shape and one more cross-account call on every happy-path promotion; not worth it. Left as a backlog entry on close.
+- **D-174 (proposed) — Reason vocabulary is five plain strings, not an enum.** Current values: `cancelled-after-payment` (Session 2b), plus `customer-requested`, `business-cancelled`, `admin-manual`, `business-rejected-pending` (Session 3). *Rationale:* strings keep the reason available for audit / dashboard UI display without translation wiring, and the set is closed. If Session 4 or 5 adds a sixth reason this can promote to an enum in one edit.
+- **D-175 (proposed) — `BookingCancelledNotification` gains a `$refundIssued` boolean constructor arg.** *Rationale:* locked decision #29 variant requires the cancellation notification to branch on `payment_status` — refund clause present for `paid` rejections, omitted for `unpaid` (customer_choice-failed-Checkout) rejections. Passing `payment_status` to the template and branching in Blade works, but a named flag makes the caller explicit: `new BookingCancelledNotification($booking, 'business', refundIssued: true|false)`. The callers are the three refund-dispatching sites; each sets the flag according to whether `RefundService::refund` returned a `succeeded` outcome. Existing callers (`BookingManagementController::cancel`, `Customer\BookingController::cancel`, `Dashboard\BookingController::updateStatus`) are updated to pass the flag.
 
 
 ## Review
 
 ### Round 1
 
-**Codex verdict**: three findings — one broken webhook lookup (PI events can't resolve a booking from the persisted state) and two dashboard permission/triage regressions (staff payment leak + wrong PA surfaced when late-refund fails).
+**Codex verdict**: 4 legitimate findings — 1 P1 (auth regression), 2 P2 (PA surfacing + dropped admin note), 1 P3 (template literal `%s`). All applied on the staged diff; no false positives.
 
-- [x] **Finding 1 [P1]** — PI webhook arms can't resolve bookings (stripe_payment_intent_id is null pre-promotion).
-  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php`.
-  *Fix*: dropped both `payment_intent.payment_failed` and `payment_intent.succeeded` arms. `checkout.session.expired` + `checkout.session.async_payment_failed` cover the failure case via `client_reference_id`; `checkout.session.completed`'s Cancelled-branch covers the late-webhook refund case. Removed the two handler methods + the `StripePaymentIntent` import + the two PI-event test cases (one in each test file).
+- [x] **P1 — Staff can trigger refunds via `Dashboard\BookingController::updateStatus`**.
+  *Location*: `app/Http/Controllers/Dashboard/BookingController.php:346-356`.
+  *Finding*: `updateStatus` still allowed staff/providers to cancel their own bookings, and my new `$shouldRefund` branch ran for any paid booking *before* any admin-only guard — letting a staff member trigger a Stripe refund, bypassing the admin-only gate on `BookingRefundController::store` (locked decision #19).
+  *Fix*: added an `$isAdmin` gate *before* the refund-dispatch branch. Staff paid-cancel attempts now return `back()->with('error', __('Paid bookings can only be cancelled by an admin. Ask your admin to cancel and refund this booking.'))` without touching Stripe. Admin flow unchanged.
+  *Regression test*: `tests/Feature/Booking/PaidCancellationRefundTest.php::Codex Round 1 P1: staff cannot trigger a refund via updateStatus cancel`. Asserts staff → error flash, booking stays Confirmed+Paid, zero refund rows, no Stripe call.
   *Status*: done.
 
-- [x] **Finding 2 [P1]** — `/dashboard/bookings` leaks Stripe IDs + payment state to staff.
-  *Location*: `app/Http/Controllers/Dashboard/BookingController.php`.
-  *Fix*: the `payment` + `pending_payment_action` sub-objects are now gated on `$isAdmin` in the serializer — staff see `null` for both fields. The `pendingActions` eager-load is also gated on `$isAdmin` so staff don't pay the query cost. TS type `DashboardBooking.payment` widened to `{...} | null`. Bookings list cell renders `—` for the staff / null case (defensive — the column itself is already behind `isAdmin && ...`). New regression test `staff get null payment + pending_payment_action on their own bookings` asserts the leak is fixed.
+- [x] **P2 — Dispute PA hidden when a higher-priority refund PA exists**.
+  *Location*: `resources/js/components/dashboard/booking-detail-sheet.tsx:378-379` + `app/Http/Controllers/Dashboard/BookingController.php` serializer.
+  *Finding*: the payload collapsed all pending-payment actions to a single `pending_payment_action` (urgency-sorted — `refund_failed` before `cancelled_after_payment` before `dispute_opened`). A booking with both an open dispute AND a `payment.refund_failed` PA would never surface the dispute section.
+  *Fix*: split the payload into two independent keys — `pending_payment_action` (first non-dispute PA, as before) and `dispute_payment_action` (first dispute PA, regardless of other PAs). The BookingDetailSheet reads them independently so both banners can render simultaneously.
+  *Regression tests*:
+    - `tests/Feature/Dashboard/BookingRefundsPanelTest.php::dispute PA surfaces in dispute_payment_action when Pending` — asserts the single-dispute case uses the new key.
+    - `tests/Feature/Dashboard/BookingRefundsPanelTest.php::Codex Round 1 P2: dispute + refund_failed PAs both surface independently` — asserts both keys are populated when both PAs exist.
   *Status*: done.
 
-- [x] **Finding 3 [P2]** — on a failed late-webhook refund, admins see the `cancelled_after_payment` banner instead of the more-urgent `refund_failed` one.
-  *Location*: `app/Http/Controllers/Dashboard/BookingController.php`.
-  *Fix*: the `pendingActions` eager-load now sorts `payment.refund_failed` before `payment.cancelled_after_payment` via `orderByRaw("CASE WHEN type = ? THEN 0 ELSE 1 END", [...])` with `latest('id')` as the secondary key. New regression test `refund_failed PA sorts before cancelled_after_payment in booking payload` asserts the ordering.
+- [x] **P2 — Admin's free-form refund reason silently discarded**.
+  *Location*: `app/Http/Controllers/Dashboard/BookingRefundController.php:58-69`.
+  *Finding*: `StoreBookingRefundRequest` validated `reason` and the dialog labelled it "internal note — not shared with the customer", but the controller never read `$validated['reason']` or passed it to `RefundService`. Every admin note entered during a manual refund was silently discarded.
+  *Fix*:
+    - New migration `2026_04_24_063509_add_admin_note_to_booking_refunds_table.php` adds a nullable `admin_note` text column (distinct from the D-174-locked five-value `reason` enum-like string).
+    - `BookingRefund` model fillable + PHPDoc extended.
+    - `RefundService::refund` gains an optional fifth arg `?string $adminNote = null`; persisted on the row at insert time.
+    - `BookingRefundController::store` reads `$validated['reason']` and passes it as `$adminNote`. Empty / missing → null.
+  *Regression tests*:
+    - `tests/Feature/Dashboard/AdminManualRefundTest.php::Codex Round 1 P2: admin reason is persisted on booking_refunds.admin_note` — asserts a non-empty reason lands on the column.
+    - `tests/Feature/Dashboard/AdminManualRefundTest.php::Codex Round 1 P2: empty reason persists as null admin_note` — asserts an empty string does NOT persist as "".
   *Status*: done.
 
-**Round 1 outcome**: 865 / 3490 tests pass (−2 dropped PI-arm tests, +2 new regression tests, net 0 test count but +21 assertions from stronger coverage). PHPStan clean. Pint clean. Vite build clean.
+- [x] **P3 — `dispute-closed` blade template renders a literal `%s`**.
+  *Location*: `resources/views/mail/payments/dispute-closed.blade.php:8-9`.
+  *Finding*: for closed disputes whose Stripe status is neither `won` nor `lost` (e.g. `warning_closed`), the fallback copy read `'The outcome reported by Stripe was "%s".'` but no replacement was supplied — the email went out with a literal `%s` placeholder.
+  *Fix*: replace the C-style placeholder with a Laravel translation-key substitution: `__('... was ":status".', ['business' => $businessName, 'status' => $stripeStatus])`.
+  *Regression test*: `tests/Feature/Payments/DisputeWebhookTest.php::Codex Round 1 P3: dispute-closed email renders Stripe status literally when not won/lost` — emits a `warning_closed` dispute event, captures the `DisputeClosedNotification`, asserts `%s` is absent AND `warning_closed` is present in the rendered body.
+  *Status*: done.
+
+**Post-Round-1 iteration loop**: **932 passed / 3898 assertions** (baseline after Session 3 exec was 927 / 3864; Round 1 added 5 regression tests + 33 assertions). Pint clean, Wayfinder regenerated, PHPStan level 5 clean, Vite build clean (main chunk 569.89 kB).
+
+**Schema impact**: one new migration (nullable column addition — idempotent on `migrate:fresh`, safe on any existing dev DB). No data backfill needed (column defaults to null).
 
 ### Round 2
 
-**Codex verdict**: four findings — two transient-error-handling correctness issues (P1s), one permissions gap on the filter query-string (P2), and one customer-facing copy inconsistency under manual-confirm (P2).
+**Codex verdict**: 3 legitimate findings — 1 P1 (admin-manual retry dispatches wrong amount), 1 P2 (settlement webhooks miss rows after response-loss), 1 P3 (N+1 on `/my-bookings`). All applied; no false positives.
 
-- [x] **Finding 1 [P1]** — reaper cancels bookings on Stripe rate-limit (429).
-  *Location*: `app/Console/Commands/ExpireUnpaidBookings.php`.
-  *Fix*: added a `RateLimitException` catch BEFORE `InvalidRequestException` — 429 is now treated as retryable (warning log, leave for next tick). New regression test `reaper leaves the booking untouched on Stripe 429 rate-limit`.
+- [x] **P1 — Admin-manual retry with different amount silently re-dispatches the old amount**.
+  *Location*: `app/Services/Payments/RefundService.php:153-160` (retry-path lookup).
+  *Finding*: when an `admin-manual` refund is still Pending (first `refunds.create()` timed out or Stripe still settling), a second manual refund with a DIFFERENT amount would hit the `(booking, reason=admin-manual, status=pending)` lookup, reuse the old row/UUID, and Stripe's idempotency-key dedup would return the OLD refund — silently re-dispatching the earlier amount under the new request. Dashboard reports success for the new amount, money actually refunded was the old.
+  *Fix*: inside the retry branch, when `$reason === 'admin-manual'` AND `$amountCents !== null` AND `$amountCents !== $existing->amount_cents`, throw `ValidationException` with a 422 "A refund of CHF X is already pending for this booking. Wait for it to settle before issuing another." Same-amount double-click still reuses the row (idempotency preserved for intentional retries).
+  *Regression tests*:
+    - `AdminManualRefundTest::admin-manual retry with different amount while one is pending returns 422` — asserts 422 + no new row + no Stripe call.
+    - `AdminManualRefundTest::admin-manual retry with same amount while pending reuses row (retry idempotency)` — asserts the idempotent retry path still works via the row's UUID.
   *Status*: done.
 
-- [x] **Finding 2 [P1]** — `RefundService` marks terminal failure on indeterminate Stripe errors.
-  *Location*: `app/Services/Payments/RefundService.php` + `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php::applyLateWebhookRefund`.
-  *Fix*: narrowed the catches — `PermissionException` / `AuthenticationException` → disconnected (terminal); `ApiConnectionException` + `RateLimitException` + 5xx `ApiErrorException` → transient (row stays `pending`, log warning, bubble exception); 4xx `ApiErrorException` → failed (terminal). `applyLateWebhookRefund` now catches the transient exception and returns 503 `Retry-After: 60` to force Stripe to re-deliver. The retry path is made safe by two more changes: (a) `RefundService::refund` looks up an existing `pending` row for the same booking+reason BEFORE the remaining-cents guard and reuses its UUID so Stripe's `idempotency_key` collapses the duplicate on retry; (b) `applyLateWebhookRefund`'s inner transaction detects `Paid + has-pending-refund-row` and sets `$shouldDispatchRefund = true` so the retry actually dispatches (the Cancelled-branch check also moved ahead of the generic `Already paid` short-circuit in `handleCheckoutSessionCompleted`). Two new regression tests cover transient behaviour + retry convergence.
+- [x] **P2 — Refund-settlement webhooks drop events whose row has `stripe_refund_id = null`**.
+  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php` `handleRefundEvent`.
+  *Finding*: `RefundService::refund` intentionally bubbles transient Stripe errors (5xx / 429 / connection) with the row left at Pending + `stripe_refund_id = null` so the caller can retry via the UUID idempotency key. But if Stripe had actually CREATED the refund before the transport failed (response-loss), our row never gets the id — and the new `charge.refunded` / `refund.updated` arms key their match on `stripe_refund_id`, so the event is logged + dropped. Customer refunded, booking still shows Paid.
+  *Fix*: new private method `resolveRefundRowByFallback()` — when the primary `stripe_refund_id` lookup misses, the Stripe Refund object's `payment_intent` + `amount` are used to find the booking via `stripe_payment_intent_id` + the most recent Pending row with `stripe_refund_id = null` AND matching `amount_cents`. Backfill `stripe_refund_id` on the row so future events converge via the primary path.
+  *Regression tests*:
+    - `RefundSettlementWebhookTest::response-loss fallback resolves row via payment_intent + amount when stripe_refund_id is null` — asserts the row gets backfilled + marked Succeeded + booking flips Refunded.
+    - `RefundSettlementWebhookTest::payment_intent fallback misses when amount does not match any pending row` — negative test; fallback won't match a wrong-amount event (avoids cross-contamination).
   *Status*: done.
 
-- [x] **Finding 3 [P2]** — staff can filter by `payment_status` and infer payment state from row counts.
-  *Location*: `app/Http/Controllers/Dashboard/BookingController.php`.
-  *Fix*: the `payment_status` filter is now server-gated on `$isAdmin` (mirrors the `provider_id` filter's `&& $isAdmin` guard). Staff requests silently drop the filter. New regression test `staff requesting ?payment_status=paid gets their full booking list back` asserts the gate.
+- [x] **P3 — `/my-bookings` is N+1 on `refundStatusLine()` + disconnect check**.
+  *Location*: `app/Models/Booking.php:257-259` + `app/Http/Controllers/Customer/BookingController.php:24-30`.
+  *Finding*: `refundStatusLine()` ran a fresh `booking_refunds` query per call; failed-latest rows also triggered a `stripe_connected_accounts` query per call. `Customer\BookingController::index()` called it for every booking after `->get()`, so 20 bookings with failed refunds = 40 extra queries.
+  *Fix*:
+    - `Booking::refundStatusLine()` now reads from the eager-loaded `bookingRefunds` relation when `relationLoaded('bookingRefunds')`; falls back to a fresh query for single-booking contexts (preserves correctness for `BookingManagementController::show`).
+    - `refundStatusLine()` accepts an optional `?bool $pinnedAccountDisconnected` arg. When supplied, skips the internal `stripe_connected_accounts` query entirely. `hasDisconnectedPinnedAccount()` promoted from `private` to `public` to allow single-booking controllers to call it once.
+    - `Customer\BookingController::index()` now eager-loads `bookingRefunds` AND batch-computes the set of disconnected `stripe_account_id` values via a single `whereIn` query, then passes the precomputed boolean into each `refundStatusLine()` call.
+    - `BookingManagementController::show` also eager-loads `bookingRefunds` (single-booking context; no batch disconnect lookup needed — the internal fallback is a single query per page render).
+  *Regression test*: `Customer/BookingsListTest::/my-bookings does not N+1 on refund status line for many bookings with failed refunds` — seeds 20 bookings each with a failed refund, asserts the total query count stays under 20 (before fix: ~60, after: ~10).
   *Status*: done.
 
-- [x] **Finding 4 [P2]** — cancel-URL "confirmed" flash is wrong under manual-confirm.
-  *Location*: `app/Http/Controllers/Booking/BookingPaymentReturnController.php`.
-  *Fix*: the customer_choice branch now additionally reads `$booking->business->confirmation_mode`. Manual-confirm → "Your booking request has been received — the business will confirm, and you can pay at the appointment." Auto-confirm → the original "Your booking is confirmed — pay at the appointment." New regression test `customer_choice + manual-confirm: cancel_url flashes the pending-request copy, not 'confirmed'` asserts the branching.
-  *Status*: done.
+**Post-Round-2 iteration loop**: **937 passed / 3916 assertions** (Round 1 was 932 / 3898; Round 2 added 5 regression tests + 18 assertions). Pint clean, Wayfinder regenerated, PHPStan level 5 clean, Vite build clean.
 
-**Round 2 outcome**: 870 / 3532 tests pass (+5 new regression tests). PHPStan clean. Pint clean. Vite build clean. The Session 2b refund pipeline now correctly distinguishes transient from terminal Stripe errors and recovers via the same row UUID on retry.
+**Schema impact**: none. All Round 2 fixes are in-code.
 
-### Round 3
+### Self-Review (post-Round-2, pre-commit)
 
-**Codex verdict**: four findings — three production-impact P1s (a reaper Stripe call that drops the connected-account header, a success-return path that un-cancels late-refunded bookings, an unserialized refund clamp) and one P2 (missing calendar push for customer_choice-confirmed failures).
+Codex quota was exhausted after Round 2; rather than wait for reset, I self-reviewed the three highest-risk surfaces touched by my Round 2 fixes to catch anything a third Codex round might have surfaced.
 
-- [x] **Finding 1 [P1]** — reaper passes `Stripe-Account` as params, not options.
-  *Location*: `app/Console/Commands/ExpireUnpaidBookings.php` + (out-of-scope audit hit) `app/Http/Controllers/Booking/BookingPaymentReturnController.php::success`.
-  *Fix*: moved `['stripe_account' => $acct]` from the 2nd arg to the 3rd (Stripe SDK `retrieve($id, $params = null, $opts = null)`). Audit turned up the SAME bug in Session 2a's success-page retrieve — fixed both in this round. Tightened `FakeStripeClient::mockCheckoutSessionRetrieveOnAccount` `withArgs` to assert `$params === null` strictly so the regression can't land again. Reaper-test assertion widened likewise.
-  *Status*: done.
+**Area 1 — Concurrency of `resolveRefundRowByFallback()`**
 
-- [x] **Finding 2 [P1]** — `BookingPaymentReturnController::success()` can un-cancel a late-refunded booking.
-  *Location*: `app/Http/Controllers/Booking/BookingPaymentReturnController.php::success`.
-  *Fix*: top-level `status === BookingStatus::Cancelled` guard short-circuits before the retrieve + promoter. Redirects to `bookings.show` with a neutral error flash; the booking-detail page shows the accurate Cancelled + Refunded state. New regression test `Cancelled booking landing on the success page does NOT re-activate the slot`.
-  *Status*: done.
+Walked through the two-concurrent-refunds-same-booking scenario. The reason-scoped retry in `RefundService::refund` (+ Round 2 P1's amount-mismatch block for `admin-manual`) guarantees at most one pending row per `(booking, reason)`. System-dispatched paths (`customer-requested`, `business-cancelled`, `business-rejected-pending`, `cancelled-after-payment`) always resolve `$amountCents = null` to `remainingRefundableCents()` inside the lock — which already subtracts the prior pending row. Two pending rows on the same booking can therefore only exist across different reasons, and their amounts cannot collide (the clamp consumption makes it impossible). Result: the fallback's `(payment_intent, amount_cents, status=pending, stripe_refund_id=null)` match is unambiguous under every reachable state. No bug found. Logged a follow-up in BACKLOG: "attach `booking_refund_id` to the Stripe refund's `metadata` so the settlement webhook could match by that id directly — would be defense-in-depth against a future multi-reason collision, but requires a Stripe API shape change and isn't justified by current risk."
 
-- [x] **Finding 3 [P1]** — refund row creation not serialized under concurrent deliveries.
-  *Location*: `app/Services/Payments/RefundService.php`.
-  *Fix*: both the retry-path lookup AND the remaining-cents check + fresh-row insert now happen INSIDE a single `DB::transaction + lockForUpdate` block. The lock serialises concurrent callers; inside the lock we check first for an existing pending row (retry path — reuse UUID), otherwise recompute the clamp and insert a fresh row. Two racing callers either both find the first's row (second takes the retry branch with the shared UUID) or serialise cleanly through the lock.
-  *Status*: done.
+**Area 2 — `ValidationException` propagation from inside `DB::transaction`**
 
-- [x] **Finding 4 [P2]** — customer_choice + Confirmed failure doesn't push to provider calendar.
-  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php::dispatchCustomerChoiceFailureNotifications`.
-  *Fix*: added `if ($booking->status === BookingStatus::Confirmed && $booking->shouldPushToCalendar()) PushBookingToCalendarJob::dispatch(...)`. `shouldPushToCalendar()` already gates on the GoogleCalendar source (D-088) + configured-integration (D-083). New regression test `customer_choice + Confirmed failure dispatches PushBookingToCalendarJob when provider has a configured integration` asserts the dispatch via `Bus::assertDispatched`.
-  *Status*: done.
+Verified that Laravel's `DB::transaction` re-throws the `ValidationException` (caught, rollback, re-throw contract), Laravel's default exception handler converts it to a 302 redirect back with session errors for Inertia requests, and Inertia's `useForm` surfaces the errors via `form.errors.amount_cents` in the `RefundDialog`. Round 2 P1 test (`admin-manual retry with different amount while one is pending returns 422`) covers the full path via `assertSessionHasErrors(['amount_cents'])`. No bug found.
 
-**Round 3 outcome**: 872 / 3541 tests pass (+2 new regression tests; F1 regression coverage strengthened the existing mock helper). PHPStan clean. Pint clean. Vite build clean. All four Round 3 findings were legitimate production bugs. F1 turned up a Session 2a carry-over with the same pattern that was also silently broken — fixed in this round since it's the same mechanical shape.
+**Area 3 — Dispute PA linking via `stripe_payment_intent_id`**
 
-### Round 4
+Verified the lookup is scoped to `business_id` (no cross-tenant contamination), null-graceful when the payment_intent doesn't resolve to a booking, and can't race against Session 2a's promotion window (disputes only fire on CHARGED bookings, which by construction have completed Checkout and therefore have `stripe_payment_intent_id` populated via `CheckoutPromoter::promote`). Found one gap in test coverage: no dedicated cross-tenant test for the dispute-dismiss endpoint (`PaymentPendingActionController::resolve` on `PaymentDisputeOpened`). Added `DisputeWebhookTest::admin of Business A cannot dismiss a dispute PA of Business B (404)` to close the gap.
 
-**Codex verdict**: four findings — one crash-window P1 on the late-refund path, two P2 session-id trust-boundary gaps that match the D-156 shape Session 2a already enforces for the happy path, and one P2 replay-idempotency gap on `customer_choice` failure replays.
+**Post-self-review iteration loop**: **938 passed / 3918 assertions** (+1 test / +2 assertions). Pint clean, Wayfinder regenerated, PHPStan level 5 clean, Vite build clean.
 
-- [x] **Finding 1 [P1]** — pre-Stripe crash window strands `Paid` booking without a refund.
-  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php::applyLateWebhookRefund`.
-  *Fix*: the Paid-branch guard now unconditionally dispatches `$shouldDispatchRefund = true` whenever the booking is `Cancelled + Paid` — the pending-row presence check was the footgun. The `RefundService`'s retry-path lookup already handles both "existing pending row" (reuse UUID) and "no row yet" (fresh insert with clamp recompute inside the lock) paths transparently. New regression test `late-refund retry after pre-Stripe crash (Paid + no pending row) still dispatches the refund`. Existing "no-op on Paid + no row" test was asserting the F1 bug — retargeted to `Refunded` (the actual terminal outcome).
-  *Status*: done.
-
-- [x] **Finding 2 [P2]** — Cancelled-branch late-refund bypasses session-id check.
-  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php::handleCheckoutSessionCompleted`.
-  *Fix*: Cancelled-branch entry now verifies `$session->id === $booking->stripe_checkout_session_id` before `applyLateWebhookRefund`. Mismatch → critical log + 200 (same shape as the Stripe-level retry contract). New regression test `Cancelled-branch refuses to refund when the session id does not match the booking`.
-  *Status*: done.
-
-- [x] **Finding 3 [P2]** — failure webhook bypasses session-id check.
-  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php::handleCheckoutSessionFailed`.
-  *Fix*: after the cross-account guard, added the same session-id check as F2. New regression test `failure webhook refuses to act when session id does not match the booking`.
-  *Status*: done.
-
-- [x] **Finding 4 [P2]** — customer_choice replays re-dispatch notifications.
-  *Location*: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php::applyCheckoutFailureBranch`.
-  *Fix*: added `payment_status === Unpaid` short-circuit to the outcome guard. Same-event-id replays are caught by the cache dedup; fresh-id replays (after the 24h TTL expires) are now caught by the DB-state guard. New regression test `replay of customer_choice failure with a fresh event id does NOT re-dispatch notifications`.
-  *Status*: done.
-
-**Round 4 outcome**: 876 / 3559 tests pass (+4 new regression tests). PHPStan clean. Pint clean. Vite build clean. All four Round 4 findings legitimate. F1 exposed that my Round 3 F3 fix had a narrow-but-serious crash-window gap; the fix widens the retry gate and the new regression test locks it in.
+**Confidence summary before commit**: two Codex rounds with no false positives + one targeted self-review on the new Round 2 surface. No additional findings queued.
 
 
 ## Outcomes & Retrospective
 
-**Shipped 2026-04-24** — PAYMENTS Session 2b delivered end-to-end failure branching, the 90-minute expiry reaper with defense-in-depth, the minimal refunds pipeline (one reason live: `cancelled-after-payment`), the admin dashboard payment surface, and the cancel-URL copy branching. **47 new tests (876 / 3559)** after four Codex review rounds. PHPStan clean, Pint clean, Vite build clean.
+**Shipped (pre-codex-review):**
 
-**What landed**:
+- Customer in-window cancel, authenticated-customer cancel, admin cancel, manual-confirmation rejection, and late-webhook refund all funnel through the single `RefundService::refund` executor with one of five reasons. Paid cancels automatically refund (no more "contact the business" dead-end from Sessions 2a/2b); disconnected-account failures surface an admin-only `payment.refund_failed` Pending Action with an email; transient Stripe 5xx / rate-limit / connection-drops bubble as 503s so the pending row + UUID idempotency key survive a retry.
+- Admin-manual refund dialog on the booking-detail sheet (admin-only per locked decision #19) supports full and partial refunds with client-side clamping + server-side 422 on overflow per D-169.
+- Dispute webhooks now go end-to-end: `charge.dispute.created` emails admins + writes the PA + links the booking via `stripe_payment_intent_id` lookup; `charge.dispute.updated` refreshes without re-emailing; `charge.dispute.closed` resolves the PA with the outcome + emails admins. Admin-manual dismiss via the PA resolve endpoint is an escape hatch per D-170.
+- Refund-settlement webhooks (`charge.refunded`, `charge.refund.updated`, `refund.updated`) match rows by `stripe_refund_id` (D-171) and map Stripe vocabulary onto our three-value enum (D-172) — `canceled` is treated as a failure with operator-surfaced copy.
+- Customer-side refund UX: `Booking::refundStatusLine()` produces a plain-English status line across five branches (refunded / partial / pending / failed-generic / failed-disconnected) rendered on `/bookings/{token}` and `/my-bookings`.
+- Admin-side refund UX: Payment panel now carries `remaining_refundable_cents` + a refund list (newest-first, per-row Stripe deep-link); Dispute section banner with deep-link + Dismiss button when a `payment.dispute_opened` PA is attached.
 
-- `booking_refunds` table + `BookingRefund` model + `BookingRefundStatus` enum + factory with pending/succeeded/failed states; `Booking::remainingRefundableCents()` real-clamp reads non-failed attempts (locked decision #37).
-- `App\Services\Payments\RefundService` + `RefundResult` DTO. Row-UUID idempotency key per locked decision #36. Disconnected-account fallback writes `payment.refund_failed` PA + admin email (`RefundFailedNotification`).
-- Four new webhook arms: `checkout.session.expired`, `checkout.session.async_payment_failed`, `payment_intent.payment_failed`, `payment_intent.succeeded`. `handleCheckoutSessionCompleted` routes Cancelled bookings to the late-refund branch.
-- `bookings:expire-unpaid` command scheduled every 2 min with `withoutOverlapping()`. Base filter enforces `payment_mode_at_creation = 'online'` — the policy gate that keeps `customer_choice` bookings from ever being reaped (they go through the webhook arm instead, slot stays held).
-- Admin UI: Payment column + Payment filter (chips: paid / awaiting_payment / unpaid / refunded / partially_refunded / refund_failed / offline); Payment panel on the booking-detail sheet with Stripe deep-link; Pending-Action banner + Mark-as-resolved CTA. New `Dashboard\PaymentPendingActionController::resolve`.
-- `BookingPaymentReturnController::cancel` branches flash on `payment_mode_at_creation`; redirects to `bookings.show`; handles disconnected-account race.
-- `BookingReceivedNotification` gains `pending_unpaid_awaiting_confirmation` context for manual-confirm + customer_choice + failed-Checkout customers.
-- Two new mail notifications: `RefundFailedNotification`, `CancelledAfterPaymentNotification` — admin-only recipients.
-- `FakeStripeClient` extended with `mockRefundCreate` (asserts stripe_account header + idempotency key shape) + `mockRefundCreateFails` (throws `PermissionException` for disconnected-account tests).
+**Metrics:**
 
-**What the roadmap said is "out of scope" for 2b and remains deferred**:
+- Feature + Unit tests: **876 → 927** passed (+51); **3559 → 3864** assertions (+305).
+- Wall-time: iteration-loop test suite 52s (baseline ~50s). PHPStan level 5 clean. Vite bundle 569 kB (+17 kB from refund dialog + helpers, still within the pre-existing >500 kB warning zone).
 
-- Partial-refund UI + refund trigger expansion (customer in-window cancel, admin manual, business cancel, manual-confirmation rejection) — Session 3.
-- `Booking::pendingActions()` relation touches calendar + payment PAs; calendar-aware readers unchanged (D-113 bucket filter already in place).
-- Payouts surface, Settings toggle lift — Sessions 4 + 5.
-- "Resend payment link for `unpaid` customer_choice bookings" — BACKLOG entry remains post-MVP.
+**What worked well:**
 
-**Decisions shipped** (D-162 through D-168): row-UUID idempotency key (D-162), D-158 pin re-used for the late-webhook refund path (D-163), cancel-URL branches on snapshot not current status (D-164), `RefundResult` DTO shape (D-165), reaper SKIPS cancel on every promoter return including `mismatch` (D-166), `BookingRefundStatus` native enum (D-167 gate-1 revision), new `pending_unpaid_awaiting_confirmation` notification context (D-168). Next-free decision id: **D-169**.
+- The Session 2b `RefundService` groundwork paid off — Session 3 layered partial refunds + four new reasons + webhook settlement without touching the row-insert discipline (UUID idempotency key + reason-scoped retry lookup + `DB::transaction + lockForUpdate`).
+- Separating `RefundService::recordSettlementSuccess` / `recordSettlementFailure` / `recordStripeState` as three layers — a vocabulary dispatcher on top of two idempotent writers — kept the webhook handler body tiny and let the unit tests cover both success and failure settlement paths independently of the webhook boundary.
+- The `BookingCancelledNotification` `$refundIssued` flag approach (D-175) turned out cleaner than re-reading `payment_status` inside the blade; the three callers pass the flag explicitly, so a new branch (future session) is a one-liner + one blade gate.
+- `FakeStripeClient::mockRefundCreate` cap at `->once()` caught a latent test-setup pitfall (first-registered wins) that would have turned every multi-refund scenario into a silent bug.
 
-**Carry-overs for Codex review** (if the developer triggers it before commit):
+**What stung:**
 
-- `Booking::pendingActions()` is unfiltered — the dashboard controller type-buckets payment rows explicitly; calendar code paths keep their existing `calendarValues()` filter. If codex flags a preference for a named-scope pattern we can layer `pendingPaymentActions()` on top.
-- `handlePaymentIntentSucceeded` depends on `stripe_payment_intent_id` already being populated on the booking. For a true late-webhook case (reaper cancelled BEFORE any `checkout.session.completed` arrived) the PI id may be absent; the handler then 200-no-ops ("No booking linked"). The Checkout-side `handleCheckoutSessionCompleted` for `Cancelled` bookings covers this gap — both paths converge on `applyLateWebhookRefund`.
-- The mail templates use English-only strings via `__()` consistent with existing templates; pre-launch i18n pass extends them.
+- `@throws` docblocks on `RefundService::refund` are load-bearing for PHPStan dead-catch detection — I initially missed them and PHPStan flagged the controller's try/catch as dead. The fix was trivial (add three `@throws` lines) but the diagnostic pointed at the controllers, not the service.
+- The default-arm-unreachable PHPStan diagnostic on the controller's `match ($result->outcome)` was slightly non-obvious (the DTO outcome is a closed string union; `default` is always dead). Future Session 4 + 5 callers consuming `RefundResult` should not add a `default` arm either.
+- The `Booking::refundStatusLine()` method had to live on the model (to share between the two public controllers) but it reaches into `StripeConnectedAccount::withTrashed()` for the disconnected-account check — coupling the model to the connected-account concept. Worth a look in a future session to see if a helper method on `StripeConnectedAccount::isDisconnectedAccountId(string)` would clean it up.
 
-**Retrospective**: the plan rhythm held — each milestone had a clear test-before-merge bar. The webhook controller grew the most (+533 lines) but the match-arm routing + shared helpers (`applyCheckoutFailureBranch`, `applyLateWebhookRefund`, `dispatchCustomerChoiceFailureNotifications`) kept handler bodies short and symmetric. The four Codex review rounds were highly productive — 15 findings total, all legitimate (no false positives), including several Session 2a carry-over bugs that mirrored Session 2b patterns (Stripe `$params` vs `$opts`, insufficient trust boundaries on bypass paths). Round 4 still produced 4 P1/P2 findings, so Round 5 would likely have more signal — but Codex's usage quota hit before it could run. The decision to commit after Round 4 rather than wait ~6 hours for Round 5 reflects confidence in the current state; a fresh post-commit review can always surface remaining issues for a follow-up.
+**Carry-overs to BACKLOG:**
 
-**Review rounds summary**:
-- Round 1 — 3 findings: dropped PI webhook arms (F1), gated dashboard payment payload on admin (F2), ordered pending-actions by urgency (F3).
-- Round 2 — 4 findings: reaper rate-limit catch (F1), RefundService transient-vs-terminal distinction (F2), payment_status filter gated on admin (F3), cancel-URL copy branches on confirmation_mode (F4).
-- Round 3 — 4 findings: Stripe SDK `$opts` position fix on reaper + success-page (F1), success-page Cancelled guard (F2), refund row serialization (F3), calendar push for customer_choice Confirmed failures (F4).
-- Round 4 — 4 findings: late-refund retry widened for pre-Stripe crash window (F1), session-id trust boundaries on Cancelled-branch + failure handler (F2 + F3), Unpaid added to outcome-level guard (F4).
+- **`stripe_charge_id` backfill on promotion** (D-173 — deferred past Session 3 explicitly). Add a BACKLOG entry.
+- **Enum-ify refund reason vocabulary** (D-174 — kept as strings; promote when a 6th reason is needed).
+- **Customer-facing "refund issued" email on admin-manual refunds** (Open Question #1 at plan time — conservative default was no new email; add a BACKLOG entry in case the developer wants it later).
 
-**Commit authorized by developer**: developer explicitly instructed the agent to commit + push this session (deviation from the standard "developer commits" gate). Commit bundles the full Session 2b diff including all four review rounds under a single message.
+**Gate two handoff:**
+
+- 7 new D-NNN decisions (D-169..D-175) promoted into `docs/decisions/DECISIONS-PAYMENTS.md` — already there, not just in this plan.
+- `docs/HANDOFF.md` rewritten (overwrite, not append) per close discipline.
+- 927 / 3864 feature+unit suite green, Pint clean, Wayfinder regenerated, PHPStan clean, Vite build clean.
+- Staged diff spans 26 files: 2 new controllers (`BookingRefundController`, notifications), 2 new FormRequests, 3 new notifications, 2 new blade templates, 1 new model method, 1 new frontend component, 1 updated dialog host (BookingDetailSheet), plus controller + webhook + service rewrites and the test suite.
+- Developer runs codex review against the staged state; findings will land in `## Review` on the same uncommitted diff. Developer commits once at the end.
 
 
 ## Context and Orientation
 
-### Repo layout relevant to this session
+For a reader unfamiliar with riservo, the relevant concepts for this session:
 
-**Controllers**
-- `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php` — the Connect webhook at `POST /webhooks/stripe-connect`. Session 2a added `checkout.session.completed` + `checkout.session.async_payment_succeeded`; Session 2b layers `checkout.session.expired`, `checkout.session.async_payment_failed`, `payment_intent.payment_failed`, `payment_intent.succeeded`. Uses the `DedupesStripeWebhookEvents` trait with cache prefix `stripe:connect:event:` (D-110, locked decision #38).
-- `app/Http/Controllers/Booking/BookingPaymentReturnController.php` — `success()` and `cancel()` public handlers at `/bookings/{token}/payment-success` + `/bookings/{token}/payment-cancel`. Session 2b updates `cancel()`.
-- `app/Http/Controllers/Dashboard/BookingController.php` — admin bookings list + updateStatus + reschedule + store. Session 2b enriches `index()`'s payload with `payment` + `pending_payment_action` and adds a `payment_status` filter.
-- New `app/Http/Controllers/Dashboard/PaymentPendingActionController.php` (admin-only, tenant-scoped resolve). Sibling of the existing `CalendarPendingActionController`.
-
-**Services**
-- `app/Services/Payments/CheckoutPromoter.php` — the single promotion service (D-151). Session 2b's reaper pre-flight calls it.
-- `app/Services/Payments/CheckoutSessionFactory.php` — Session 2a's creator. Not touched in 2b.
-- New `app/Services/Payments/RefundService.php` + `RefundResult.php`.
-
-**Models**
-- `app/Models/Booking.php` — Session 2a added payment columns + helpers. 2b adds `bookingRefunds(): HasMany` and extends `remainingRefundableCents()`.
-- `app/Models/PendingAction.php` — the generalised table (D-113 + locked decision #44). 2b writes `PaymentRefundFailed` + `PaymentCancelledAfterPayment` rows.
-- New `app/Models/BookingRefund.php`.
-
-**Enums**
-- `app/Enums/PaymentStatus.php` — final values shipped 2a. 2b writes `Unpaid` (customer_choice failure branch) and `Refunded` + `RefundFailed`.
-- `app/Enums/PendingActionType.php` — payment cases pre-added by D-119.
-
-**Console**
-- `routes/console.php` — where the new `bookings:expire-unpaid` schedule line lands, next to the existing reapers (`bookings:send-reminders`, `bookings:auto-complete`, `calendar:renew-watches`).
-- New `app/Console/Commands/ExpireUnpaidBookings.php`. Sibling of `AutoCompleteBookings`.
-
-**Frontend**
-- `resources/js/pages/dashboard/bookings.tsx` — list page; gains a Payment column + filter.
-- `resources/js/components/dashboard/booking-detail-sheet.tsx` — sheet; gains a Payment panel + Pending Action banner.
-- `resources/js/pages/bookings/show.tsx` — token-authenticated customer-facing booking detail. Session 2a already renders the payment status; Session 2b doesn't touch the shape.
-- `resources/js/types/index.d.ts` — TS types extended.
-- New `resources/js/components/dashboard/payment-status-badge.tsx`.
-
-**Tests**
-- `tests/Support/Billing/FakeStripeClient.php` — gains `mockRefundCreate` + `mockRefundCreateFails`.
-- New test files listed in M8.
-
-### Terms of art (first-use definitions)
-
-- **Outcome-level idempotency** — every handler re-reads the DB row state at the moment of write (inside a `lockForUpdate` when concurrent races exist) and no-ops if the target state is already present. Distinct from the cache-layer event-id dedup (locked decision #38 / D-092 / D-110) which catches Stripe replays but not cache-flushed replays, maintenance replays, or cross-path races. Codified as locked decision #33 + D-151.
-- **D-158 account pin** — `bookings.stripe_connected_account_id` is populated at Checkout-session creation with the minting account. Webhook + success-page + reaper read this pinned id rather than a `withTrashed()->where('business_id')->value('stripe_account_id')` lookup on the business (non-deterministic across reconnect history).
-- **Reaper** — a scheduled job that walks stale records and reconciles them. Session 2b introduces `bookings:expire-unpaid`; sibling reapers are `bookings:send-reminders` + `bookings:auto-complete`.
-- **GIST exclusion constraint on bookings** — D-065 / D-066. Prevents overlapping bookings while `status IN (pending, confirmed)`. Cancelling is the slot-release mechanism.
-- **CheckoutPromoter** — the Session 2a service (D-151) that wraps `awaiting_payment → paid` in `DB::transaction + lockForUpdate + session-id / amount / currency cross-check + DB-state guard + notification dispatch`.
-- **Pending Action** — a generic row in `pending_actions` (D-113 + locked decision #44). Calendar-typed and payment-typed coexist. Payment PAs are admin-only per locked decisions #19 / #31 / #35.
-- **Cancellation token** — `bookings.cancellation_token`, UUID minted at booking creation. Bearer secret authenticating customer-facing view / cancel / payment-success / payment-cancel surfaces.
-
-### What Session 2a left in place that 2b relies on
-
-Session 2a shipped in commit `36879f0` (plus CI fix `5bdbe4e`). Highlights Session 2b inherits:
-
-- `bookings.payment_mode_at_creation` (not-null, default `'offline'`); immutable snapshot per locked decision #14.
-- `bookings.stripe_connected_account_id` (D-158); populated by `PublicBookingController::store` for online bookings.
-- `bookings.stripe_checkout_session_id`, `stripe_payment_intent_id`, `stripe_charge_id` (nullable; 2a writes session_id + PI id; charge_id is populated in Session 3's refund path but the late-webhook refund in 2b writes it when PI data provides `latest_charge`).
-- `bookings.paid_amount_cents` + `currency` — captured at creation (D-152), overwritten by Stripe on promotion (subject to D-156 fail-closed).
-- `bookings.expires_at` — populated only for `payment_mode_at_creation = 'online'`. The 2b reaper filters on this.
-- `CheckoutPromoter::promote` returns `'paid' | 'already_paid' | 'not_paid' | 'mismatch'` (D-156). Session 2b's reaper handles all four the same way: SKIP the cancel.
-- `BookingManagementController::cancel`, `Customer\BookingController::cancel`, `Dashboard\BookingController::updateStatus` — all refuse `payment_status = Paid` (D-157 + D-159). Session 2b does NOT relax these guards; Session 3 does.
-- `PendingActionType::PaymentRefundFailed` + `PaymentCancelledAfterPayment` pre-added by D-119.
-- `FakeStripeClient`'s connected-account-level bucket (mocks assert `stripe_account` header present); 2b extends it with `mockRefundCreate` + `mockRefundCreateFails`.
+- **Booking** (`app/Models/Booking.php`): an appointment row with a lifecycle (`pending` / `confirmed` / `cancelled` / `completed` / `no_show`) and a payment lifecycle (`payment_status` — values `not_applicable` / `awaiting_payment` / `paid` / `unpaid` / `refunded` / `partially_refunded` / `refund_failed`). Paid bookings carry `stripe_payment_intent_id`, `paid_amount_cents`, `currency`, and — critically — `stripe_connected_account_id` (the "D-158 pin" — the connected account that minted the Checkout session, authoritative for every downstream Stripe call).
+- **Stripe Connect Express**: each riservo `Business` connects its own Stripe account. Every Stripe SDK call for a booking passes `['stripe_account' => $booking->stripe_connected_account_id]` as per-request options. The professional is the merchant of record; riservo collects zero commission.
+- **Pinned connected-account id (D-158)**: `bookings.stripe_connected_account_id` is set at Checkout-session creation time and never mutates. Disconnect+reconnect on the same business produces a new `stripe_connected_accounts` row; the old booking keeps its pin. Refunds for old bookings dispatch against the pinned id. When the pinned account is soft-deleted (disconnected), Stripe may refuse with a permission error → `RefundResult::disconnected` fallback (locked decision #36).
+- **`RefundService`** (`app/Services/Payments/RefundService.php`, Session 2b): the single refund executor. Signature: `refund(Booking $booking, ?int $amountCents = null, string $reason = 'cancelled-after-payment'): RefundResult`. Inserts a `booking_refunds` row *before* the Stripe call, seeds the Stripe `idempotency_key` from the row's UUID (`riservo_refund_{uuid}` per D-162 + locked decision #36), and handles four outcome flavours: `succeeded`, `failed`, `disconnected`, `guard_rejected`. Transient Stripe errors (5xx, rate limit, connection drop) *don't* flip the row — they propagate so the caller can return 5xx and let Stripe retry; the pending row + UUID ensure the retry converges via Stripe's idempotency. Session 3 extends this service with the four additional reasons and a partial-refund branch while keeping the signature (a new optional 4th param for initiator).
+- **`booking_refunds`** table (Session 2b): one row per refund ATTEMPT (locked decision #36). Columns: `id`, `uuid`, `booking_id`, `stripe_refund_id`, `amount_cents`, `currency`, `status` (enum `BookingRefundStatus` — `pending` / `succeeded` / `failed`), `reason` (string), `initiated_by_user_id`, `failure_reason`. Session 3 does not add columns.
+- **Pending Actions** (`pending_actions` table, D-113): a generalised queue of admin attention items. The `type` enum values relevant here are `payment.dispute_opened`, `payment.refund_failed`, `payment.cancelled_after_payment` (all pre-added in Session 1 per D-119). Payment PAs are admin-only per locked decisions #19 / #31 / #35 / #36. `Dashboard\PaymentPendingActionController::resolve` (Session 2b) handles admin-manual resolution of the refund-failed + cancelled-after-payment types; Session 3 extends it to accept `payment.dispute_opened`.
+- **Stripe Connect webhook** (`/webhooks/stripe-connect`, `StripeConnectWebhookController`): the `account.*`, `checkout.session.*`, `charge.dispute.*` event consumer. Signature-verified via `services.stripe.connect_webhook_secret`; dedup'd via the D-092 cache helper with prefix `stripe:connect:event:`. Session 3 adds `charge.refunded`, `charge.refund.updated`, `refund.updated` handlers + extends the existing dispute handler. All handlers re-read DB state inside `DB::transaction + lockForUpdate` blocks (locked decision #33).
+- **`BookingCancelledNotification`** (`app/Notifications/BookingCancelledNotification.php`): fires on every business-side cancel (today unconditionally no refund clause) and on every customer-side cancel (admin / staff receive the notification). Session 3 adds the refund-clause branch per D-175.
+- **`BookingDetailSheet`** (`resources/js/components/dashboard/booking-detail-sheet.tsx`): the admin dashboard's booking detail popup. Currently holds the Session 2b Payment panel + Pending-Action banner. Session 3 adds a "Payment & refunds" panel (original charge + refund list), a "Dispute" section when a dispute PA exists, and the admin-only "Refund" button / dialog.
+- **`bookings/show`** (`resources/js/pages/bookings/show.tsx`): the public booking-management page (guests arrive via the signed cancellation-token URL; authenticated customers arrive via a similar flow in `customer/bookings.tsx`). Session 3 adds a refund status line below the payment panel.
+- **Tenant context** (`App\Support\TenantContext`, D-063): every dashboard request has an active business + role (`admin` / `staff`). New controllers scope via `tenant()->business()` + `abort_unless($booking->business_id === tenant()->businessId(), 404)` for cross-tenant defence (locked decision #45).
 
 
 ## Plan of Work
 
-Work lands in ten milestones (M0 → M9). The ceremony sequence is plan (M0) → developer approval → exec (M1 → M9) → codex review → developer commit.
+### M1 — Extend `RefundService` for partial + multi-reason + webhook settlement
 
-1. **M0 — Plan alignment.** Developer approves this plan. No code before gate 1.
-2. **M1 — Data layer.** The `booking_refunds` table + the real `remainingRefundableCents()` clamp are the foundation everything else depends on. Implement, run `migrate:fresh --seed`, land the factory test.
-3. **M2 — `RefundService` skeleton.** The glue between `booking_refunds`, Stripe, booking state, Pending Actions, and the admin email. Session 3 extends this without breaking the signature.
-4. **M3 — Failure webhook arms.** Three failure events + one late-webhook-refund event. Each handler mirrors the `handleCheckoutSessionCompleted` guard structure (client_reference_id resolution → D-158 cross-account guard → outcome-level guard → `DB::transaction + lockForUpdate` → branching on snapshot).
-5. **M4 — Reaper.** Command + schedule entry. Pre-flight retrieve + `CheckoutPromoter::promote` is the key invariant; no inline promotion logic.
-6. **M5 — Admin notifications.** Two markdown mail notifications. Admin-only recipients per locked decisions #19 / #31.
-7. **M6 — Admin UI.** Extend the dashboard list + detail sheet. New controller for resolving payment PAs. New badge + filter.
-8. **M7 — Cancel-URL copy.** Small controller change; two flash keys branching on the snapshot.
-9. **M8 — Tests.** ~35 tests across 7 files. Test-first discipline on the reaper + webhook handlers.
-10. **M9 — Close.** Iteration loop, Pint, Wayfinder, PHPStan, Vite build, HANDOFF rewrite, decisions promoted, stage; developer commits (gate 2).
+File: `app/Services/Payments/RefundService.php`.
 
-**Test-first discipline** on the reaper and webhook arms — these race with customer actions and Stripe webhooks, and regressions in state transitions compound.
+1. Change the `refund` signature to accept an optional `initiatedByUserId`:
 
-**Never commit.** I stage after each milestone and report back.
+    ```php
+    public function refund(
+        Booking $booking,
+        ?int $amountCents = null,
+        string $reason = 'cancelled-after-payment',
+        ?int $initiatedByUserId = null,
+    ): RefundResult
+    ```
 
+   The extra argument defaults to `null` so every existing caller (Session 2b's `applyLateWebhookRefund`) continues to write `initiated_by_user_id = null` (system-dispatched). New callers in Session 3 (customer cancel, business cancel, manual-confirm rejection) also pass `null`; only `Dashboard\BookingRefundController::store` (admin manual) passes `auth()->id()`.
 
-## Concrete Steps
+2. The existing retry-path lookup (`->where('reason', $reason)`) must continue to work. Session 3 uses one `reason` value per refund call-site, so the lookup is still unambiguous. Do NOT widen the lookup to all reasons — two concurrent auto-refund paths would otherwise collapse incorrectly; the booking-level `lockForUpdate` already serialises them so only one writes the refund and the other sees `remainingRefundableCents() = 0` and guard-rejects. Keep reason-scoping.
 
-### Baseline verification
+3. Replace the silent clamp at `RefundService.php:154-165` with a 422 `ValidationException` per D-169:
 
-```bash
-cd /Users/mir/Projects/riservo
-git status               # expect clean after 5bdbe4e
-git log -1 --format='%h %s'
-php artisan test tests/Feature tests/Unit --compact  # confirm 829 / 3277 baseline
+    ```php
+    if ($requestedAmount > $remaining) {
+        throw ValidationException::withMessages([
+            'amount' => __('Refund exceeds the remaining refundable amount. Maximum allowed is :max.', [
+                'max' => number_format($remaining / 100, 2, '.', "'"),
+            ]),
+        ]);
+    }
+    ```
+
+   Raised inside the `DB::transaction` callback; the transaction rolls back so no orphan row is left behind. Callers that pass `null` (all system-dispatched paths) can never hit this branch; only the admin-manual path can, and its controller lets the exception bubble so Inertia renders it inline.
+
+4. Populate `initiated_by_user_id` from the new argument at row insert.
+
+5. Expose three new methods for the webhook settlement path (M6):
+
+    ```php
+    public function recordStripeState(
+        BookingRefund $row,
+        string $stripeStatus,
+        ?string $failureReason = null,
+    ): void {
+        match ($stripeStatus) {
+            'succeeded' => $this->recordSettlementSuccess($row, $row->stripe_refund_id ?? ''),
+            'failed' => $this->recordSettlementFailure($row, $failureReason ?? 'Stripe reported failed'),
+            'canceled' => $this->recordSettlementFailure($row, 'Stripe cancelled the refund'),
+            'requires_action', 'pending' => null,  // leave Pending
+            default => Log::warning('RefundService: unknown Stripe refund status', [
+                'booking_refund_id' => $row->id,
+                'stripe_status' => $stripeStatus,
+            ]),
+        };
+    }
+
+    public function recordSettlementSuccess(BookingRefund $row, string $stripeRefundId): void
+    {
+        DB::transaction(function () use ($row, $stripeRefundId): void {
+            $booking = Booking::query()->whereKey($row->booking_id)->lockForUpdate()->firstOrFail();
+
+            // Outcome-level idempotency (locked decision #33)
+            if ($row->fresh()?->status === BookingRefundStatus::Succeeded) {
+                return;
+            }
+
+            $row->forceFill([
+                'status' => BookingRefundStatus::Succeeded,
+                'stripe_refund_id' => $stripeRefundId !== '' ? $stripeRefundId : $row->stripe_refund_id,
+            ])->save();
+
+            $this->reconcilePaymentStatus($booking);
+        });
+    }
+
+    public function recordSettlementFailure(BookingRefund $row, ?string $failureReason): void
+    {
+        DB::transaction(function () use ($row, $failureReason): void {
+            $booking = Booking::query()->whereKey($row->booking_id)->lockForUpdate()->firstOrFail();
+
+            if ($row->fresh()?->status === BookingRefundStatus::Failed) {
+                return;
+            }
+
+            $row->forceFill([
+                'status' => BookingRefundStatus::Failed,
+                'failure_reason' => $failureReason,
+            ])->save();
+
+            $booking->forceFill(['payment_status' => PaymentStatus::RefundFailed])->save();
+        });
+
+        $row->refresh();
+        $row->loadMissing('booking');
+        $this->upsertRefundFailedPendingAction($row->booking, $row);
+        $this->dispatchRefundFailedEmail($row->booking, $row);
+    }
+    ```
+
+   `reconcilePaymentStatus`, `upsertRefundFailedPendingAction`, `dispatchRefundFailedEmail` already exist from Session 2b — reuse them. Make `upsertRefundFailedPendingAction` + `dispatchRefundFailedEmail` accessible from the two new public entry-points; they're already private instance methods so no visibility change is needed (internal calls).
+
+Tests (new file `tests/Unit/Services/Payments/RefundServicePartialTest.php`):
+- partial refund issues for 2000 of 5000, row status `Pending` → `Succeeded`, booking `payment_status` = `PartiallyRefunded`;
+- second partial refund for 3000 succeeds, booking `payment_status` = `Refunded`;
+- over-refund throws 422 (3000 left + request 4000); no row inserted;
+- `admin-manual` reason stores `initiated_by_user_id`;
+- `recordSettlementFailure` on an already-Failed row is a no-op;
+- `recordSettlementSuccess` is idempotent on already-Succeeded rows;
+- `recordStripeState` with `canceled` → failure; with `requires_action` → no-op.
+
+### M2 — Replace D-157 / D-159 paid-cancel guards with `RefundService` dispatches
+
+Three files, each a targeted two-step swap (drop guard, add dispatch).
+
+**`app/Http/Controllers/Booking/BookingManagementController.php::cancel`** (token-based customer cancel):
+
+Today (`BookingManagementController.php:93-97`) a paid booking is blocked with a flash message. Session 3:
+
+- In-window (existing `canCancel()` check passes) AND `payment_status ∈ {Paid, PartiallyRefunded}` → dispatch `RefundService::refund($booking, null, 'customer-requested')`.
+  - Wrap the dispatch in a try/catch for `ApiConnectionException | RateLimitException | ApiErrorException` — on transient Stripe failure, do NOT flip Cancelled; respond with a 503 via `abort(503, 'Temporary Stripe issue — please try again.')`. Customer retry replays cleanly (no status transition happened; the pending refund row is reused via the reason-scoped lookup).
+  - On `succeeded` outcome: flip to Cancelled, flash `__('Booking cancelled. Refund initiated — you'll receive it in your original payment method within 5–10 business days.')`.
+  - On `disconnected` or `failed` outcome: still flip to Cancelled (the service flipped `payment_status` to `refund_failed` and surfaced a Pending Action). Flash `__('Booking cancelled. The business couldn't process the refund automatically — they will contact you directly.')`.
+  - On `guard_rejected` (shouldn't happen — we already checked `payment_status ∈ {Paid, PartiallyRefunded}`): treat defensively — generic error flash, keep booking state.
+- Out-of-window (`canCancel()` false): the existing "cancellation window has passed" message stays. No refund dispatch.
+- In-window AND `payment_status ∈ {NotApplicable, Unpaid, AwaitingPayment}`: existing no-refund cancel path (no change).
+
+The staff-facing `BookingCancelledNotification($booking, 'customer', refundIssued: boolean)` carries the refund flag so admins / providers see the right context in their email.
+
+**`app/Http/Controllers/Customer/BookingController.php::cancel`** (authenticated-customer cancel):
+
+Same rewrite as above; the window check is duplicated (`Customer\BookingController.php:56-60`) and the paid guard (67-71) becomes the RefundService dispatch.
+
+**`app/Http/Controllers/Dashboard/BookingController.php::updateStatus`** (admin / staff cancel from dashboard):
+
+Today (`Dashboard\BookingController.php:300-302`): admin-cancel of a paid booking is blocked. Session 3 replaces with:
+
+- Only when `$newStatus === Cancelled`:
+  - `Pending + Paid` → `reason = 'business-rejected-pending'` (locked decision #29 manual-confirm rejection path).
+  - `Pending + Unpaid` → no refund dispatch (locked decision #29 variant). Booking flips Cancelled normally. Customer email omits refund clause.
+  - `Pending + AwaitingPayment` → no refund dispatch (Checkout never completed). Flip to Cancelled; the Checkout session will expire naturally (the subsequent webhook failure arm no-ops on Cancelled per Session 2b's outcome guard).
+  - `Confirmed + Paid | PartiallyRefunded` → `reason = 'business-cancelled'` (locked decision #17).
+- Wrap the dispatch in the same `ApiConnectionException | RateLimitException | ApiErrorException` try/catch as the customer paths; on transient failure the booking stays Confirmed and the admin sees a "try again" flash. The existing `$booking->update(['status' => $newStatus])` happens AFTER a successful dispatch so a transient Stripe failure can't produce a `Cancelled + pending-refund` intermediate state.
+- On `disconnected` or `failed` outcome from `RefundService`: still flip to Cancelled; admin gets `__('Booking cancelled. Automatic refund failed — resolve in Stripe. The refund-failed action has the details.')`. The existing `payment.refund_failed` Pending Action writer surfaces the banner in the detail sheet.
+- Dispatch `BookingCancelledNotification($booking, 'business', refundIssued: $refundWasSucceeded)` per D-175.
+
+**Regression coverage:** `tests/Feature/Booking/PaidCancellationGuardTest.php` currently asserts the *blocks*. Rename it to `PaidCancellationRefundTest.php` via `git mv` and rewrite both cases to assert the new refund-dispatching behaviour, plus add the dashboard branches. See M10.
+
+### M3 — Admin-manual refund controller + UI
+
+**Backend:**
+
+- New `app/Http/Requests/Dashboard/StoreBookingRefundRequest.php`:
+
+    ```php
+    public function authorize(): bool { return true; }  // controller enforces admin
+    public function rules(): array {
+        return [
+            'kind' => ['required', Rule::in(['full', 'partial'])],
+            'amount_cents' => ['required_if:kind,partial', 'nullable', 'integer', 'min:1'],
+            'reason' => ['nullable', 'string', 'max:500'],
+        ];
+    }
+    ```
+
+- New `app/Http/Controllers/Dashboard/BookingRefundController.php` with `store(StoreBookingRefundRequest, Booking)`:
+
+    ```php
+    public function __construct(private readonly RefundService $refundService) {}
+
+    public function store(StoreBookingRefundRequest $request, Booking $booking): RedirectResponse
+    {
+        $business = tenant()->business();
+        abort_unless($business !== null && $booking->business_id === $business->id, 404);
+        abort_unless(tenant()->role() === BusinessMemberRole::Admin, 403);
+
+        $validated = $request->validated();
+        $amount = $validated['kind'] === 'full' ? null : (int) $validated['amount_cents'];
+
+        try {
+            $result = $this->refundService->refund(
+                $booking,
+                $amount,
+                'admin-manual',
+                $request->user()->id,
+            );
+        } catch (ApiConnectionException|RateLimitException|ApiErrorException $e) {
+            return back()->with('error', __('Temporary Stripe issue — try again in a minute.'));
+        }
+
+        return match ($result->outcome) {
+            'succeeded' => back()->with('success', __('Refund issued.')),
+            'disconnected', 'failed' => back()->with(
+                'error',
+                __('Stripe couldn\'t process this refund — a pending action has been created with the details.'),
+            ),
+            'guard_rejected' => back()->with('error', __('This booking is no longer refundable.')),
+            default => back()->with('error', __('Unexpected refund outcome.')),
+        };
+    }
+    ```
+
+- Route in `routes/web.php` within the existing dashboard group:
+
+    ```php
+    Route::post('/dashboard/bookings/{booking}/refunds', [BookingRefundController::class, 'store'])
+        ->name('dashboard.bookings.refunds.store');
+    ```
+
+- `php artisan wayfinder:generate` after the route lands.
+
+**Frontend:**
+
+- `BookingDetailSheet` gains a "Refund" button *inside* the existing Payment panel (below the Stripe deep-link), conditional on `isAdmin && payment.remaining_refundable_cents > 0`. The admin-only payment panel is already hidden from staff in Session 2b, so staff never see the button and no placeholder / tooltip is needed.
+- New `resources/js/components/dashboard/refund-dialog.tsx` built on the existing Dialog primitive + `useForm`:
+
+    ```tsx
+    const form = useForm({ kind: 'full', amount_cents: 0, reason: '' });
+    // ... RadioGroup: full (default) vs partial; amount input enabled only when partial;
+    //     reason textarea; submit via form.post(store.url(booking.id)).
+    ```
+
+    Client-side input clamp uses `remaining_refundable_cents` from the booking payload; 422 errors from `RefundService` (D-169 overflow) render under the amount field. On success, `onSuccess` closes the dialog and triggers a partial reload of the bookings list.
+
+- `Dashboard\BookingController::index` payload extension (admin-only branch): add `remaining_refundable_cents` + `refunds` array (see M7). Wayfinder + TS types updated accordingly.
+
+### M4 — Manual-confirmation rejection paths
+
+The rejection UI lives on `Dashboard\BookingController::updateStatus` — the same controller M2 rewrites. The only incremental change for M4 is notification-side:
+
+1. `app/Notifications/BookingCancelledNotification.php` — add `public bool $refundIssued = false` constructor arg (defaulted so existing test callers keep compiling); pass into blade render.
+
+2. `resources/views/mail/booking-cancelled.blade.php` — add a conditional block:
+
+    ```blade
+    @if ($cancelledBy === 'business' && $refundIssued)
+    {{ __('A full refund has been issued to your original payment method. You should see it within 5–10 business days.') }}
+    @endif
+    ```
+
+3. Every caller updated:
+    - `BookingManagementController::cancel` (customer path): `cancelledBy='customer'`, `refundIssued` ignored server-side by the template (`cancelledBy === 'business'` guard).
+    - `Customer\BookingController::cancel`: same.
+    - `Dashboard\BookingController::updateStatus`: `cancelledBy='business'`, `refundIssued = (dispatched && result.outcome === 'succeeded')`. Every rejection branch passes the flag.
+
+Test covers the three business-side branches (paid + rejected → refund + clause; unpaid + rejected → no refund + no clause; awaiting_payment + rejected → no refund + no clause) — see M10.
+
+### M5 — Dispute webhook extension
+
+File: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php::handleDisputeEvent`.
+
+The existing Session 1 stub (D-123) persists the PA and returns 200. Session 3 layers on:
+
+1. **`charge.dispute.created`**: after the PA upsert, dispatch a new `DisputeOpenedNotification` to business admins. File `app/Notifications/Payments/DisputeOpenedNotification.php` mirrors `RefundFailedNotification`. Email payload: business name, dispute reason, dispute amount + currency, deep-link to `https://dashboard.stripe.com/{stripe_account_id}/disputes/{dispute_id}`, evidence-due-by date.
+
+   Outcome-level idempotency: the cache-layer event-ID dedup (D-092) collapses exact replays. For the rare cross-time re-delivery from Stripe with a different event id, re-sending the email is acceptable — disputes are urgent; admins prefer "one extra nag" over "missed the first email".
+
+2. **`charge.dispute.updated`**: update the PA payload; do NOT send an email. This is the existing stub behaviour — preserved.
+
+3. **`charge.dispute.closed`**: resolve the PA with `resolution_note = 'closed:'.$dispute->status` (existing Session 1 Round 3 behaviour). Then dispatch `DisputeClosedNotification` (new, admin-only) carrying the outcome summary. Subject: `__('Dispute resolved — :outcome', ['outcome' => $disputeStatus])`. Body renders a short paragraph per outcome + deep-link.
+
+4. **`PaymentPendingActionController::resolve`** now accepts `PendingActionType::PaymentDisputeOpened`. Admin-manual dismiss writes `resolution_note = 'dismissed-by-admin'` to distinguish from webhook-set values.
+
+5. Notifications dispatch OUTSIDE the DB transaction (same shape as `applyLateWebhookRefund`).
+
+6. Attempt to resolve a booking for the dispute where possible by looking up `bookings` via `stripe_charge_id` OR `stripe_payment_intent_id` (the dispute's `charge` id — cross-referenced against `bookings` table). When found, link the PA to the booking via `booking_id`. When not found, leave `booking_id = null` (some disputes may be on charges that can't cleanly resolve to a single booking in edge cases — the dispute is still actionable in Stripe's dashboard).
+
+### M6 — Refund-settlement webhook arms
+
+File: `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php`.
+
+Extend the `dispatch()` `match ($event->type)` block:
+
+```php
+'charge.refunded',
+'charge.refund.updated',
+'refund.updated' => $this->handleRefundEvent($event),
 ```
 
-### M1 — Data layer
+New handler body (simplified):
 
-```bash
-php artisan make:migration create_booking_refunds_table --create=booking_refunds --no-interaction
-php artisan make:model BookingRefund --factory --no-interaction
+```php
+private function handleRefundEvent(StripeEvent $event): Response
+{
+    $refunds = $this->extractRefundsFromEvent($event);   // handles both shapes
+
+    foreach ($refunds as $stripeRefund) {
+        $bookingRefund = BookingRefund::where('stripe_refund_id', $stripeRefund->id)->first();
+        if ($bookingRefund === null) {
+            Log::warning('Connect refund event: no booking_refunds row matches stripe_refund_id', [
+                'event_id' => $event->id,
+                'stripe_refund_id' => $stripeRefund->id,
+            ]);
+            continue; // D-092 cache will dedup honest replays; unknown ids we 200 and move on
+        }
+
+        $bookingRefund->loadMissing('booking');
+        $booking = $bookingRefund->booking;
+        $expected = $booking?->stripe_connected_account_id;
+        $actual = $event->account ?? null;
+
+        if (! is_string($expected) || $expected === '' || $actual !== $expected) {
+            Log::critical('Connect refund event cross-account mismatch', [
+                'event_id' => $event->id,
+                'booking_id' => $bookingRefund->booking_id,
+                'expected' => $expected,
+                'actual' => $actual,
+            ]);
+            continue;
+        }
+
+        $this->refundService->recordStripeState(
+            $bookingRefund,
+            (string) ($stripeRefund->status ?? ''),
+            $stripeRefund->failure_reason ?? null,
+        );
+    }
+
+    return new Response('OK', 200);
+}
+
+/**
+ * `charge.refunded` carries a Charge whose `refunds->data` is the list.
+ * `charge.refund.updated` + `refund.updated` carry a Refund directly.
+ */
+private function extractRefundsFromEvent(StripeEvent $event): array
+{
+    $object = $event->data->object ?? null;
+    if ($object instanceof StripeRefund) {
+        return [$object];
+    }
+    if ($object instanceof StripeCharge) {
+        $refunds = $object->refunds->data ?? [];
+        return is_array($refunds) ? $refunds : [];
+    }
+    return [];
+}
 ```
 
-Edit the migration to match the schema in M1 Progress. Edit the model (fillable + casts + relations). Edit the factory (states).
+Notes:
 
-Extend `app/Models/Booking.php`: add `bookingRefunds()` relation; extend `remainingRefundableCents()`.
+- `recordStripeState` is the M1 dispatcher — idempotent (re-entering with the same terminal state no-ops).
+- `charge.refunded` + `refund.updated` + `charge.refund.updated` can all arrive for the same semantic transition. The D-092 event-ID cache dedup collapses exact-duplicate ids; different ids for the same state transition converge via the outcome-level guard inside `recordStripeState`.
+- No cross-tenant tests here because the webhook has no tenant — just the cross-account guard via the D-158 pin.
 
-Run:
+### M7 — Admin Payment & refunds panel + Dispute section
 
-```bash
-php artisan migrate:fresh --seed
-php artisan test --compact --filter=BookingRefund
+File: `resources/js/components/dashboard/booking-detail-sheet.tsx` + `app/Http/Controllers/Dashboard/BookingController.php::index` payload.
+
+Server-side payload changes (admin-only branch):
+
+1. `payment` sub-object gains `remaining_refundable_cents: int`.
+2. New key `refunds` on each booking row: an array of serialised `booking_refunds` entries — each `{ id, created_at, amount_cents, currency, status, reason, initiator_name, stripe_refund_id }`. `initiator_name` resolves `initiatedByUser.name` for `admin-manual`; other reasons display `null` and the UI renders "System". Eager-load `bookingRefunds.initiatedByUser:id,name`.
+3. `pending_payment_action` eager-load extends the type filter to include `PaymentDisputeOpened`. Sort order: `PaymentRefundFailed` first (most urgent), then `PaymentCancelledAfterPayment`, then `PaymentDisputeOpened` (long-running).
+
+Frontend changes inside `BookingDetailSheet`:
+
+1. New sub-component `PaymentRefundsPanel` that renders below the existing Payment block. Compact table / list:
+
+    ```
+    2026-04-24 14:02 · CHF 20.00 · Succeeded · admin@example.com · Manual refund
+    2026-04-23 10:15 · CHF 30.00 · Succeeded · System · Customer cancellation
+    ```
+
+    Each row has an "Open in Stripe" icon-link when `stripe_refund_id` is present, deep-linking to `https://dashboard.stripe.com/{acct}/refunds/{stripe_refund_id}`.
+
+2. Below the refund list, a "Refund" button opens the `RefundDialog` (M3) when `isAdmin && payment.remaining_refundable_cents > 0`.
+
+3. A separate "Dispute" section renders only when the `pending_payment_action.type === 'payment.dispute_opened'`. Shows:
+   - Title: "Dispute — :status" (e.g. "Dispute — needs response").
+   - Reason (from payload).
+   - Evidence due-by (formatted).
+   - Deep-link button: "Respond in Stripe" → `https://dashboard.stripe.com/{acct}/disputes/{dispute_id}`.
+   - "Mark as dismissed" button (admin-only; calls `resolvePaymentPendingAction`) — for the rare admin-manual dismiss case.
+
+4. New `resources/js/components/dashboard/refund-status-badge.tsx` chip for the refund list rows.
+
+### M8 — Public bookings/show refund status line + customer bookings page
+
+Files:
+- `app/Models/Booking.php` — new method `refundStatusLine(): ?string` computing the customer-facing copy.
+- `app/Http/Controllers/Booking/BookingManagementController.php::show` — pass `refund_status_line` + a lightweight `refunds` array (last 3 entries, guest-safe keys only: `amount_cents`, `currency`, `status`, `created_at`).
+- `app/Http/Controllers/Customer/BookingController.php::index` — add `refund_status_line` on each booking's formatted output.
+- `resources/js/pages/bookings/show.tsx` — render `refund_status_line` below the payment panel.
+- `resources/js/pages/customer/bookings.tsx` — render `refund_status_line` on each booking card.
+
+The `Booking::refundStatusLine()` method branches:
+
+```php
+public function refundStatusLine(): ?string
+{
+    $refunds = $this->bookingRefunds()->latest('id')->get();
+    if ($refunds->isEmpty()) { return null; }
+
+    $succeededCents = (int) $refunds->where('status', BookingRefundStatus::Succeeded)->sum('amount_cents');
+    $paid = $this->paid_amount_cents ?? 0;
+    $latest = $refunds->first();
+
+    if ($latest->status === BookingRefundStatus::Failed) {
+        return $this->stripe_connected_account_id !== null && $this->hasDisconnectedPinnedAccount()
+            ? __('Your booking is cancelled. Because the business\'s payment setup has changed, the refund cannot be issued automatically — they will contact you to arrange it.')
+            : __('The automatic refund couldn\'t be processed. The business has been notified and will contact you.');
+    }
+
+    if ($succeededCents >= $paid && $paid > 0) {
+        return __('Refunded in full — expect the funds in your original payment method within 5–10 business days.');
+    }
+
+    if ($succeededCents > 0 && $succeededCents < $paid) {
+        return __('Partial refund issued.');
+    }
+
+    // Only Pending rows so far
+    return __('Refund initiated — processing.');
+}
+
+private function hasDisconnectedPinnedAccount(): bool
+{
+    return StripeConnectedAccount::withTrashed()
+        ->where('stripe_account_id', $this->stripe_connected_account_id)
+        ->whereNotNull('deleted_at')
+        ->exists();
+}
 ```
 
-### M2 — `RefundService`
+Both `/bookings/{token}` and `/my-bookings` pages render `{refund_status_line && <p>{refund_status_line}</p>}` below the existing payment panel.
 
-Create `app/Services/Payments/RefundService.php` + `RefundResult.php`. Container-resolvable via constructor injection on `StripeClient` — no explicit binding.
+### M9 — Test plumbing
 
-```bash
-php artisan test tests/Unit/Services/Payments/RefundServiceTest.php --compact
+File: new `tests/Support/Billing/StripeEventBuilder.php`.
+
+Stripe webhook tests today POST raw JSON through `StripeConnectWebhookController` (the tolerant path honours `app()->environment('testing')`). Session 3 adds canonical event payload builders:
+
+```php
+public static function disputeEvent(
+    string $accountId,
+    string $type,  // 'charge.dispute.created' | '.updated' | '.closed'
+    string $disputeId = 'dp_test_'.uniqid(),
+    array $overrides = [],
+): array;
+
+public static function refundEvent(
+    string $accountId,
+    string $type,  // 'charge.refunded' | 'charge.refund.updated' | 'refund.updated'
+    string $stripeRefundId = 're_test_'.uniqid(),
+    array $overrides = [],
+): array;
 ```
 
-### M3 — Failure webhook arms
+Each returns a `StripeEvent::constructFrom`-compatible payload. Existing dispute tests in `StripeConnectWebhookTest.php` likely build payloads inline today — refactor to use the builder in the same edit (pure mechanical move; doesn't alter semantics).
 
-Write T01..T16 tests first. Extend `StripeConnectWebhookController::dispatch()`'s `match` with the four new arms. Implement handlers.
+`FakeStripeClient` needs no structural additions — Session 2b's `mockRefundCreate` already covers the new admin-manual + customer-cancel + business-cancel paths (they all call `$stripe->refunds->create([...], [header + idempotency_key])` with the same shape).
 
-```bash
-php artisan test tests/Feature/Payments --compact
-```
+### M10 — Tests (comprehensive)
 
-### M4 — Reaper
+**`tests/Feature/Booking/PaidCancellationRefundTest.php`** (`git mv` from `PaidCancellationGuardTest.php`):
 
-```bash
-php artisan make:command ExpireUnpaidBookings --no-interaction
-```
+- `customer in-window cancel on paid booking dispatches automatic full refund (customer-requested)`.
+- `customer in-window cancel on partially_refunded booking dispatches remaining refund`.
+- `customer out-of-window cancel on paid booking is blocked; no refund dispatched`.
+- `customer cancel on unpaid booking cancels without refund (no RefundService call)`.
+- `authenticated customer in-window cancel dispatches refund`.
+- `customer cancel transient Stripe error leaves booking Confirmed (503 + no state change)`.
+- `admin dashboard cancel on Confirmed + Paid dispatches business-cancelled refund; customer email includes refund clause`.
+- `admin dashboard cancel on Pending + Paid dispatches business-rejected-pending refund; customer email includes refund clause`.
+- `admin dashboard cancel on Pending + Unpaid cancels without refund; customer email omits refund clause`.
+- `admin dashboard cancel on Pending + AwaitingPayment cancels without refund; no Stripe call`.
+- `disconnected-account customer cancel: booking still flips Cancelled; payment_status = refund_failed; Pending Action created; fallback flash`.
+- `staff cannot transition any booking to Cancelled when their provider isn't assigned (existing 403 preserved)`.
 
-Write T17..T22 first. Implement the command body. Add the schedule entry to `routes/console.php`.
+**`tests/Feature/Dashboard/AdminManualRefundTest.php`** (new):
 
-```bash
-php artisan test tests/Feature/Console --compact
-php artisan bookings:expire-unpaid      # smoke test: "0 bookings processed" on a fresh DB
-```
+- `admin full refund on Paid booking succeeds; row Succeeded; booking Refunded; initiated_by_user_id = admin.id`.
+- `admin partial refund (2000 of 5000) succeeds; booking payment_status = PartiallyRefunded`.
+- `admin second partial refund (3000 of remaining 3000) succeeds; booking payment_status = Refunded`.
+- `admin over-refund (6000 of remaining 5000) fails with 422; no row inserted`.
+- `admin refund on booking with payment_status=NotApplicable is rejected (guard_rejected + error flash)`.
+- `admin refund on booking with remainingRefundableCents = 0 is guard-rejected`.
+- `staff POST to refund endpoint returns 403`.
+- `admin from Business A cannot refund Business B's booking (404 via tenant scope)`.
+- `admin refund failure via disconnected-account surfaces refund_failed payment_status + Pending Action; error flash reflects the failure`.
+- `idempotency: same admin double-submits collapse to one succeeded row (reason-scoped row reuse + Stripe key)`.
+- `admin refund on Refunded booking is guard-rejected (remaining = 0)`.
 
-### M5 — Notifications
+**`tests/Feature/Payments/RefundSettlementWebhookTest.php`** (new):
 
-```bash
-php artisan make:notification Payments/RefundFailedNotification --no-interaction
-php artisan make:notification Payments/CancelledAfterPaymentNotification --no-interaction
-```
+- `charge.refunded webhook marks pending row Succeeded; booking Refunded (full)`.
+- `charge.refunded webhook marks pending row Succeeded; booking PartiallyRefunded (partial amount)`.
+- `charge.refund.updated with status=succeeded is idempotent (no double write)`.
+- `charge.refund.updated with status=failed marks row Failed; booking refund_failed; PA created; admin email dispatched`.
+- `refund.updated with status=succeeded matches on stripe_refund_id and settles`.
+- `refund-settlement webhook for unknown stripe_refund_id logs + 200s` (no crash).
+- `refund-settlement webhook cross-account mismatch logs critical + skips` (D-158 pin).
+- `refund-settlement event-id replay dedupes at the cache layer (single admin email)`.
+- `refund-settlement on an already-Succeeded row is idempotent (outcome-level guard)`.
+- `refund canceled status → row Failed + refund_failed payment status` (D-172).
 
-Markdown views under `resources/views/mail/payments/`. Follow the `resources/views/mail/booking-received.blade.php` shape.
+**`tests/Feature/Payments/DisputeWebhookTest.php`** (new):
 
-### M6 — Admin UI
+- `charge.dispute.created writes PA; emails admins only; does not change booking status/payment_status`.
+- `charge.dispute.updated refreshes PA payload; does not send duplicate email`.
+- `charge.dispute.closed resolves PA with outcome; emails admins with closing summary`.
+- `admin can manually dismiss payment.dispute_opened PA via PATCH resolve; resolution_note = 'dismissed-by-admin'`.
+- `staff cannot dismiss payment.dispute_opened PA (403)`.
+- `dispute webhook for unknown stripe_account_id logs critical + 200s` (existing Session 1 behaviour preserved).
+- `booking payment_status is unchanged across dispute trio` (locked decision #25).
 
-```bash
-php artisan make:controller Dashboard/PaymentPendingActionController --no-interaction
-```
+**`tests/Feature/Dashboard/BookingRefundsPanelTest.php`** (new):
 
-Add the route `dashboard.payments.pending-actions.resolve`. Regenerate:
+- `admin sees Payment & refunds panel with refund rows sorted latest-first`.
+- `admin sees Refund button when payment_status=paid && remainingRefundableCents > 0`.
+- `admin does NOT see Refund button when payment_status=refunded (remaining = 0)`.
+- `staff does NOT see Payment panel at all` (existing Session 2b behaviour; reinforce).
+- `booking with dispute PA shows Dispute section + Stripe deep-link`.
+- `Dashboard\BookingController::index payload exposes remaining_refundable_cents + refunds[] only for admins`.
 
-```bash
-php artisan wayfinder:generate
-```
+**`tests/Unit/Services/Payments/RefundServicePartialTest.php`** (new, covered under M1).
 
-Edit:
+**`tests/Feature/Booking/BookingShowRefundLineTest.php`** (new):
 
-- `app/Http/Controllers/Dashboard/BookingController.php::index` — enrich payload, add filter.
-- `resources/js/pages/dashboard/bookings.tsx` — filter + column.
-- `resources/js/components/dashboard/booking-detail-sheet.tsx` — Payment panel + PA banner.
-- `resources/js/components/dashboard/payment-status-badge.tsx` — new.
-- `resources/js/types/index.d.ts` — extend types.
+- public `/bookings/{token}` shows refund status line after in-window cancel + refund succeeded.
+- page shows disconnected-account copy when refund disconnected.
+- page shows "partial refund" copy when partial refund succeeded.
+- page shows no line when booking has no refunds.
 
-```bash
-php artisan test tests/Feature/Dashboard --compact
-npm run build    # verify TS + Vite
-```
+**Existing tests that need maintenance:**
 
-### M7 — Cancel-URL copy
+- `tests/Feature/Dashboard/BookingPaymentPanelTest.php` — add `remaining_refundable_cents` assertion.
+- `tests/Feature/Dashboard/BookingsListPaymentFilterTest.php` — no change needed; payload additions don't affect the filter.
+- Any test instantiating `new BookingCancelledNotification(...)` — update to pass the new `refundIssued` arg (defaulted to `false` so most existing cases work unchanged).
 
-Edit `BookingPaymentReturnController::cancel`.
-
-```bash
-php artisan test tests/Feature/Booking/CancelUrlLandingTest.php --compact
-```
-
-### M8 — Full iteration loop
+### M11 — Iteration loop
 
 ```bash
 php artisan test tests/Feature tests/Unit --compact
@@ -576,232 +781,309 @@ php artisan wayfinder:generate
 npm run build
 ```
 
-### M9 — Close
+Each must pass before handing back for codex review + commit.
+
+
+## Concrete Steps
+
+In-order exec after plan approval. Each bullet corresponds to a `## Progress` line. Stage frequently; never commit.
 
 ```bash
+# M1 — RefundService expansion
+vim app/Services/Payments/RefundService.php
+# (RefundResult.php unchanged — outcome set already covers Session 3)
+touch tests/Unit/Services/Payments/RefundServicePartialTest.php
+vim tests/Unit/Services/Payments/RefundServicePartialTest.php
+php artisan test --compact --filter=RefundService
 git add -A
-git status
-```
 
-Rewrite `docs/HANDOFF.md`; promote `D-NNN` into `docs/decisions/DECISIONS-PAYMENTS.md`.
+# M2 — rewrite three cancel paths + rename PaidCancellationGuardTest
+vim app/Http/Controllers/Booking/BookingManagementController.php
+vim app/Http/Controllers/Customer/BookingController.php
+vim app/Http/Controllers/Dashboard/BookingController.php
+git mv tests/Feature/Booking/PaidCancellationGuardTest.php tests/Feature/Booking/PaidCancellationRefundTest.php
+vim tests/Feature/Booking/PaidCancellationRefundTest.php
+php artisan test --compact --filter=PaidCancellationRefund
+git add -A
+
+# M3 — admin-manual refund endpoint + dialog
+php artisan make:request Dashboard/StoreBookingRefundRequest
+vim app/Http/Requests/Dashboard/StoreBookingRefundRequest.php
+touch app/Http/Controllers/Dashboard/BookingRefundController.php
+vim app/Http/Controllers/Dashboard/BookingRefundController.php
+vim routes/web.php
+php artisan wayfinder:generate
+touch resources/js/components/dashboard/refund-dialog.tsx
+vim resources/js/components/dashboard/refund-dialog.tsx
+vim resources/js/components/dashboard/booking-detail-sheet.tsx
+touch tests/Feature/Dashboard/AdminManualRefundTest.php
+vim tests/Feature/Dashboard/AdminManualRefundTest.php
+php artisan test --compact --filter=AdminManualRefund
+git add -A
+
+# M4 — notification template branch
+vim app/Notifications/BookingCancelledNotification.php
+vim resources/views/mail/booking-cancelled.blade.php
+# (callers already updated under M2)
+php artisan test --compact --filter=BookingCancelled
+git add -A
+
+# M5 — dispute webhook extension + DisputeOpenedNotification + DisputeClosedNotification
+touch app/Notifications/Payments/DisputeOpenedNotification.php
+vim app/Notifications/Payments/DisputeOpenedNotification.php
+touch app/Notifications/Payments/DisputeClosedNotification.php
+vim app/Notifications/Payments/DisputeClosedNotification.php
+touch resources/views/mail/payments/dispute-opened.blade.php
+vim resources/views/mail/payments/dispute-opened.blade.php
+touch resources/views/mail/payments/dispute-closed.blade.php
+vim resources/views/mail/payments/dispute-closed.blade.php
+vim app/Http/Controllers/Webhooks/StripeConnectWebhookController.php
+vim app/Http/Controllers/Dashboard/PaymentPendingActionController.php
+touch tests/Feature/Payments/DisputeWebhookTest.php
+vim tests/Feature/Payments/DisputeWebhookTest.php
+php artisan test --compact --filter=Dispute
+git add -A
+
+# M6 — refund-settlement webhook arms
+vim app/Http/Controllers/Webhooks/StripeConnectWebhookController.php
+touch tests/Feature/Payments/RefundSettlementWebhookTest.php
+vim tests/Feature/Payments/RefundSettlementWebhookTest.php
+php artisan test --compact --filter=RefundSettlementWebhook
+git add -A
+
+# M7 — admin Payment & refunds panel
+vim app/Http/Controllers/Dashboard/BookingController.php   # payload: remaining_refundable_cents + refunds list + dispute PA type
+touch resources/js/components/dashboard/refund-status-badge.tsx
+vim resources/js/components/dashboard/refund-status-badge.tsx
+vim resources/js/components/dashboard/booking-detail-sheet.tsx
+vim resources/js/types/index.d.ts
+touch tests/Feature/Dashboard/BookingRefundsPanelTest.php
+vim tests/Feature/Dashboard/BookingRefundsPanelTest.php
+php artisan test --compact --filter=BookingRefundsPanel
+git add -A
+
+# M8 — public refund status line
+vim app/Models/Booking.php
+vim app/Http/Controllers/Booking/BookingManagementController.php
+vim app/Http/Controllers/Customer/BookingController.php
+vim resources/js/pages/bookings/show.tsx
+vim resources/js/pages/customer/bookings.tsx
+touch tests/Feature/Booking/BookingShowRefundLineTest.php
+vim tests/Feature/Booking/BookingShowRefundLineTest.php
+php artisan test --compact --filter=BookingShowRefundLine
+git add -A
+
+# M9 — test plumbing (build canonical payloads once)
+touch tests/Support/Billing/StripeEventBuilder.php
+vim tests/Support/Billing/StripeEventBuilder.php
+# (refactor existing dispute test payloads to use it; mechanical)
+git add -A
+
+# M11 — iteration loop
+php artisan test tests/Feature tests/Unit --compact
+vendor/bin/pint --dirty --format agent
+php artisan wayfinder:generate
+./vendor/bin/phpstan
+npm run build
+git add -A
+
+# HANDOFF + decisions promotion
+vim docs/decisions/DECISIONS-PAYMENTS.md        # D-169 .. D-175
+vim docs/HANDOFF.md                             # rewrite (overwrite, not append)
+git add -A
+
+# stop — developer commits (gate 2); codex review rounds may follow before commit.
+```
 
 
 ## Validation and Acceptance
 
-Acceptance is observable behaviour:
+After approval and implementation, a novice agent can verify by:
 
-- **Expiry reaper observable** (T17 in `ExpireUnpaidBookingsTest.php`): seed an online booking with `expires_at = now - 10 min`; mock `checkout.sessions.retrieve` to return `status = 'expired'`; `Artisan::call('bookings:expire-unpaid')`; assert booking is `Cancelled + NotApplicable + expires_at = null`; assert a fresh booking at the same slot commits successfully (slot released).
-- **Failure webhook observable** (T01): POST a signed `checkout.session.expired` body to `/webhooks/stripe-connect`; online booking flips to `Cancelled + NotApplicable`; zero notifications; reposting the same event id (D-092 cache dedup) returns 200 with no additional state change.
-- **Late-webhook refund observable** (T11): after the reaper cancels, POST `checkout.session.completed` for the same session; assert `payment_status = Paid`, `BookingRefund` row with `stripe_refund_id`, `FakeStripeClient.mockRefundCreate` invoked with `idempotency_key = 'riservo_refund_{uuid}'`, `CancelledAfterPaymentNotification` fires once, booking stays Cancelled.
-- **Admin surface observable** (T26): as admin, GET `/dashboard/bookings?payment_status=paid`; open the detail sheet; see "Paid CHF 50.00 · Stripe charge ch_test_…" with a deep-link to the Connect dashboard.
-- **Pending Action resolve observable** (T27): PATCH `/dashboard/payments/pending-actions/{id}/resolve` marks `status = Resolved` + `resolved_by_user_id = auth()->id()` + `resolved_at = now()`.
+1. **Iteration loop:**
 
-Session close gate (M9):
-- `php artisan test tests/Feature tests/Unit --compact` — all pass, total ≥ 860.
-- `vendor/bin/pint --dirty --format agent` — no style changes.
-- `php artisan wayfinder:generate` — clean.
-- `./vendor/bin/phpstan` — 0 errors, level 5, `app/` only.
-- `npm run build` — Vite clean.
+    ```bash
+    php artisan test tests/Feature tests/Unit --compact
+    # expect 876 + N passed (N ≈ 30–55 new cases)
+    vendor/bin/pint --dirty --format agent
+    php artisan wayfinder:generate
+    ./vendor/bin/phpstan
+    npm run build
+    ```
+
+    Each must exit 0. Frontend bundle should remain in the same ballpark as Session 2b (~552 kB main chunk).
+
+2. **Focused sub-suite runs:**
+
+    ```bash
+    php artisan test --compact --filter=RefundService
+    php artisan test --compact --filter=PaidCancellationRefund
+    php artisan test --compact --filter=AdminManualRefund
+    php artisan test --compact --filter=RefundSettlementWebhook
+    php artisan test --compact --filter=DisputeWebhook
+    php artisan test --compact --filter=BookingRefundsPanel
+    php artisan test --compact --filter=BookingShowRefundLine
+    ```
+
+3. **Visual acceptance (dev server):**
+
+    ```bash
+    composer run dev
+    ```
+
+    As an admin on a paid booking, open the booking-detail sheet in `/dashboard/bookings` and confirm:
+    - Payment panel shows `Paid`, `CHF 50.00`, `CHF 50.00 refundable`.
+    - "Refund" button opens a dialog with Full/Partial radios.
+    - Submitting Full triggers a refund; the sheet shows a new entry in the Payment & refunds panel; booking chip flips to `Refunded`.
+    - As a customer, `/bookings/{token}` shows the "Refund initiated" line.
+
+4. **Webhook paths:**
+
+    `php artisan test --compact --filter=RefundSettlementWebhook|DisputeWebhook` exercises both paths with canonical payloads built via `StripeEventBuilder`. Production verification is out of scope for this session.
 
 
 ## Idempotence and Recovery
 
-- **Migration**: additive (new table + index); `down()` drops the table. `migrate:fresh` is safe.
-- **RefundService**: the row is created BEFORE the Stripe call with `uuid` populated. A retry after mid-response failure reuses the row → same `idempotency_key` → Stripe collapses via locked decision #36. No double-refund risk.
-- **Webhook handlers**: every new handler begins with an outcome-level DB-state guard. The D-092 / D-110 cache dedup is the second line of defence.
-- **Reaper**: `withoutOverlapping()` + `DB::transaction + lockForUpdate` + outcome-level guard inside the lock. Stripe 5xx → leave for next tick. Stripe 4xx on retrieve → cancel (session gone).
-- **Cancel-URL controller**: stateless. The customer can re-hit arbitrarily; flash is informational.
-- **Pending Action resolve**: idempotent (`status !== pending` → no-op).
+- Every refund dispatch is idempotent at two layers: (a) `booking_refunds.uuid` → Stripe `idempotency_key` (same attempt reuses row); (b) outcome-level DB-state guards inside `RefundService::recordSettlementSuccess` / `recordSettlementFailure` (already-terminal rows no-op).
+- The `Dashboard\BookingController::updateStatus` refund dispatch runs BEFORE the status flip. A transient Stripe 5xx raises; the controller returns a "try again" flash; booking remains Confirmed; admin retries.
+- The admin-manual refund controller uses the same try/catch; the admin-facing dialog renders 422 errors inline (validation overflow) and 5xx as a generic "try again" flash.
+- `recordStripeState` is safe to call any number of times with the same input; it no-ops on already-terminal state per D-171 + D-172.
+- Late-webhook refund from Session 2b is unchanged by Session 3.
+- Database migrations in this session: **none**. All changes ride the existing schema.
 
 
 ## Artifacts and Notes
 
-### RefundService signature + DTO
+Refund reason labels for UI display (`refunds` prop shape):
 
-```php
-namespace App\Services\Payments;
-
-use App\Models\Booking;
-use App\Models\BookingRefund;
-
-final class RefundService
-{
-    public function __construct(
-        private readonly \Stripe\StripeClient $stripe,
-    ) {}
-
-    public function refund(
-        Booking $booking,
-        ?int $amountCents = null,
-        string $reason = 'cancelled-after-payment',
-    ): RefundResult {
-        // 1) guards → RefundResult::guardRejected(...)
-        // 2) DB::transaction { lockForUpdate; insert booking_refunds row pending+uuid; }
-        // 3) try { stripe.refunds.create([...], ['stripe_account' => ..., 'idempotency_key' => 'riservo_refund_'.$row->uuid]); }
-        // 4) permission error → row failed, booking refund_failed, PA, admin email → disconnected
-        // 5) other ApiErrorException → same DB side-effects → failed
-        // 6) success → row succeeded, booking Refunded → succeeded
-    }
-}
-
-final readonly class RefundResult
-{
-    public function __construct(
-        public string $outcome, // 'succeeded' | 'failed' | 'disconnected' | 'guard_rejected'
-        public ?BookingRefund $bookingRefund,
-        public ?string $failureReason,
-    ) {}
-}
+```typescript
+const reasonLabels: Record<string, string> = {
+    'cancelled-after-payment': 'Late payment',
+    'customer-requested': 'Customer cancellation',
+    'business-cancelled': 'Business cancellation',
+    'admin-manual': 'Manual refund',
+    'business-rejected-pending': 'Booking rejected',
+};
 ```
 
-### Reaper cancel-branch pseudocode
+Dispute PA payload shape (today, preserved):
 
-```php
-DB::transaction(function () use ($bookingId) {
-    $locked = Booking::query()->whereKey($bookingId)->lockForUpdate()->first();
-    if ($locked === null) return;
-    if ($locked->payment_status !== PaymentStatus::AwaitingPayment) return;
-    if ($locked->status !== BookingStatus::Pending) return;
-    $locked->forceFill([
-        'status' => BookingStatus::Cancelled,
-        'payment_status' => PaymentStatus::NotApplicable,
-        'expires_at' => null,
-    ])->save();
-});
-```
-
-### FakeStripeClient extension
-
-```php
-public function mockRefundCreate(
-    string $expectedAccountId,
-    ?string $expectedIdempotencyKeyExact = null,
-    array $response = [],
-): self {
-    // stub $stripe->refunds->create([...], [...]) via ensureRefunds() + Mockery->shouldReceive
-    // withArgs: $opts['stripe_account'] === $expectedAccountId
-    //           && str_starts_with($opts['idempotency_key'] ?? '', 'riservo_refund_')
-    //           && ($expectedIdempotencyKeyExact === null || $opts['idempotency_key'] === $expectedIdempotencyKeyExact)
-    // returns \Stripe\Refund::constructFrom(array_merge([
-    //     'id' => 're_test_'.uniqid(),
-    //     'status' => 'succeeded',
-    //     'amount' => 5000,
-    //     'currency' => 'chf',
-    // ], $response))
-}
-
-public function mockRefundCreateFails(
-    string $expectedAccountId,
-    string $errorCode = 'account_invalid',
-    string $message = 'This account does not have permission to perform this operation.',
-): self {
-    // throws \Stripe\Exception\PermissionException
+```json
+{
+  "dispute_id": "dp_...",
+  "charge_id": "ch_...",
+  "amount": 5000,
+  "currency": "chf",
+  "reason": "fraudulent",
+  "status": "warning_needs_response",
+  "evidence_due_by": 1735689600,
+  "last_event_id": "evt_...",
+  "last_event_type": "charge.dispute.created"
 }
 ```
 
 
 ## Interfaces and Dependencies
 
-### New files
+### `app/Services/Payments/RefundService.php`
 
-- `database/migrations/2026_04_23_HHMMSS_create_booking_refunds_table.php`
-- `database/factories/BookingRefundFactory.php`
-- `app/Models/BookingRefund.php`
-- `app/Services/Payments/RefundService.php`
-- `app/Services/Payments/RefundResult.php`
-- `app/Http/Controllers/Dashboard/PaymentPendingActionController.php`
-- `app/Console/Commands/ExpireUnpaidBookings.php`
-- `app/Notifications/Payments/RefundFailedNotification.php` + `resources/views/mail/payments/refund-failed.blade.php`
-- `app/Notifications/Payments/CancelledAfterPaymentNotification.php` + `resources/views/mail/payments/cancelled-after-payment.blade.php`
-- `resources/js/components/dashboard/payment-status-badge.tsx`
-- Test files listed in M8.
+```php
+public function refund(
+    Booking $booking,
+    ?int $amountCents = null,
+    string $reason = 'cancelled-after-payment',
+    ?int $initiatedByUserId = null,
+): RefundResult;
 
-### Modified files
+public function recordStripeState(
+    BookingRefund $row,
+    string $stripeStatus,
+    ?string $failureReason = null,
+): void;
 
-- `app/Models/Booking.php` — `bookingRefunds(): HasMany`; extend `remainingRefundableCents()`; (add `pendingActions(): HasMany` if not already present).
-- `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php` — four new arms + four new private handlers + branching in the existing `handleCheckoutSessionCompleted` for `status === Cancelled`.
-- `app/Http/Controllers/Booking/BookingPaymentReturnController.php::cancel` — flash branching on `payment_mode_at_creation`.
-- `app/Http/Controllers/Dashboard/BookingController.php::index` — payload enrichment + filter.
-- `resources/js/pages/dashboard/bookings.tsx` — Payment filter + column.
-- `resources/js/components/dashboard/booking-detail-sheet.tsx` — Payment panel + PA banner.
-- `resources/js/types/index.d.ts` — extend types.
-- `routes/web.php` — resolve route for payment PAs.
-- `routes/console.php` — schedule reaper every 2 min.
-- `tests/Support/Billing/FakeStripeClient.php` — `mockRefundCreate` + `mockRefundCreateFails`.
-
-### Inertia prop shapes (additive)
-
-```ts
-interface DashboardBooking {
-    // ... existing fields
-    payment: {
-        status:
-            | 'not_applicable'
-            | 'awaiting_payment'
-            | 'paid'
-            | 'unpaid'
-            | 'refunded'
-            | 'partially_refunded'
-            | 'refund_failed';
-        paid_amount_cents: number | null;
-        currency: string | null;
-        paid_at: string | null;
-        stripe_charge_id: string | null;
-        stripe_payment_intent_id: string | null;
-        stripe_connected_account_id: string | null;
-    };
-    pending_payment_action: PendingPaymentAction | null;
-}
-
-interface PendingPaymentAction {
-    id: number;
-    type: 'payment.cancelled_after_payment' | 'payment.refund_failed';
-    payload: Record<string, unknown>;
-    created_at: string;
-}
-
-interface BookingsPageProps extends PageProps {
-    // ... existing
-    filters: {
-        status: string;
-        payment_status: string; // NEW
-        service_id: string;
-        provider_id: string;
-        date_from: string;
-        date_to: string;
-        sort: string;
-        direction: string;
-    };
-}
+public function recordSettlementSuccess(BookingRefund $row, string $stripeRefundId): void;
+public function recordSettlementFailure(BookingRefund $row, ?string $failureReason): void;
 ```
 
-### Wayfinder routes exposed after this session
+### `app/Http/Controllers/Dashboard/BookingRefundController.php`
 
-- `dashboard.payments.pending-actions.resolve` (PATCH) — used by the booking-detail banner's "Mark as resolved" button.
+```php
+public function store(StoreBookingRefundRequest $request, Booking $booking): RedirectResponse;
+```
+
+Route: `POST /dashboard/bookings/{booking}/refunds` → `dashboard.bookings.refunds.store`.
+
+### `app/Notifications/BookingCancelledNotification.php`
+
+```php
+public function __construct(
+    public Booking $booking,
+    public string $cancelledBy,
+    public bool $refundIssued = false,
+);
+```
+
+### `app/Notifications/Payments/DisputeOpenedNotification.php` + `DisputeClosedNotification.php`
+
+```php
+public function __construct(
+    public ?Booking $booking,     // null if the dispute couldn't resolve to a booking
+    public PendingAction $pendingAction,
+);
+```
+
+### `resources/js/types/index.d.ts`
+
+```typescript
+interface DashboardBookingPayment {
+    status: string;
+    paid_amount_cents: number | null;
+    currency: string | null;
+    paid_at: string | null;
+    stripe_charge_id: string | null;
+    stripe_payment_intent_id: string | null;
+    stripe_connected_account_id: string | null;
+    remaining_refundable_cents: number;   // NEW
+}
+
+interface DashboardBookingRefund {
+    id: number;
+    created_at: string;
+    amount_cents: number;
+    currency: string;
+    status: 'pending' | 'succeeded' | 'failed';
+    reason: string;
+    initiator_name: string | null;
+    stripe_refund_id: string | null;
+}
+
+interface DashboardBooking {
+    // ... existing fields ...
+    refunds?: DashboardBookingRefund[];   // NEW, admin-only
+}
+```
 
 
 ## Open Questions
 
-No product-level ambiguities surfaced from the session brief or the roadmap. Every locked decision (#13, #14, #19, #29, #31, #36, #41, #43, #44, #45) and every Session 2a decision (D-151 → D-161) has a concrete Session 2b instruction in the roadmap.
+None that block gate-1 approval. Three I'd flag for the developer to sanity-check before exec:
 
-Two small judgement calls I've made unilaterally (happy to revise at gate 1):
+1. **Customer-facing email on admin-manual refund?** Roadmap §Customer-side explicitly mentions the customer-facing success copy for the customer-cancel path; it's silent on admin-manual. Conservative default: **no new customer email on admin-manual** (the customer already knows the booking is cancelled; the bank-side refund arrival is signal enough). If the developer wants one, the shape would be `App\Notifications\Payments\RefundIssuedNotification` to the customer on `admin-manual` succeeded outcomes.
+2. **Dispute email PII level.** Locked decision #35 mentions the dispute reason + deep-link but is silent on customer PII. Default: **include customer name + email + booking starts_at** (admins investigating disputes always need to reach the customer). If the developer prefers a lean email, strip to reason + amount + deep-link.
+3. **Exact wording of the disconnected-account refund line on `bookings/show`.** Locked decision #36 says "Refund not automatic — the business will contact you". I've drafted "Your booking is cancelled. Because the business's payment setup has changed, the refund cannot be issued automatically — they will contact you to arrange it." Confirm the wording before i18n keys freeze.
+4. **`PaidCancellationGuardTest.php` rename.** The .claude/CLAUDE.md rule says "Do NOT delete tests without approval". A `git mv` + rewrite preserves the semantic intent (guard replaced by refund dispatch) but the assertions invert. Confirm the rename is acceptable vs. keeping a placeholder file that re-exports the new tests.
 
-1. ~~`BookingRefund.status` as a plain string rather than a native enum~~ — **resolved at gate 1**: use a native enum `App\Enums\BookingRefundStatus` because the three values (`pending`, `succeeded`, `failed`) are the full set we surface across Sessions 2b and 3.
-2. **Reaper scope is platform-wide (all businesses, read-only or not)** — matches the existing convention for `AutoCompleteBookings`, `SendBookingReminders`, etc. (HANDOFF's "Server-side automation runs unconditionally" clause).
-
-If neither of those pushes back, they become D-entries at commit time.
-
-A specific call I want the developer to sanity-check at gate 1:
-
-3. **Late-webhook refund also branches inside `handleCheckoutSessionCompleted`** (when `booking.status === Cancelled`), not only inside `handlePaymentIntentSucceeded`. Reason: Stripe may deliver the Checkout-level event before the payment-intent one, and the happy-path handler would otherwise route into `CheckoutPromoter::promote` which fails closed on the DB-state guard (booking is Cancelled, not AwaitingPayment). Belt-and-braces; confirm this matches your expectations.
+Proceeding on these with the conservative defaults above unless the developer corrects.
 
 
 ## Risks & Notes
 
-- **Reaper vs webhook race.** 5-min grace buffer + pre-flight retrieve + late-webhook refund path (locked decision #31) are the three stacked mitigations. The late-webhook refund runs end-to-end in 2b (not stubbed); Session 3 only adds more refund reasons, it does not take over this path. Edge case: a TWINT session settling at minute 89 with webhook delay > 5 min could be cancelled by the reaper, then the late-webhook refund runs. The slot may already be re-booked — acceptable: funds go back; customer had 90 + 5 min of window.
-- **`payment_intent.succeeded` subscription.** We subscribe for the cancelled-after-payment case. For the happy path, `checkout.session.completed` (Session 2a M4) remains the canonical trigger — we guard `handlePaymentIntentSucceeded` on `status === Cancelled` to avoid double-dispatch. If this becomes unwieldy in Session 3, the subscription can be removed in favour of `checkout.session.completed` alone.
-- **Disconnected connected account between booking and refund.** D-158 pin + locked decision #36 retention mean the refund attempt still targets the correct account. A Stripe permission error lands as `payment.refund_failed` PA + admin email. Session 2b does NOT ship the "retry on reconnect" flow; that's Session 3.
-- **PHPStan level-5 generic inference on `DB::transaction`.** D-148 + D-151 workaround is a scalar (or void) return from the callback. `RefundService`'s callback returns nothing and captures the row via `use (&$row)`; the reaper's transaction is similar. No new PHPStan drama expected — but worth watching.
-- **Notification timing — mail queue vs sync.** Current pattern is synchronous `Notification::send` / `Notification::route('mail')`. Session 2b follows suit. If the disconnected-account email becomes a happy-path latency issue (very rare — only fires on permission error), moving it to a queue is a trivial follow-up.
-- **Test count growth.** Session 2a ended at 829. M8 targets ~35 new tests → ≈864. Full-suite runtime is not a concern yet; the browser suite is the dominant cost per HANDOFF and 2b doesn't touch it.
-- **Rollback.** Every change is additive (new table, new TS types, new webhook arms, pre-existing enum cases). Migration `down()` drops `booking_refunds`. Schedule entry revert is one line. No destructive data migrations. Session 2a's D-157 / D-159 paid-cancel guards remain untouched.
+- **Test-suite size growth.** Adding 30–55 tests to the Feature + Unit baseline (876 / 3559) will extend iteration-loop wall-time by a few seconds. Still well under the 2-minute full-suite budget.
+- **`BookingCancelledNotification` blade change.** The new `@if ($cancelledBy === 'business' && $refundIssued)` block requires a template-render test (planned under M4). Unconditional refund copy is explicitly a regression per locked decision #29 variant.
+- **Guard replacement atomicity.** M2 touches three controllers in what must remain a coherent diff. The PaidCancellationRefundTest rename is the durable record that the old guards are gone; the new dispatches are covered by separate tests per endpoint.
+- **Stripe webhook ordering.** `charge.refunded` can arrive before `refund.updated` in principle; both should converge via our idempotent `recordStripeState`. Tests explicitly replay in both orders.
+- **Disconnected-account flash UX.** The customer-facing disconnect copy is shared across customer in-window cancel, admin cancel, and `bookings/show`. Consolidating into `Booking::refundStatusLine()` for the public view is the right move; admin cancel paths use controller-local flash strings since the copy context differs.
+- **Wayfinder regeneration.** After adding the new controller + route, `php artisan wayfinder:generate` is required — its omission is the most common cause of "Property 'store' does not exist" TS errors in PRs. The M3 / M11 steps include it.
+- **Staff permissions.** Every new endpoint + UI element is admin-gated by `tenant()->role() === BusinessMemberRole::Admin` server-side AND by `isAdmin` branches client-side. Staff users never see the Refund button, never see the Payment panel, never see dispute PAs. Cross-tenant isolation per locked decision #45 is covered by explicit tests.
+- **`PaidCancellationGuardTest.php` rename.** Noted under Open Questions — flag at approval.
+- **Webhook 5xx propagation shape.** Session 2b's `applyLateWebhookRefund` returns `503 + Retry-After: 60` on transient Stripe errors so the connect webhook retries. The new `handleRefundEvent` does NOT call Stripe (it only reads event data + calls `recordStripeState` which only writes to the DB), so no 5xx propagation concern. If a DB error throws mid-transaction, Laravel's default 500 surfaces and Stripe retries per the dedup trait's "non-2xx is not cached" contract — matches Session 2b behaviour.

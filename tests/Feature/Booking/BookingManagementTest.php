@@ -6,7 +6,9 @@ use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\Service;
+use App\Models\StripeConnectedAccount;
 use App\Models\User;
+use Tests\Support\Billing\FakeStripeClient;
 
 test('booking can be viewed by cancellation token', function () {
     $this->withoutVite();
@@ -151,8 +153,14 @@ test('booking management page passes business.timezone through to the page', fun
         );
 });
 
-test('codex round 1 F3: paid booking cannot be cancelled via customer token until Session 3 ships refund executor', function () {
-    $business = Business::factory()->create(['cancellation_window_hours' => 0]);
+test('paid booking cancellation via customer token dispatches a customer-requested refund (PAYMENTS Session 3; supersedes D-157)', function () {
+    $business = Business::factory()->onboarded()->create([
+        'country' => 'CH',
+        'cancellation_window_hours' => 0,
+    ]);
+    StripeConnectedAccount::factory()->active()->for($business)->create([
+        'stripe_account_id' => 'acct_test_paid_token',
+    ]);
     $staff = User::factory()->create();
     $provider = attachProvider($business, $staff);
     $service = Service::factory()->create(['business_id' => $business->id]);
@@ -163,13 +171,16 @@ test('codex round 1 F3: paid booking cannot be cancelled via customer token unti
         'provider_id' => $provider->id,
         'service_id' => $service->id,
         'customer_id' => $customer->id,
+        'stripe_connected_account_id' => 'acct_test_paid_token',
         'cancellation_token' => 'paid-token-123',
     ]);
 
+    FakeStripeClient::bind()->mockRefundCreate('acct_test_paid_token');
+
     $response = $this->post('/bookings/paid-token-123/cancel');
 
-    // Redirect back with the "contact the business" error flash.
     $response->assertRedirect();
-    expect($booking->fresh()->status)->toBe(BookingStatus::Confirmed);
-    expect($booking->fresh()->payment_status)->toBe(PaymentStatus::Paid);
+    expect($booking->fresh()->status)->toBe(BookingStatus::Cancelled);
+    expect($booking->fresh()->payment_status)->toBe(PaymentStatus::Refunded);
+    expect($booking->fresh()->bookingRefunds()->first()?->reason)->toBe('customer-requested');
 });

@@ -12,6 +12,7 @@ use App\Http\Controllers\Booking\BookingPaymentReturnController;
 use App\Http\Controllers\Booking\PublicBookingController;
 use App\Http\Controllers\Customer\BookingController as CustomerBookingController;
 use App\Http\Controllers\Dashboard\BookingController as DashboardBookingController;
+use App\Http\Controllers\Dashboard\BookingRefundController;
 use App\Http\Controllers\Dashboard\CalendarController;
 use App\Http\Controllers\Dashboard\CalendarPendingActionController;
 use App\Http\Controllers\Dashboard\CustomerController as DashboardCustomerController;
@@ -137,6 +138,11 @@ Route::middleware('auth')->group(function () {
             Route::patch('/dashboard/bookings/{booking}/status', [DashboardBookingController::class, 'updateStatus'])->name('dashboard.bookings.update-status');
             Route::patch('/dashboard/bookings/{booking}/notes', [DashboardBookingController::class, 'updateNotes'])->name('dashboard.bookings.update-notes');
             Route::patch('/dashboard/bookings/{booking}/reschedule', [DashboardBookingController::class, 'reschedule'])->name('dashboard.bookings.reschedule');
+
+            // PAYMENTS Session 3 — admin-triggered manual refund (locked
+            // decision #19). Admin-only + tenant-scoped checks in controller.
+            Route::post('/dashboard/bookings/{booking}/refunds', [BookingRefundController::class, 'store'])
+                ->name('dashboard.bookings.refunds.store');
 
             // Calendar
             Route::get('/dashboard/calendar', [CalendarController::class, 'index'])->name('dashboard.calendar');

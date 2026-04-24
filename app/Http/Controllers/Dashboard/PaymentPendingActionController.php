@@ -40,9 +40,17 @@ class PaymentPendingActionController extends Controller
         // handle bookings; admins handle money.
         abort_unless(tenant()->role() === BusinessMemberRole::Admin, 403);
 
+        // PAYMENTS Session 3 (D-170): `payment.dispute_opened` is added
+        // alongside the Session 2b types. The normal lifecycle is webhook-
+        // driven (Stripe closes the dispute → `charge.dispute.closed`
+        // resolves the PA with `resolution_note = 'closed:<status>'`).
+        // Admin-manual dismissal is an escape hatch for stuck PAs; it
+        // writes a distinct `resolution_note = 'dismissed-by-admin'` so
+        // the audit trail can tell apart webhook-driven resolutions.
         if (! in_array($action->type, [
             PendingActionType::PaymentCancelledAfterPayment,
             PendingActionType::PaymentRefundFailed,
+            PendingActionType::PaymentDisputeOpened,
         ], true)) {
             abort(404);
         }
@@ -55,6 +63,9 @@ class PaymentPendingActionController extends Controller
             'status' => PendingActionStatus::Resolved,
             'resolved_by_user_id' => $request->user()->id,
             'resolved_at' => now(),
+            'resolution_note' => $action->type === PendingActionType::PaymentDisputeOpened
+                ? 'dismissed-by-admin'
+                : $action->resolution_note,
         ])->save();
 
         return back()->with('success', __('Action resolved.'));

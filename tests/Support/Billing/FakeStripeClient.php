@@ -467,8 +467,17 @@ class FakeStripeClient
             'currency' => 'chf',
         ], $response));
 
+        // PAYMENTS Session 3: capping each registered expectation at `->once()`
+        // lets tests stack multiple `mockRefundCreate` calls in a row (e.g.
+        // two partial refunds on the same booking) and see them consumed in
+        // registration order. Without `once()`, Mockery's default "0 or more"
+        // makes the first-registered expectation win every match — breaking
+        // the "two consecutive refunds return distinct `re_test_...` ids"
+        // contract that RefundServicePartialTest and AdminManualRefundTest
+        // rely on.
         $this->refunds
             ->shouldReceive('create')
+            ->once()
             ->withArgs(function ($params, $opts = []) use ($expectedAccountId, $expectedIdempotencyKeyExact) {
                 if (! $this->assertConnectedAccountLevel((array) $opts, $expectedAccountId)) {
                     return false;

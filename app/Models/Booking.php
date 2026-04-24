@@ -231,4 +231,85 @@ class Booking extends Model
 
         return max(0, $paid - $consumed);
     }
+
+    /**
+     * PAYMENTS Session 3 — customer-facing refund status line for the public
+     * booking management page (`/bookings/{token}`) and the authenticated
+     * `/my-bookings` list.
+     *
+     * Returns null when the booking has no refund attempts (nothing to show
+     * customer-side). Otherwise branches on the latest refund attempt's
+     * status and the remaining refundable amount:
+     *
+     *  - failed + pinned account disconnected → "the business will contact
+     *    you to arrange the refund" (locked decision #36);
+     *  - failed (other) → "the business has been notified";
+     *  - succeeded with remaining = 0 → "refunded in full — 5-10 business
+     *    days";
+     *  - succeeded with remaining > 0 → "partial refund issued";
+     *  - only pending → "refund initiated — processing".
+     *
+     * Timing copy is Stripe's stock 5-10 business days. Staff dashboard
+     * uses a different, richer panel (M7) — this method is customer-only.
+     *
+     * Codex Round 2 P3: N+1 avoidance. Prefer the eager-loaded
+     * `bookingRefunds` relation when present; fall back to a fresh query
+     * otherwise (safe for single-booking show pages). Accepts an optional
+     * `$pinnedAccountDisconnected` precomputed by the caller (batched at
+     * controller level for list pages) to skip the per-booking
+     * `stripe_connected_accounts` lookup.
+     */
+    public function refundStatusLine(?bool $pinnedAccountDisconnected = null): ?string
+    {
+        $refunds = $this->relationLoaded('bookingRefunds')
+            ? $this->bookingRefunds->sortByDesc('id')->values()
+            : $this->bookingRefunds()->latest('id')->get();
+
+        if ($refunds->isEmpty()) {
+            return null;
+        }
+
+        $latest = $refunds->first();
+        $succeededCents = (int) $refunds
+            ->where('status', BookingRefundStatus::Succeeded)
+            ->sum('amount_cents');
+        $paid = $this->paid_amount_cents ?? 0;
+
+        if ($latest->status === BookingRefundStatus::Failed) {
+            $disconnected = $pinnedAccountDisconnected ?? $this->hasDisconnectedPinnedAccount();
+
+            return $disconnected
+                ? (string) __('Your booking is cancelled. Because the business\'s payment setup has changed, the refund cannot be issued automatically — they will contact you to arrange it.')
+                : (string) __('The automatic refund couldn\'t be processed. The business has been notified and will contact you.');
+        }
+
+        if ($succeededCents > 0 && $paid > 0 && $succeededCents >= $paid) {
+            return (string) __('Refunded in full — expect the funds in your original payment method within 5–10 business days.');
+        }
+
+        if ($succeededCents > 0 && $succeededCents < $paid) {
+            return (string) __('Partial refund issued.');
+        }
+
+        return (string) __('Refund initiated — processing.');
+    }
+
+    /**
+     * True when the booking's pinned (D-158) connected account is
+     * soft-deleted — i.e. the business disconnected Stripe between
+     * booking creation and the refund attempt. Used by
+     * `refundStatusLine()` to branch the disconnected-fallback copy per
+     * locked decision #36.
+     */
+    public function hasDisconnectedPinnedAccount(): bool
+    {
+        if (! is_string($this->stripe_connected_account_id) || $this->stripe_connected_account_id === '') {
+            return false;
+        }
+
+        return StripeConnectedAccount::withTrashed()
+            ->where('stripe_account_id', $this->stripe_connected_account_id)
+            ->whereNotNull('deleted_at')
+            ->exists();
+    }
 }

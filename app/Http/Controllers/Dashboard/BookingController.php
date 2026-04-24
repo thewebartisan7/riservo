@@ -23,6 +23,7 @@ use App\Notifications\BookingCancelledNotification;
 use App\Notifications\BookingConfirmedNotification;
 use App\Notifications\BookingReceivedNotification;
 use App\Notifications\BookingRescheduledNotification;
+use App\Services\Payments\RefundService;
 use App\Services\SlotGeneratorService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\QueryException;
@@ -30,12 +31,16 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
+use Stripe\Exception\ApiConnectionException;
+use Stripe\Exception\ApiErrorException;
+use Stripe\Exception\RateLimitException;
 
 class BookingController extends Controller
 {
@@ -74,17 +79,33 @@ class BookingController extends Controller
             // need to reconnect Stripe or refund offline. Ordering the
             // eager-load so `refund_failed` sorts first guarantees
             // `pendingActions->first()` returns the urgent PA.
+            // PAYMENTS Session 3: extend the admin-only PA type filter to
+            // include `payment.dispute_opened` so the booking-detail sheet
+            // can surface a Dispute section alongside refund banners. The
+            // relation is unfiltered-by-type here; the serializer below
+            // splits the rows into two buckets — the urgent "banner" PA
+            // (refund_failed / cancelled_after_payment, whichever wins the
+            // urgency sort) and the dispute PA — so a booking with BOTH an
+            // open dispute AND a refund-failed action surfaces both, not
+            // just the most urgent one (Codex Round 1 P2).
             $query->with([
                 'pendingActions' => fn ($q) => $q
                     ->whereIn('type', [
                         PendingActionType::PaymentRefundFailed->value,
                         PendingActionType::PaymentCancelledAfterPayment->value,
+                        PendingActionType::PaymentDisputeOpened->value,
                     ])
                     ->where('status', PendingActionStatus::Pending->value)
                     ->orderByRaw(
-                        'CASE WHEN type = ? THEN 0 ELSE 1 END',
-                        [PendingActionType::PaymentRefundFailed->value],
+                        'CASE type WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END',
+                        [
+                            PendingActionType::PaymentRefundFailed->value,
+                            PendingActionType::PaymentCancelledAfterPayment->value,
+                        ],
                     )
+                    ->latest('id'),
+                'bookingRefunds' => fn ($q) => $q
+                    ->with('initiatedByUser:id,name')
                     ->latest('id'),
             ]);
         }
@@ -172,7 +193,16 @@ class BookingController extends Controller
                 // own bookings via `/dashboard/bookings`, so including
                 // Stripe ids in the payload unconditionally would leak the
                 // money surface past the locked-roadmap-decision #19 gate.
-                $pendingAction = $isAdmin ? $booking->pendingActions->first() : null;
+                //
+                // Session 3 Codex Round 1 P2: split the PAs into two
+                // independent buckets so a booking with BOTH a dispute AND
+                // a refund-failed PA surfaces both banners, not just the
+                // most urgent one.
+                $allPendingActions = $isAdmin ? $booking->pendingActions : collect();
+                $urgentPendingAction = $allPendingActions
+                    ->first(fn ($pa) => $pa->type !== PendingActionType::PaymentDisputeOpened);
+                $disputePendingAction = $allPendingActions
+                    ->first(fn ($pa) => $pa->type === PendingActionType::PaymentDisputeOpened);
 
                 return [
                     'id' => $booking->id,
@@ -216,6 +246,10 @@ class BookingController extends Controller
                     // gated the sub-object on `$isAdmin` so staff can't see
                     // Stripe ids for their own bookings (locked decision
                     // #19: payment surfaces are admin-only).
+                    //
+                    // Session 3 adds `remaining_refundable_cents` so the
+                    // Refund dialog's client-side clamp + the "refundable"
+                    // caption match the server's authoritative clamp.
                     'payment' => $isAdmin
                         ? [
                             'status' => $booking->payment_status->value,
@@ -225,15 +259,44 @@ class BookingController extends Controller
                             'stripe_charge_id' => $booking->stripe_charge_id,
                             'stripe_payment_intent_id' => $booking->stripe_payment_intent_id,
                             'stripe_connected_account_id' => $booking->stripe_connected_account_id,
+                            'remaining_refundable_cents' => $booking->remainingRefundableCents(),
                         ]
                         : null,
-                    'pending_payment_action' => $pendingAction !== null
+                    'pending_payment_action' => $urgentPendingAction !== null
                         ? [
-                            'id' => $pendingAction->id,
-                            'type' => $pendingAction->type->value,
-                            'payload' => $pendingAction->payload,
-                            'created_at' => $pendingAction->created_at->toIso8601String(),
+                            'id' => $urgentPendingAction->id,
+                            'type' => $urgentPendingAction->type->value,
+                            'payload' => $urgentPendingAction->payload,
+                            'created_at' => $urgentPendingAction->created_at->toIso8601String(),
                         ]
+                        : null,
+                    // PAYMENTS Session 3 Codex Round 1 P2: dispute PA rides
+                    // a separate payload key so a booking with BOTH a
+                    // dispute AND an urgent banner PA surfaces both in the
+                    // detail sheet, not only the most urgent.
+                    'dispute_payment_action' => $disputePendingAction !== null
+                        ? [
+                            'id' => $disputePendingAction->id,
+                            'type' => $disputePendingAction->type->value,
+                            'payload' => $disputePendingAction->payload,
+                            'created_at' => $disputePendingAction->created_at->toIso8601String(),
+                        ]
+                        : null,
+                    // PAYMENTS Session 3: admin-only refund list for the
+                    // Payment & refunds panel. Each row carries the
+                    // initiator's name (admin-manual) or null (system-
+                    // dispatched — surfaces as "System" in the UI).
+                    'refunds' => $isAdmin
+                        ? $booking->bookingRefunds->map(fn ($r) => [
+                            'id' => $r->id,
+                            'created_at' => $r->created_at->toIso8601String(),
+                            'amount_cents' => $r->amount_cents,
+                            'currency' => $r->currency,
+                            'status' => $r->status->value,
+                            'reason' => $r->reason,
+                            'initiator_name' => $r->initiatedByUser?->name,
+                            'stripe_refund_id' => $r->stripe_refund_id,
+                        ])->values()
                         : null,
                 ];
             }),
@@ -266,7 +329,7 @@ class BookingController extends Controller
         ]);
     }
 
-    public function updateStatus(UpdateBookingStatusRequest $request, Booking $booking): RedirectResponse
+    public function updateStatus(UpdateBookingStatusRequest $request, Booking $booking, RefundService $refundService): RedirectResponse
     {
         /** @var User $user */
         $user = $request->user();
@@ -288,17 +351,60 @@ class BookingController extends Controller
             ]));
         }
 
-        // Codex Round 2 (D-159): admin-side cancellation of paid bookings
-        // also stands the system at `cancelled + paid` until Session 3's
-        // `RefundService` wires the automatic-full-refund path (locked
-        // roadmap decision #17). Until Session 3 ships, block the
-        // transition at the dashboard edge too — mirroring the customer-
-        // facing guards on `BookingManagementController::cancel` (D-157)
-        // and `Customer\BookingController::cancel` (this session). Admins
-        // who truly need to cancel can refund manually in the Stripe
-        // dashboard first, then use Session 3's flow when it lands.
-        if ($newStatus === BookingStatus::Cancelled && $booking->payment_status === PaymentStatus::Paid) {
-            return back()->with('error', __('This booking has been paid online. Automatic refunds ship in a later release — until then, refund the customer in the Stripe dashboard first, then cancel.'));
+        // PAYMENTS Session 3 (locked decisions #17 / #19 / #29): admin-side
+        // cancel of a paid booking dispatches an automatic full refund BEFORE
+        // the status transition. D-159 used to block this at the dashboard
+        // edge; now `RefundService::refund` handles the refund + sad-path
+        // surfaces.
+        //
+        // The `reason` binds to the booking's CURRENT status:
+        //   Pending → 'business-rejected-pending' (locked decision #29 —
+        //             manual-confirm rejection of a paid booking).
+        //   Confirmed → 'business-cancelled' (locked decision #17 — admin
+        //             cancelling a previously confirmed booking).
+        //
+        // Pending + Unpaid (customer_choice + manual-confirm failed Checkout,
+        // lands via Session 2b) and Pending + AwaitingPayment (Checkout still
+        // open) are NOT refund-dispatching paths — there's nothing to refund.
+        // Both flip to Cancelled normally and the customer email omits the
+        // refund clause (D-175).
+        //
+        // Codex Round 1 P1: locked decision #19 makes refund dispatch an
+        // admin-only action. Staff users retain the ability to transition
+        // their own bookings' status in general, but CANCELLATION of a paid
+        // booking must not trigger a Stripe refund from a non-admin — that
+        // would bypass the admin gate on the dedicated refund endpoint
+        // (`BookingRefundController::store`). Staff paid-cancel attempts
+        // are refused here with a "ask your admin" flash, mirroring the
+        // pre-Session-3 D-159 shape for this edge case.
+        $refundOutcome = null;
+        $shouldRefund = $newStatus === BookingStatus::Cancelled
+            && in_array($booking->payment_status, [PaymentStatus::Paid, PaymentStatus::PartiallyRefunded], true);
+
+        if ($shouldRefund && ! $isAdmin) {
+            return back()->with('error', __('Paid bookings can only be cancelled by an admin. Ask your admin to cancel and refund this booking.'));
+        }
+
+        if ($shouldRefund) {
+            $reason = $booking->status === BookingStatus::Pending
+                ? 'business-rejected-pending'
+                : 'business-cancelled';
+
+            try {
+                $result = $refundService->refund($booking, null, $reason);
+            } catch (ApiConnectionException|RateLimitException|ApiErrorException $e) {
+                Log::warning('Dashboard\\BookingController::updateStatus transient Stripe error on cancel', [
+                    'booking_id' => $booking->id,
+                    'reason' => $reason,
+                    'exception' => $e::class,
+                    'message' => $e->getMessage(),
+                ]);
+
+                return back()->with('error', __('Temporary Stripe issue — try again in a minute.'));
+            }
+
+            $refundOutcome = $result->outcome;
+            $booking->refresh();
         }
 
         $booking->update(['status' => $newStatus]);
@@ -316,8 +422,16 @@ class BookingController extends Controller
 
         if ($newStatus === BookingStatus::Cancelled) {
             if (! $booking->shouldSuppressCustomerNotifications() && $booking->customer) {
+                // D-175: refund clause in the customer email is gated on
+                // `$refundIssued`. `$refundOutcome === 'succeeded'` is the
+                // only case where the refund clause renders; disconnected
+                // / failed / not-dispatched all render without the clause.
                 Notification::route('mail', $booking->customer->email)
-                    ->notify(new BookingCancelledNotification($booking, 'business'));
+                    ->notify(new BookingCancelledNotification(
+                        $booking,
+                        'business',
+                        refundIssued: $refundOutcome === 'succeeded',
+                    ));
             }
         }
 
@@ -329,9 +443,22 @@ class BookingController extends Controller
             PushBookingToCalendarJob::dispatch($booking->id, $action);
         }
 
-        return back()->with('success', __('Booking status updated to :status.', [
-            'status' => $newStatus->label(),
-        ]));
+        // Admin flash copy distinguishes the refund outcomes so the admin
+        // knows whether a follow-up action is needed. A disconnected /
+        // failed refund leaves a `payment.refund_failed` Pending Action
+        // (written by `RefundService`) — the detail-sheet banner is the
+        // resolution surface.
+        $flash = match (true) {
+            $refundOutcome === 'succeeded' => __('Booking cancelled. Full refund issued.'),
+            in_array($refundOutcome, ['disconnected', 'failed'], true) => __('Booking cancelled. Automatic refund failed — resolve in Stripe. See the refund-failed action for details.'),
+            default => __('Booking status updated to :status.', [
+                'status' => $newStatus->label(),
+            ]),
+        };
+
+        $flashKey = in_array($refundOutcome, ['disconnected', 'failed'], true) ? 'error' : 'success';
+
+        return back()->with($flashKey, $flash);
     }
 
     /**

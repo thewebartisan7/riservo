@@ -17,6 +17,10 @@
 **{{ __('Time') }}:** {{ $time }}
 </x-mail::panel>
 
+@if ($cancelledBy === 'business' && $refundIssued)
+{{ __('A full refund has been issued to your original payment method. You should see it within 5–10 business days.') }}
+@endif
+
 @if ($cancelledBy === 'business')
 {{ __('If you have any questions, please contact :business directly.', ['business' => $businessName]) }}
 @endif
