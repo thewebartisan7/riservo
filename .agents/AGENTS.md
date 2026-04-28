@@ -16,6 +16,13 @@ This file is the scoped instruction entry point for work in this directory subtr
 
 ---
 
+## Local dev environment
+
+- **Postgres** (Homebrew `postgresql@16`, manual start): if the DB is down, start it with `pgstart` (alias for `brew services run postgresql@16`).
+- **Databases**: `riservo` (dev, `.env`) and `riservo_ch_testing` (`phpunit.xml`).
+
+---
+
 ## Documentation Workflow
 
 Start with `docs/README.md`. Four live files drive project state:

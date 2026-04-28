@@ -17,7 +17,7 @@ The platform is designed to be **business-type agnostic**: any professional who 
 ## 2. Business Model
 
 - **SaaS subscription** for businesses: monthly or annual billing
-- **No commission** on individual bookings — when online customer-to-professional payments ship (see `docs/ROADMAP.md`), 100% of the charge lands on the professional's Stripe Connect account; riservo's only revenue is the SaaS subscription
+- **No commission** on individual bookings — when the business enables online customer-to-professional payments, 100% of the charge lands on the professional's Stripe Connect Express account (direct charges); riservo's only revenue is the SaaS subscription
 - **Indefinite free trial** at launch to drive adoption and retention
 - Paid plans will unlock higher usage limits or advanced features (to be defined pre-launch)
 - Customers (end users who book appointments) use the platform **for free**, always
@@ -236,7 +236,7 @@ Customers can be searched by name, email, or phone. When creating a manual booki
 - Booking slug
 - Booking confirmation mode: auto-confirm or manual confirmation
 - Allow customer to choose provider (`allow_provider_choice`): yes/no
-- Payment mode: `offline` (pay on-site), `online` (pay at booking), `customer_choice` — `online` and `customer_choice` require the Business to have connected a Stripe Connect Express account; see `docs/ROADMAP.md`
+- Payment mode: `offline` (pay on-site), `online` (pay at booking via Stripe Checkout — card + TWINT for CH), `customer_choice` (customer picks online or pay-on-site at checkout). `online` and `customer_choice` require the Business to have connected a verified Stripe Connect Express account from Settings → Connected Account — the Settings → Booking select gates non-offline options on `Business::canAcceptOnlinePayments()` (verified caps + country in `config('payments.supported_countries')`, currently `['CH']`). When enabled, customers are redirected to hosted Stripe Checkout; the Business receives funds directly on their connected account (direct charges, zero riservo commission)
 - Cancellation policy (minimum notice period) — enforced on customer-side cancellations only; admins can always cancel from the dashboard without restrictions
 - Business-level working hours
 
@@ -396,7 +396,6 @@ The following features are explicitly deferred to v2 or later:
 | Mobile app | Web-only for MVP |
 | 2FA (TOTP) for business accounts | Security priority for v2 |
 | Social login (Google, Apple via Socialite) | Magic link covers the low-friction use case for MVP |
-| Online payments / Stripe processing | Scheduled — see `docs/ROADMAP.md` (Stripe Connect Express, TWINT-first, zero commission) |
 | Business-type extensions / vertical features | Generic platform only |
 | Public reviews / ratings | Post-launch |
 | Customer-facing account dashboard | Guest flow sufficient for MVP; registered accounts are basic |
