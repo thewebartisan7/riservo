@@ -142,7 +142,7 @@ class PayoutsController extends Controller
      */
     private function fetchPayoutsPayload(int $businessId, StripeConnectedAccount $row): array
     {
-        $cacheKey = $this->cacheKey($businessId);
+        $cacheKey = self::cacheKey($businessId, (string) $row->stripe_account_id);
         $cached = Cache::get($cacheKey);
 
         // Fresh-cache short-circuit: if the cached payload is younger than
@@ -315,8 +315,14 @@ class PayoutsController extends Controller
         ];
     }
 
-    private function cacheKey(int $businessId): string
+    /**
+     * F-006 (PAYMENTS Hardening Round 1): cache key includes `stripe_account_id`
+     * so a disconnect+reconnect mints a new key and cannot collide with the
+     * stale row's cached payload. Disconnect / deauth handlers also forget the
+     * key explicitly.
+     */
+    public static function cacheKey(int $businessId, string $stripeAccountId): string
     {
-        return "payouts:business:{$businessId}";
+        return "payouts:business:{$businessId}:account:{$stripeAccountId}";
     }
 }

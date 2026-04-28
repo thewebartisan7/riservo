@@ -10,6 +10,7 @@ use App\Models\Booking;
 use App\Models\BookingRefund;
 use App\Models\PendingAction;
 use App\Notifications\Payments\RefundFailedNotification;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
@@ -447,12 +448,18 @@ final class RefundService
      */
     public function recordSettlementFailure(BookingRefund $row, ?string $failureReason): void
     {
-        DB::transaction(function () use ($row, $failureReason): void {
+        // F-004 (PAYMENTS Hardening Round 1): the transaction returns whether
+        // the row actually transitioned from a non-terminal state to Failed.
+        // Only the transition fires the side effects (Pending Action upsert
+        // + admin email). A duplicate webhook for an already-failed refund
+        // sees `$didTransition === false` and skips both — closing the
+        // double-email path Codex F-004 documented.
+        $didTransition = DB::transaction(function () use ($row, $failureReason): bool {
             $booking = Booking::query()->whereKey($row->booking_id)->lockForUpdate()->firstOrFail();
 
             $fresh = $row->fresh();
             if ($fresh !== null && $fresh->status === BookingRefundStatus::Failed) {
-                return;
+                return false;
             }
 
             $row->forceFill([
@@ -463,7 +470,13 @@ final class RefundService
             $booking->forceFill([
                 'payment_status' => PaymentStatus::RefundFailed,
             ])->save();
+
+            return true;
         });
+
+        if (! $didTransition) {
+            return;
+        }
 
         $row = $row->fresh() ?? $row;
         $row->loadMissing('booking');
@@ -504,6 +517,13 @@ final class RefundService
      * One `payment.refund_failed` Pending Action per `booking_refunds` row.
      * Keying on `payload->>'booking_refund_id'` prevents double-surface on
      * webhook replays or retries that hit the same row.
+     *
+     * F-004 (PAYMENTS Hardening Round 1): the insert path is wrapped in a
+     * savepoint + `UniqueConstraintViolationException` catch, mirroring the
+     * dispute PA pattern (D-126). The Postgres partial unique index added by
+     * `2026_04_28_194851_add_refund_failed_unique_index_to_pending_actions`
+     * is the DB-enforced invariant; the race-loser silently no-ops because
+     * the winner already has the row.
      */
     private function upsertRefundFailedPendingAction(Booking $booking, BookingRefund $row): void
     {
@@ -527,13 +547,20 @@ final class RefundService
             return;
         }
 
-        PendingAction::create([
+        $insertAttributes = [
             'business_id' => $booking->business_id,
             'booking_id' => $booking->id,
             'type' => PendingActionType::PaymentRefundFailed,
             'payload' => $payload,
             'status' => PendingActionStatus::Pending,
-        ]);
+        ];
+
+        try {
+            DB::transaction(static fn () => PendingAction::create($insertAttributes));
+        } catch (UniqueConstraintViolationException) {
+            // Race-loser path: a concurrent webhook for the same failed
+            // refund row inserted first. The winner has the PA; we no-op.
+        }
     }
 
     private function dispatchRefundFailedEmail(Booking $booking, BookingRefund $row): void

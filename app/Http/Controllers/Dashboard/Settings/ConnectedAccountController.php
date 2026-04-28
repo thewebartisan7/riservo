@@ -7,12 +7,14 @@ use App\Enums\PaymentMode;
 use App\Exceptions\Payments\ConnectedAccountAlreadyExists;
 use App\Exceptions\Payments\ConnectedAccountReplayCrossTenant;
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Dashboard\PayoutsController;
 use App\Models\Business;
 use App\Models\BusinessMember;
 use App\Models\StripeConnectedAccount;
 use App\Support\TenantContext;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
@@ -690,6 +692,15 @@ class ConnectedAccountController extends Controller
             if ($business->payment_mode !== PaymentMode::Offline) {
                 $business->forceFill(['payment_mode' => PaymentMode::Offline->value])->save();
             }
+
+            // F-006 (PAYMENTS Hardening Round 1): forget the payouts cache so
+            // a future reconnect cannot show the disconnected account's stale
+            // balances/payout history under the new account id. The cache key
+            // includes stripe_account_id so a reconnect-with-new-account is
+            // already isolated; this forget covers the reconnect-with-same-
+            // account-id path (rare but possible if Stripe returns the same
+            // acct_… on retry) and keeps state hygienic regardless.
+            Cache::forget(PayoutsController::cacheKey($business->id, (string) $locked->stripe_account_id));
         });
 
         return redirect()

@@ -2,6 +2,7 @@
 
 namespace App\Services\Payments;
 
+use App\Exceptions\Payments\InvalidBookingSnapshotForCheckout;
 use App\Exceptions\Payments\UnsupportedCountryForCheckout;
 use App\Models\Booking;
 use App\Models\Business;
@@ -63,7 +64,15 @@ final class CheckoutSessionFactory
     /**
      * Create the Stripe Checkout session on the connected account.
      *
+     * D-177 (PAYMENTS Hardening Round 1, F-001): the line-item amount + currency
+     * are read from the BOOKING SNAPSHOT (`paid_amount_cents`, `currency`),
+     * never from the live `Service.price` or `StripeConnectedAccount.default_currency`.
+     * Re-deriving from upstream mutable state can manufacture the very
+     * amount/currency mismatch that `CheckoutPromoter` (D-156) treats as a
+     * critical refusal — see `docs/REVIEW.md` F-001.
+     *
      * @throws ApiErrorException
+     * @throws InvalidBookingSnapshotForCheckout
      */
     public function create(
         Booking $booking,
@@ -71,8 +80,12 @@ final class CheckoutSessionFactory
         Business $business,
         StripeConnectedAccount $account,
     ): StripeCheckoutSession {
-        $currency = $account->default_currency ?? 'chf';
-        $amountCents = (int) round((float) $service->price * 100);
+        $currency = is_string($booking->currency) ? $booking->currency : null;
+        $amountCents = is_int($booking->paid_amount_cents) ? $booking->paid_amount_cents : null;
+
+        if ($currency === null || $currency === '' || $amountCents === null || $amountCents <= 0) {
+            throw new InvalidBookingSnapshotForCheckout($booking);
+        }
 
         $params = [
             'mode' => 'payment',

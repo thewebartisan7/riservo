@@ -115,6 +115,51 @@ test('charge.refund.updated with failed marks row Failed + flips booking refund_
     Notification::assertSentTo($this->admin, RefundFailedNotification::class);
 });
 
+test('duplicate refund.updated for already-failed row does not double-send admin email or duplicate PA (F-004)', function () {
+    // F-004 (PAYMENTS Hardening Round 1): when two webhook deliveries for
+    // the same failed refund land — different Stripe event ids bypass the
+    // cache-layer dedup — the first delivery fires the admin email + PA;
+    // the second must observe the row is already Failed and skip both side
+    // effects. Tests the recordSettlementFailure idempotency guard.
+    [$booking, $refund] = pendingRefund();
+
+    $eventId = 'evt_first_'.uniqid();
+    $secondEventId = 'evt_second_'.uniqid();
+
+    // First delivery: row transitions Pending -> Failed, PA created, email sent.
+    $first = $this->postJson(
+        '/webhooks/stripe-connect',
+        StripeEventBuilder::refundEvent(
+            'acct_test_settle',
+            'charge.refund.updated',
+            $refund->stripe_refund_id,
+            ['status' => 'failed', 'failure_reason' => 'insufficient_funds'],
+            $eventId,
+        )
+    );
+    $first->assertOk();
+
+    expect(PendingAction::where('type', PendingActionType::PaymentRefundFailed->value)->count())->toBe(1);
+    Notification::assertSentToTimes($this->admin, RefundFailedNotification::class, 1);
+
+    // Second delivery: same row, same id, different event id (so cache dedup
+    // does not collapse). Must NOT create a second PA or send a second email.
+    $second = $this->postJson(
+        '/webhooks/stripe-connect',
+        StripeEventBuilder::refundEvent(
+            'acct_test_settle',
+            'refund.updated',
+            $refund->stripe_refund_id,
+            ['status' => 'failed', 'failure_reason' => 'insufficient_funds'],
+            $secondEventId,
+        )
+    );
+    $second->assertOk();
+
+    expect(PendingAction::where('type', PendingActionType::PaymentRefundFailed->value)->count())->toBe(1);
+    Notification::assertSentToTimes($this->admin, RefundFailedNotification::class, 1);
+});
+
 test('refund.updated with succeeded settles via stripe_refund_id', function () {
     [$booking, $refund] = pendingRefund();
 
@@ -177,11 +222,13 @@ test('partial refund succeeded: booking ends at PartiallyRefunded', function () 
     expect($booking->fresh()->payment_status)->toBe(PaymentStatus::PartiallyRefunded);
 });
 
-test('response-loss fallback resolves row via payment_intent + amount when stripe_refund_id is null', function () {
-    // Simulate the response-loss scenario: RefundService bubbled a
-    // transient error before it could persist `stripe_refund_id`. The row
-    // is Pending with `stripe_refund_id = null`; Stripe actually created
-    // the refund and emits `charge.refunded` for it.
+test('unmatched stripe_refund_id is logged and 200d (D-171, F-003 — no fallback)', function () {
+    // F-003 (PAYMENTS Hardening Round 1): the prior payment_intent + amount
+    // fallback could mis-attribute a Stripe refund to a same-amount pending
+    // row that was NOT the one Stripe was settling. D-171 already required
+    // matching by `stripe_refund_id` only; this test pins the locked
+    // contract: an unmatched id is logged + 200'd, the pending row is
+    // untouched, no fallback runs.
     $booking = Booking::factory()->paid()->create([
         'business_id' => $this->business->id,
         'stripe_connected_account_id' => 'acct_test_settle',
@@ -200,47 +247,64 @@ test('response-loss fallback resolves row via payment_intent + amount when strip
     $response = $this->postJson('/webhooks/stripe-connect', StripeEventBuilder::refundEvent(
         'acct_test_settle',
         'charge.refunded',
-        're_test_loss_recovered',
+        're_test_unmatched',
         ['amount' => 5000, 'status' => 'succeeded', 'payment_intent' => 'pi_test_loss_x'],
     ));
     $response->assertOk();
 
-    // Row now carries the backfilled stripe_refund_id + Succeeded status.
+    // Row UNTOUCHED — no fallback backfills the stripe_refund_id.
     $row->refresh();
-    expect($row->stripe_refund_id)->toBe('re_test_loss_recovered');
-    expect($row->status)->toBe(BookingRefundStatus::Succeeded);
-    expect($booking->fresh()->payment_status)->toBe(PaymentStatus::Refunded);
+    expect($row->stripe_refund_id)->toBeNull();
+    expect($row->status)->toBe(BookingRefundStatus::Pending);
+    expect($booking->fresh()->payment_status)->toBe(PaymentStatus::Paid);
 });
 
-test('payment_intent fallback misses when amount does not match any pending row', function () {
+test('two same-amount pending refunds: webhook for missing id does not mis-attribute to the other row (F-003)', function () {
+    // The exact mis-attribution sequence Codex F-003 documented:
+    //   - 50 CHF booking
+    //   - partial refund A for 10 CHF where Stripe accepted but the response
+    //     was lost — row A pending, stripe_refund_id null
+    //   - partial refund B for 10 CHF — row B pending with its real id
+    //   - webhook for refund A's actual Stripe id arrives
+    // Under the prior fallback, row B got row A's stripe_refund_id written
+    // onto it (latest pending row + same amount). After the F-003 fix, the
+    // unmatched id is logged and BOTH rows stay untouched.
     $booking = Booking::factory()->paid()->create([
         'business_id' => $this->business->id,
         'stripe_connected_account_id' => 'acct_test_settle',
-        'stripe_payment_intent_id' => 'pi_test_loss_y',
+        'stripe_payment_intent_id' => 'pi_test_misattrib',
         'paid_amount_cents' => 5000,
         'currency' => 'chf',
     ]);
 
-    $row = BookingRefund::factory()->pending()->for($booking)->create([
-        'amount_cents' => 5000,
+    $rowA = BookingRefund::factory()->pending()->for($booking)->create([
+        'amount_cents' => 1000,
         'currency' => 'chf',
         'stripe_refund_id' => null,
         'reason' => 'customer-requested',
     ]);
 
-    // Webhook arrives with a DIFFERENT amount than the pending row.
+    $rowB = BookingRefund::factory()->pending()->for($booking)->create([
+        'amount_cents' => 1000,
+        'currency' => 'chf',
+        'stripe_refund_id' => 're_test_rowB',
+        'reason' => 'customer-requested',
+    ]);
+
+    // Webhook arrives for row A's real Stripe refund id.
     $response = $this->postJson('/webhooks/stripe-connect', StripeEventBuilder::refundEvent(
         'acct_test_settle',
         'charge.refunded',
-        're_test_wrong_amount',
-        ['amount' => 2000, 'status' => 'succeeded', 'payment_intent' => 'pi_test_loss_y'],
+        're_test_rowA_actual',
+        ['amount' => 1000, 'status' => 'succeeded', 'payment_intent' => 'pi_test_misattrib'],
     ));
     $response->assertOk();
 
-    // Row untouched — the fallback matches on amount.
-    $row->refresh();
-    expect($row->stripe_refund_id)->toBeNull();
-    expect($row->status)->toBe(BookingRefundStatus::Pending);
+    // Row A still has null id; row B still has its own id. No mis-attribution.
+    expect($rowA->fresh()->stripe_refund_id)->toBeNull();
+    expect($rowA->fresh()->status)->toBe(BookingRefundStatus::Pending);
+    expect($rowB->fresh()->stripe_refund_id)->toBe('re_test_rowB');
+    expect($rowB->fresh()->status)->toBe(BookingRefundStatus::Pending);
 });
 
 test('canceled → Failed (D-172)', function () {

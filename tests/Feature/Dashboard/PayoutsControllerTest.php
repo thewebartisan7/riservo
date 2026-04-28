@@ -18,6 +18,7 @@
  */
 
 use App\Enums\BusinessMemberRole;
+use App\Http\Controllers\Dashboard\PayoutsController;
 use App\Models\Business;
 use App\Models\StripeConnectedAccount;
 use App\Models\User;
@@ -189,7 +190,7 @@ test('Stripe API failure falls back to cached state with stale flag', function (
     // the 60s freshness window — the controller will skip the fresh-cache
     // short-circuit, attempt to re-fetch, see Stripe explode, and fall
     // back to this cached payload with `stale: true`.
-    Cache::put("payouts:business:{$this->business->id}", [
+    Cache::put(PayoutsController::cacheKey($this->business->id, 'acct_test_stale'), [
         'available' => [['amount' => 12345, 'currency' => 'chf']],
         'pending' => [['amount' => 0, 'currency' => 'chf']],
         'payouts' => [],
@@ -432,7 +433,7 @@ test('cache key isolates data per business so admins of different businesses nev
     $adminB = User::factory()->create();
     attachAdmin($businessB, $adminB);
 
-    // Admin A reads first → caches A's data under payouts:business:{A.id}.
+    // Admin A reads first → caches A's data under the (business, account) key.
     FakeStripeClient::for($this)
         ->mockBalanceRetrieve('acct_test_iso_a', ['available' => [['amount' => 1111, 'currency' => 'chf']]])
         ->mockPayoutsList('acct_test_iso_a', ['data' => []])
@@ -448,14 +449,40 @@ test('cache key isolates data per business so admins of different businesses nev
         ->get('/dashboard/payouts')
         ->assertInertia(fn ($page) => $page->where('payouts.available.0.amount', 1111));
 
-    // Admin B reads next → caches B's data under payouts:business:{B.id}.
-    // If the cache key were shared, B would see A's 1111 here.
+    // Admin B reads next → caches B's data under their own (business, account)
+    // key. If the cache key were shared, B would see A's 1111 here.
     $this->actingAs($adminB)
         ->withSession(['current_business_id' => $businessB->id])
         ->get('/dashboard/payouts')
         ->assertInertia(fn ($page) => $page->where('payouts.available.0.amount', 2222));
 
     // Verify both keys exist independently.
-    expect(Cache::has("payouts:business:{$this->business->id}"))->toBeTrue();
-    expect(Cache::has("payouts:business:{$businessB->id}"))->toBeTrue();
+    expect(Cache::has(PayoutsController::cacheKey($this->business->id, 'acct_test_iso_a')))->toBeTrue();
+    expect(Cache::has(PayoutsController::cacheKey($businessB->id, 'acct_test_iso_b')))->toBeTrue();
+});
+
+test('disconnect forgets the payouts cache for the disconnected account (F-006)', function () {
+    StripeConnectedAccount::factory()
+        ->active()
+        ->for($this->business)
+        ->create(['stripe_account_id' => 'acct_test_forget']);
+
+    $cacheKey = PayoutsController::cacheKey($this->business->id, 'acct_test_forget');
+    Cache::put($cacheKey, [
+        'available' => [['amount' => 99999, 'currency' => 'chf']],
+        'pending' => [],
+        'payouts' => [],
+        'schedule' => null,
+        'tax_status' => null,
+        'fetched_at' => now()->toIso8601String(),
+        'stale' => false,
+        'error' => null,
+    ], now()->addDay());
+
+    $this->actingAs($this->admin)
+        ->withSession(['current_business_id' => $this->business->id])
+        ->delete(route('settings.connected-account.disconnect'))
+        ->assertRedirect();
+
+    expect(Cache::has($cacheKey))->toBeFalse();
 });

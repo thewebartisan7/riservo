@@ -1003,3 +1003,89 @@ Distinct from `DECISIONS-FOUNDATIONS.md`, which carries the SaaS subscription bi
     - The `UnsupportedCountryForCheckout` + `ApiErrorException` branches inside `mintCheckoutOrRollback` retain their existing 422 semantics with the same `reason` codes (`online_payments_unavailable` for the country drift, `checkout_failed` for the Stripe API failure). Those two paths remain the fallback for races that slip past the new pre-transaction check (e.g. `supported_countries` config changing between the two reads).
     - The `paymentModeMismatch` dashboard banner copy was updated from "New bookings will fall back to offline until this is resolved" to "Customers trying to pay online will be refused at checkout until this is resolved." (Round-2 Finding 2) — the old copy falsely reassured operators that a degraded Stripe state still allowed bookings through.
     - The public booking page's UX is aligned with the Business's commercial setting: an Online Business that becomes ineligible surfaces a visible race banner, not a silent success. A customer_choice Business in a degraded state still permits explicit pay-on-site bookings.
+
+---
+
+### D-177 — Stripe Checkout amount + currency are read from the booking snapshot, not from the live Service / connected-account
+
+- **Date**: 2026-04-28 (PAYMENTS Hardening Round 1)
+- **Status**: accepted
+- **Context**: D-152 captured `paid_amount_cents` + `currency` on the `bookings` row at creation time, intending those columns as the stable money contract. D-156 made `CheckoutPromoter` fail closed on amount/currency mismatch. The Codex Round 1 adversarial review (`docs/REVIEW.md` F-001) showed `CheckoutSessionFactory::create()` re-deriving amount + currency from `Service.price` and `StripeConnectedAccount.default_currency` at Checkout-creation time — meaning the system could itself manufacture the very mismatch the promoter was guarding against (admin edits service price between booking creation and Stripe redirect; connected account currency syncs to a different default mid-flow).
+- **Decision**: `CheckoutSessionFactory::create()` reads `unit_amount` and `currency` from `$booking->paid_amount_cents` / `$booking->currency`. If either is null or invalid at Checkout-creation time the factory throws `InvalidBookingSnapshotForCheckout`, caught at `PublicBookingController::mintCheckoutOrRollback` and surfaced as a `checkout_failed` validation error. The `Service` parameter is still consumed for `product_data.name` (a display value, not a money value).
+- **Consequences**:
+    - The booking row is the single source of truth for what Stripe will charge. Service-price edits or account-currency drift between booking creation and redirect cannot change the charge amount.
+    - `CheckoutPromoter`'s mismatch guard becomes a pure defense-in-depth assertion against Stripe-side anomalies, not a guard against riservo-side state drift.
+    - `CheckoutSessionFactory::create` keeps `Business` + `Service` parameters for API stability with the existing test surface. The `Service.price` reference is gone; only `Service.name` is read.
+    - Tests in `tests/Unit/Services/Payments/CheckoutSessionFactoryTest.php` continue to pass because `Booking::factory()->awaitingPayment()` already seeds `paid_amount_cents = 5000` + `currency = 'chf'`.
+
+---
+
+### D-178 — Reaper cancels online bookings missing `stripe_checkout_session_id` instead of skipping them
+
+- **Date**: 2026-04-28 (PAYMENTS Hardening Round 1)
+- **Status**: accepted
+- **Context**: F-002 from the Codex Round 1 review documented a stranded-slot path: if `Booking::update(['stripe_checkout_session_id' => $session->id])` failed AFTER `checkout.sessions.create()` had already returned, the row stayed `pending + awaiting_payment` with no session id. The reaper's policy on missing session id was `skipped`, so the slot was held until manual intervention. Two changes close the gap.
+- **Decision**:
+    1. `PublicBookingController::mintCheckoutOrRollback` wraps the `stripe_checkout_session_id` persistence in its own try/catch. On failure: log critical with the orphaned Stripe session id, release the slot via `releaseSlotFor()`, throw `checkout_failed`. The Stripe session id is logged so an operator can manually expire it on the dashboard.
+    2. `ExpireUnpaidBookings::processBooking` changes the missing-session-id branch from `'skipped'` to `cancelBooking($booking) ? 'cancelled' : 'skipped'`. After change (1) this branch should never fire under normal operation; the cancel covers legacy / unexpected stragglers (a booking written before this hardening, or a write that succeeded then was reverted out-of-band).
+- **Consequences**:
+    - A worker death between Stripe-accepts and DB-write no longer holds a slot indefinitely.
+    - The reaper's loud `Log::critical` line on the missing-session-id branch remains: cancelling such a row is the right action, but it should still alert operators because reaching this branch means the synchronous fix above didn't catch the case.
+    - The "live" failure path (catch-and-release in `mintCheckoutOrRollback`) is identical to the existing `UnsupportedCountryForCheckout` and `ApiErrorException` branches — same Inertia-native error envelope, same flash discriminator.
+
+---
+
+### D-179 — Refund-settlement webhooks have no fallback (D-171 verbatim)
+
+- **Date**: 2026-04-28 (PAYMENTS Hardening Round 1)
+- **Status**: accepted (clarification of D-171)
+- **Context**: D-171 locked refund-settlement webhook matching to `stripe_refund_id` only. The Session 3 implementation included a Codex-Round-2-era response-loss fallback (`payment_intent + amount + status=pending + latest()`) that backfilled `stripe_refund_id` on the most-recent matching pending row. F-003 from the Codex Round 1 review showed the fallback could mis-attribute a refund to the wrong row when two same-amount partial refunds were pending — exactly the disambiguation problem D-171 had already rejected.
+- **Decision**: Remove `resolveRefundRowByFallback` and its call site. An unmatched `stripe_refund_id` logs a warning and returns 200; Stripe will not retry a 2xx, the cache-layer dedup catches honest replays, and the locked-decision contract holds verbatim. The narrow response-loss window (Stripe accepts the refund + the synchronous response is lost) becomes an operational gap until refund-metadata-based recovery is designed (BACKLOG: "Refund-metadata response-loss recovery").
+- **Consequences**:
+    - Two same-amount partial refunds can no longer cross-attribute. The new test `tests/Feature/Payments/RefundSettlementWebhookTest.php::two same-amount pending refunds: webhook for missing id does not mis-attribute to the other row (F-003)` pins the locked behaviour.
+    - The previously-locked behaviour was wrong; this is a clarification, not a new direction.
+
+---
+
+### D-180 — `RefundService::recordSettlementFailure` is idempotent on already-Failed rows
+
+- **Date**: 2026-04-28 (PAYMENTS Hardening Round 1)
+- **Status**: accepted
+- **Context**: F-004 from the Codex Round 1 review showed `recordSettlementFailure()` returning early from its inner DB transaction when the row was already `Failed`, but the post-transaction Pending Action upsert + admin email dispatch ran unconditionally. Two webhook deliveries for the same failed refund (`charge.refund.updated` + `refund.updated` carrying different event ids that bypass cache dedup) sent two admin emails. Concurrent first-time deliveries could also race the PA insert and end up with duplicate `payment.refund_failed` rows.
+- **Decision**:
+    1. The DB transaction returns `bool $didTransition`. The Pending Action upsert + admin email run only when `$didTransition === true`. Already-Failed rows skip both side effects.
+    2. Add a Postgres partial unique index `pending_actions_refund_failed_unique` on `((payload->>'booking_refund_id'))` `WHERE type = 'payment.refund_failed'`, mirroring the dispute pattern (D-126).
+    3. `upsertRefundFailedPendingAction` wraps the insert in `DB::transaction(...)` + `UniqueConstraintViolationException` catch — the race-loser silently no-ops because the winner has the row.
+- **Consequences**:
+    - Duplicate webhook deliveries for the same failed refund send exactly one admin email and create exactly one PA.
+    - The new test `tests/Feature/Payments/RefundSettlementWebhookTest.php::duplicate refund.updated for already-failed row does not double-send admin email or duplicate PA (F-004)` asserts the idempotency.
+    - Mirrors the dispute partial unique index pattern; future PA types that need the same treatment should follow the same shape.
+
+---
+
+### D-181 — Admin paid-cancel transitions the booking to Cancelled BEFORE dispatching the refund
+
+- **Date**: 2026-04-28 (PAYMENTS Hardening Round 1)
+- **Status**: accepted (re-orders D-159 / locked decision #17 / #29 work)
+- **Context**: F-005 from the Codex Round 1 review documented the worker-killed-after-refund window: `Dashboard\BookingController::updateStatus` called `RefundService::refund()` first, then refreshed the booking, then issued `$booking->update(['status' => $newStatus])` as a separate write. A worker death between the Stripe-accepted refund and the local status update left the customer refunded with the slot still held — irreversible money out the door, recoverable only by manual cancellation.
+- **Decision**: Reorder the cancel-with-refund path so the booking transitions to `Cancelled` first; the refund call follows. The cancel intent is the source of truth (the admin clicked it); the refund is a downstream side effect. If the refund call raises a transient Stripe error, the booking is already Cancelled (slot freed); the existing `payment.refund_failed` Pending Action + admin email surface the recoverable issue. A new `transient` outcome distinguishes the transient-Stripe error flash from the disconnected/failed/succeeded outcomes.
+- **Consequences**:
+    - The slot is freed regardless of Stripe outcome — the previously-irreversible state combination cannot recur.
+    - The customer email dispatch still fires on the transient-error path because the booking is in `Cancelled`. `BookingCancelledNotification`'s `refundIssued` flag (D-175) gates the refund clause, so the email omits "refund issued" when the refund didn't succeed — no false reassurance.
+    - The flash vocabulary gains `transient`; `flashKey === 'error'` for `disconnected | failed | transient`.
+    - `RefundService::refund` does NOT guard on `BookingStatus`, so calling it on a now-Cancelled booking is safe (verified). The status change does not interfere with the refund attempt.
+
+---
+
+### D-182 — Payouts cache key includes `stripe_account_id`; disconnect / deauth invalidates it
+
+- **Date**: 2026-04-28 (PAYMENTS Hardening Round 1)
+- **Status**: accepted
+- **Context**: F-006 from the Codex Round 1 review showed the payouts cache (`PayoutsController`) was keyed by `business_id` only. After a disconnect+reconnect the cached payload could be served against the new active row, surfacing the OLD account's balances/payouts under the NEW account's metadata. No `Cache::forget` existed anywhere in the codebase for this key.
+- **Decision**:
+    1. `PayoutsController::cacheKey` becomes `payouts:business:{businessId}:account:{stripeAccountId}` — promoted to a public static so callers outside the controller (the disconnect handler + the deauth webhook) can construct the same key.
+    2. `ConnectedAccountController::disconnect` and `StripeConnectWebhookController::handleAccountDeauthorized` call `Cache::forget(...)` inside their existing DB transactions.
+- **Consequences**:
+    - A reconnect with a NEW `acct_…` id no longer collides with the prior cache entry — the new key cannot match the stale one even without `forget`. The `forget` covers the rarer reconnect-with-same-id case (Stripe test-account replay) and keeps the cache hygienic.
+    - The new test `tests/Feature/Dashboard/PayoutsControllerTest.php::disconnect forgets the payouts cache for the disconnected account (F-006)` asserts the forget. Existing cache-isolation tests now construct keys via `PayoutsController::cacheKey()` to track the new shape.
+    - The first deploy invalidates every existing payouts cache entry implicitly (the prior key shape is no longer read). Pre-launch this is irrelevant; pinned for ops awareness.

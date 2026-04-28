@@ -69,6 +69,7 @@ class StripeEventBuilder
         string $type,
         string $stripeRefundId,
         array $refundOverrides = [],
+        ?string $eventId = null,
     ): array {
         $refund = array_merge([
             'id' => $stripeRefundId,
@@ -79,6 +80,8 @@ class StripeEventBuilder
             'failure_reason' => null,
             'payment_intent' => 'pi_test_'.uniqid(),
         ], $refundOverrides);
+
+        $eventId ??= 'evt_test_'.uniqid();
 
         if ($type === 'charge.refunded') {
             // `charge.refunded` wraps the Refund in a Charge object whose
@@ -94,7 +97,7 @@ class StripeEventBuilder
             ];
 
             return [
-                'id' => 'evt_test_'.uniqid(),
+                'id' => $eventId,
                 'object' => 'event',
                 'type' => $type,
                 'account' => $accountId,
@@ -106,7 +109,7 @@ class StripeEventBuilder
 
         // `charge.refund.updated` and `refund.updated` carry a Refund directly.
         return [
-            'id' => 'evt_test_'.uniqid(),
+            'id' => $eventId,
             'object' => 'event',
             'type' => $type,
             'account' => $accountId,

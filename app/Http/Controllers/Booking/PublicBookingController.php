@@ -9,6 +9,7 @@ use App\Enums\PaymentMode;
 use App\Enums\PaymentStatus;
 use App\Exceptions\Booking\NoProviderAvailableException;
 use App\Exceptions\Booking\SlotNoLongerAvailableException;
+use App\Exceptions\Payments\InvalidBookingSnapshotForCheckout;
 use App\Exceptions\Payments\UnsupportedCountryForCheckout;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Booking\StorePublicBookingRequest;
@@ -549,7 +550,6 @@ class PublicBookingController extends Controller
         try {
             $this->checkoutSessionFactory->assertSupportedCountry($connectedAccount);
             $session = $this->checkoutSessionFactory->create($booking, $service, $business, $connectedAccount);
-            $booking->update(['stripe_checkout_session_id' => $session->id]);
         } catch (UnsupportedCountryForCheckout $e) {
             Log::critical('PublicBookingController: Checkout creation refused — connected account country not in supported set', [
                 'booking_id' => $booking->id,
@@ -567,8 +567,48 @@ class PublicBookingController extends Controller
             throw ValidationException::withMessages([
                 'online_payments_unavailable' => __('This business is no longer accepting online payments right now — try again later or contact them directly.'),
             ]);
+        } catch (InvalidBookingSnapshotForCheckout $e) {
+            // F-001 / D-177: the booking snapshot is the only money source
+            // of truth for Checkout. If it is null/invalid we refuse the
+            // call rather than fall back to Service.price + account currency.
+            // This is a writer-side invariant violation — log critical so
+            // operators see it.
+            Log::critical('PublicBookingController: Checkout creation refused — invalid booking snapshot', [
+                'booking_id' => $booking->id,
+                'paid_amount_cents' => $booking->paid_amount_cents,
+                'currency' => $booking->currency,
+            ]);
+            $this->releaseSlotFor($booking);
+
+            throw ValidationException::withMessages([
+                'checkout_failed' => __("Couldn't start payment. Please try again in a moment."),
+            ]);
         } catch (ApiErrorException $e) {
             report($e);
+            $this->releaseSlotFor($booking);
+
+            throw ValidationException::withMessages([
+                'checkout_failed' => __("Couldn't start payment. Please try again in a moment."),
+            ]);
+        }
+
+        // F-002: persist the Stripe session id in its own try/catch. If
+        // this local write fails AFTER Stripe has already accepted the
+        // session, we are in the worst possible state — the customer has
+        // no redirect URL but the slot is still held by a booking row that
+        // the reaper can't recover (no session id to retrieve). Log the
+        // orphan session id so the operator can manually expire it on
+        // Stripe, release the slot, and surface checkout_failed.
+        try {
+            $booking->update(['stripe_checkout_session_id' => $session->id]);
+        } catch (\Throwable $e) {
+            Log::critical('PublicBookingController: failed to persist stripe_checkout_session_id after Stripe accepted the session — orphaned session id', [
+                'booking_id' => $booking->id,
+                'stripe_session_id' => $session->id,
+                'stripe_account_id' => $connectedAccount->stripe_account_id,
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
             $this->releaseSlotFor($booking);
 
             throw ValidationException::withMessages([

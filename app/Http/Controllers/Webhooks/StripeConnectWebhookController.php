@@ -2,13 +2,13 @@
 
 namespace App\Http\Controllers\Webhooks;
 
-use App\Enums\BookingRefundStatus;
 use App\Enums\BookingStatus;
 use App\Enums\ConfirmationMode;
 use App\Enums\PaymentMode;
 use App\Enums\PaymentStatus;
 use App\Enums\PendingActionStatus;
 use App\Enums\PendingActionType;
+use App\Http\Controllers\Dashboard\PayoutsController;
 use App\Jobs\Calendar\PushBookingToCalendarJob;
 use App\Models\Booking;
 use App\Models\BookingRefund;
@@ -28,6 +28,7 @@ use App\Support\Billing\DedupesStripeWebhookEvents;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
@@ -341,6 +342,14 @@ class StripeConnectWebhookController
             if ($business === null) {
                 return;
             }
+
+            // F-006 (PAYMENTS Hardening Round 1): forget the payouts cache
+            // entry for the now-deauthorized account so a future reconnect
+            // cannot render stale balances/payout history under the new
+            // account id. The cache key includes stripe_account_id so a
+            // reconnect-with-new-account is already isolated; this forget
+            // also covers the operator-resets-Stripe-test-account flow.
+            Cache::forget(PayoutsController::cacheKey($business->id, (string) $row->stripe_account_id));
 
             // Codex Round-8 finding (D-139): a late deauthorize for a retired
             // `acct_…` must NOT demote a business that has already reconnected
@@ -1242,29 +1251,24 @@ class StripeConnectWebhookController
 
             $row = BookingRefund::where('stripe_refund_id', $refundId)->first();
             if ($row === null) {
-                // Codex Round 2 P2: `RefundService::refund` bubbles
-                // transient Stripe errors (5xx / 429 / connection drop) so
-                // the caller can return 5xx and let Stripe retry. If
-                // Stripe had actually CREATED the refund before the
-                // transport failed (response-loss), our row is left
-                // `Pending` with `stripe_refund_id = null`. A later
-                // `charge.refunded` / `refund.updated` would then miss the
-                // row and silently drop — leaving the customer refunded
-                // but the booking still `Paid`. Fall back to matching via
-                // `(payment_intent, amount_cents, status=pending)` and
-                // backfill the `stripe_refund_id` so future events
-                // converge.
-                $row = $this->resolveRefundRowByFallback($stripeRefund, $refundId, $event);
+                // F-003 (PAYMENTS Hardening Round 1): D-171 explicitly
+                // requires matching by `stripe_refund_id` only. The earlier
+                // `(payment_intent, amount_cents, status=pending)` fallback
+                // could mis-attribute a Stripe refund to the wrong row when
+                // two same-amount partial refunds were pending — see
+                // `docs/REVIEW.md` F-003. Restore the locked-decision
+                // contract: log and 200 (Stripe will not retry a 2xx; the
+                // dedup helper catches honest replays). The narrow
+                // response-loss window the fallback was meant to cover is
+                // accepted as an operational gap until refund-metadata
+                // recovery ships (BACKLOG).
+                Log::warning('Connect refund event: no booking_refunds row matches stripe_refund_id (D-171 / F-003 — no fallback)', [
+                    'event_id' => $event->id,
+                    'event_type' => $event->type,
+                    'stripe_refund_id' => $refundId,
+                ]);
 
-                if ($row === null) {
-                    Log::warning('Connect refund event: no booking_refunds row matches stripe_refund_id (and no payment_intent/amount fallback)', [
-                        'event_id' => $event->id,
-                        'event_type' => $event->type,
-                        'stripe_refund_id' => $refundId,
-                    ]);
-
-                    continue;
-                }
+                continue;
             }
 
             // D-158 cross-account guard via the booking's pin.
@@ -1289,56 +1293,6 @@ class StripeConnectWebhookController
         }
 
         return new Response('OK', 200);
-    }
-
-    /**
-     * Codex Round 2 P2 fallback: resolve a `booking_refunds` row when the
-     * primary `stripe_refund_id` lookup missed (response-loss scenario).
-     *
-     * The webhook's Refund object carries `payment_intent` + `amount`. Look
-     * up the booking via `stripe_payment_intent_id` (the D-152 pin),
-     * then find the most recent Pending row on that booking whose
-     * `amount_cents` matches the Stripe refund amount AND whose
-     * `stripe_refund_id` is still null. Backfill the id so subsequent
-     * events converge via the primary path.
-     *
-     * Returns null when the fallback also misses — the caller logs +
-     * continues to the next refund.
-     */
-    private function resolveRefundRowByFallback(StripeRefund $stripeRefund, string $refundId, StripeEvent $event): ?BookingRefund
-    {
-        $paymentIntentId = is_string($stripeRefund->payment_intent ?? null) ? $stripeRefund->payment_intent : null;
-        $amount = is_int($stripeRefund->amount ?? null) ? $stripeRefund->amount : null;
-
-        if ($paymentIntentId === null || $amount === null || $amount <= 0) {
-            return null;
-        }
-
-        $booking = Booking::where('stripe_payment_intent_id', $paymentIntentId)->first();
-        if ($booking === null) {
-            return null;
-        }
-
-        $row = $booking->bookingRefunds()
-            ->whereNull('stripe_refund_id')
-            ->where('amount_cents', $amount)
-            ->where('status', BookingRefundStatus::Pending->value)
-            ->latest('id')
-            ->first();
-
-        if ($row === null) {
-            return null;
-        }
-
-        $row->forceFill(['stripe_refund_id' => $refundId])->save();
-
-        Log::info('Connect refund event: resolved row via payment_intent+amount fallback; backfilled stripe_refund_id', [
-            'event_id' => $event->id,
-            'booking_refund_id' => $row->id,
-            'stripe_refund_id' => $refundId,
-        ]);
-
-        return $row;
     }
 
     /**

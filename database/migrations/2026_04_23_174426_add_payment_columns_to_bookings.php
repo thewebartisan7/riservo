@@ -77,6 +77,11 @@ return new class extends Migration
                 'paid_at',
                 'payment_mode_at_creation',
                 'expires_at',
+                // F-007 (PAYMENTS Hardening Round 1): the original migration
+                // omitted this column from down(), so a rollback+re-up cycle
+                // would crash on "column already exists". D-133 explicitly
+                // pins down() correctness as a non-negotiable invariant.
+                'stripe_connected_account_id',
             ]);
         });
     }

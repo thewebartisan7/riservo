@@ -352,12 +352,20 @@ class BookingController extends Controller
         }
 
         // PAYMENTS Session 3 (locked decisions #17 / #19 / #29): admin-side
-        // cancel of a paid booking dispatches an automatic full refund BEFORE
-        // the status transition. D-159 used to block this at the dashboard
-        // edge; now `RefundService::refund` handles the refund + sad-path
-        // surfaces.
+        // cancel of a paid booking dispatches an automatic full refund.
         //
-        // The `reason` binds to the booking's CURRENT status:
+        // F-005 (PAYMENTS Hardening Round 1): the booking transitions to
+        // Cancelled FIRST — the slot must be released even if the refund call
+        // raises a transient Stripe error and we surface a flash to the admin.
+        // The prior order (refund-then-status) could leave the customer
+        // refunded with the slot still active when the worker died after the
+        // Stripe call but before the status update. RefundService records the
+        // refund attempt against the now-cancelled booking; failures land as
+        // a `payment.refund_failed` Pending Action + admin email, so the
+        // refund issue is recoverable from the dashboard while the slot is
+        // already free.
+        //
+        // The `reason` binds to the booking's PRE-TRANSITION status:
         //   Pending → 'business-rejected-pending' (locked decision #29 —
         //             manual-confirm rejection of a paid booking).
         //   Confirmed → 'business-cancelled' (locked decision #17 — admin
@@ -385,29 +393,38 @@ class BookingController extends Controller
             return back()->with('error', __('Paid bookings can only be cancelled by an admin. Ask your admin to cancel and refund this booking.'));
         }
 
+        $refundReason = null;
         if ($shouldRefund) {
-            $reason = $booking->status === BookingStatus::Pending
+            // Snapshot the pre-transition reason; the status update below
+            // will move the booking to Cancelled before we call Stripe.
+            $refundReason = $booking->status === BookingStatus::Pending
                 ? 'business-rejected-pending'
                 : 'business-cancelled';
+        }
 
+        $booking->update(['status' => $newStatus]);
+
+        if ($refundReason !== null) {
             try {
-                $result = $refundService->refund($booking, null, $reason);
+                $result = $refundService->refund($booking, null, $refundReason);
+                $refundOutcome = $result->outcome;
             } catch (ApiConnectionException|RateLimitException|ApiErrorException $e) {
+                // F-005: the booking is already Cancelled — the slot is free.
+                // The transient Stripe error is surfaced as a distinct flash
+                // outcome at the end of this handler so the customer email +
+                // calendar push still fire on the now-cancelled booking.
                 Log::warning('Dashboard\\BookingController::updateStatus transient Stripe error on cancel', [
                     'booking_id' => $booking->id,
-                    'reason' => $reason,
+                    'reason' => $refundReason,
                     'exception' => $e::class,
                     'message' => $e->getMessage(),
                 ]);
 
-                return back()->with('error', __('Temporary Stripe issue — try again in a minute.'));
+                $refundOutcome = 'transient';
             }
 
-            $refundOutcome = $result->outcome;
             $booking->refresh();
         }
-
-        $booking->update(['status' => $newStatus]);
 
         $booking->loadMissing(['customer', 'business.admins', 'provider.user']);
 
@@ -450,13 +467,14 @@ class BookingController extends Controller
         // resolution surface.
         $flash = match (true) {
             $refundOutcome === 'succeeded' => __('Booking cancelled. Full refund issued.'),
+            $refundOutcome === 'transient' => __('Booking cancelled. The refund hit a temporary Stripe issue — retry the refund from the booking detail panel.'),
             in_array($refundOutcome, ['disconnected', 'failed'], true) => __('Booking cancelled. Automatic refund failed — resolve in Stripe. See the refund-failed action for details.'),
             default => __('Booking status updated to :status.', [
                 'status' => $newStatus->label(),
             ]),
         };
 
-        $flashKey = in_array($refundOutcome, ['disconnected', 'failed'], true) ? 'error' : 'success';
+        $flashKey = in_array($refundOutcome, ['disconnected', 'failed', 'transient'], true) ? 'error' : 'success';
 
         return back()->with($flashKey, $flash);
     }

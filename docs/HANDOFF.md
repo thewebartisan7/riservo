@@ -1,12 +1,12 @@
 # Handoff
 
-**State (2026-04-24):** PAYMENTS Session 5 (`payment_mode` Toggle Activation + UI Polish) shipped. **The PAYMENTS roadmap is closed** — all six sessions (1, 2a, 2b, 3, 4, 5) have landed on `main`. `docs/ROADMAP.md` is ready to be overwritten by a parked roadmap or a fresh one.
+**State (2026-04-28):** PAYMENTS Hardening Round 1 staged on top of the closed PAYMENTS roadmap (Sessions 1–5). The seven Codex Round 1 adversarial findings (`docs/REVIEW.md`) are fixed on a single uncommitted diff, ready for a Codex Round 2 review pass. **`docs/ROADMAP.md` is still closed** — this hardening session sits between roadmaps.
 
 **Branch**: main.
-**Feature+Unit suite**: 963 passed / 4173 assertions (baseline 954 / 4079 at Session 4 close; Session 5 added 9 tests / 94 assertions across exec + four codex review rounds).
-**Full suite**: 2+ minutes because of `tests/Browser`. Developer pre-push check.
+**Feature+Unit suite**: 965 passed / 4183 assertions (baseline 963 / 4173 at Session 5 close; Round 1 added 2 tests / 10 assertions — one F-003 mis-attribution test, one F-004 idempotency test, one F-006 cache-forget test, minus the rewritten F-003 fallback test).
+**Full suite**: 2+ minutes because of `tests/Browser`. Developer pre-push check. **Note**: the developer flagged 11 failing browser tests on a recent run (`tests/Browser/Embed/IframeEmbedTest` and others) — those are tracked separately and are NOT introduced by this hardening session; investigate after Round 2 review lands.
 **Tooling**: Pint clean. PHPStan (level 5, `app/` only) clean. Vite build clean (main app chunk ~585 kB; pre-existing >500 kB warning unaffected). Wayfinder regenerated.
-**Codex review**: to be run by the developer against the staged diff; findings (if any) stack under `## Review — Round N` inside `docs/PLAN.md` on the same uncommitted diff before the final commit.
+**Codex review**: Round 1 ran 2026-04-28, surfaced seven findings; all fixed in this diff. Round 2 to be launched by the developer against the staged diff with a frontend-deep prompt (XSS / Inertia prop leak audit on `payouts.tsx`, `connected-account.tsx`, `refund-dialog.tsx`) PLUS verification that Round 1 findings are closed. Round 2 findings (if any) stack under `## Review — Round 2` inside `docs/PLAN.md` on the same uncommitted diff before the final commit.
 
 ---
 
@@ -38,7 +38,19 @@ MVP (Sessions 1–11) + MVP Completion (MVPC-1..5): data layer, scheduling engin
 - **Tests**: +7 tests / +67 assertions. `tests/Feature/Settings/BookingSettingsTest.php` gained 5 cases (positive gate-lift for CH, customer_choice positive, non-CH rejected server-side, config-flip opens the seam for non-CH, 2 eligibility-prop Inertia assertions). `tests/Feature/Booking/OnlinePaymentCheckoutTest.php` gained the race test (capability flip → 422) and the customer_choice + pay-on-site fallback test; the pre-Session-5 "silent downgrade" test was rewritten to expect 422 + zero booking rows. `tests/Browser/Settings/BookingSettingsTest.php::updates payment_mode to online` seeds an active connected account before the HTTP PUT. Locked-decision-#29 variants already covered by Session 3's `PaidCancellationRefundTest.php:190,218` — no new tests needed.
 - **Cleanup tasks** left for the developer (before overwriting `docs/ROADMAP.md`): the checklist at `docs/ROADMAP.md::## Cleanup tasks (after this roadmap is approved)` — SPEC §12 + §7.6 + §2 updates, BACKLOG entries for post-MVP online-payment follow-ups, etc. Not part of Session 5's code diff.
 
-**One new architectural decision** (D-176). 98 architectural decisions (D-080..D-176) recorded across `docs/decisions/DECISIONS-*.md`. Next free decision ID: **D-177**.
+**One new architectural decision** (D-176). 98 architectural decisions (D-080..D-176) recorded across `docs/decisions/DECISIONS-*.md`.
+
+**PAYMENTS Hardening Round 1 (2026-04-28, staged on top of `94567dc`):** addresses every Codex Round 1 finding (`docs/REVIEW.md`). Seven fixes:
+
+- **F-001 / D-177**: `CheckoutSessionFactory::create` reads `unit_amount` + `currency` from the booking snapshot (`paid_amount_cents`, `currency`), never from the live `Service.price` or `StripeConnectedAccount.default_currency`. New `InvalidBookingSnapshotForCheckout` exception caught at the controller boundary as `checkout_failed`.
+- **F-002 / D-178**: `mintCheckoutOrRollback` wraps the post-Stripe `stripe_checkout_session_id` write in its own try/catch — local persistence failure releases the slot synchronously instead of stranding it. Reaper policy on a `pending + awaiting_payment + online` row missing `stripe_checkout_session_id` changed from `'skipped'` to `cancelBooking($booking)` so straggler orphans cannot hold a slot indefinitely.
+- **F-003 / D-179**: removed `resolveRefundRowByFallback` from `StripeConnectWebhookController` — D-171 already required matching by `stripe_refund_id` only. The amount-based fallback could mis-attribute a Stripe refund to the wrong same-amount pending row when two partial refunds were in flight. Unmatched ids now log + 200 verbatim per the locked-decision contract.
+- **F-004 / D-180**: `RefundService::recordSettlementFailure` returns `bool $didTransition`; the Pending Action upsert + admin email run only on transition. New Postgres partial unique index `pending_actions_refund_failed_unique` mirrors the dispute pattern (D-126); `upsertRefundFailedPendingAction` wraps the insert in `DB::transaction` + `UniqueConstraintViolationException` catch.
+- **F-005 / D-181**: admin paid-cancel reorders status-first then refund. The booking transitions to `Cancelled` before `RefundService::refund()` is called, so a worker death / transient Stripe error can never leave the customer refunded with the slot still held. New `transient` flash outcome distinguishes the transient-error path from `disconnected | failed | succeeded`.
+- **F-006 / D-182**: `PayoutsController::cacheKey` now includes `stripe_account_id`; `Cache::forget(...)` called inside `ConnectedAccountController::disconnect` and `StripeConnectWebhookController::handleAccountDeauthorized`. Disconnect+reconnect can no longer surface stale balances under the new account's metadata.
+- **F-007**: `2026_04_23_174426_add_payment_columns_to_bookings.php::down()` now includes `stripe_connected_account_id` in `dropColumn()`. Rollback is no longer a guaranteed crash.
+
+**Six new architectural decisions** (D-177..D-182). 104 architectural decisions (D-080..D-182) recorded across `docs/decisions/DECISIONS-*.md`. Next free decision ID: **D-183**.
 
 ---
 

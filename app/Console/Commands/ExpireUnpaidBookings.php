@@ -98,13 +98,23 @@ class ExpireUnpaidBookings extends Command
 
         if (! is_string($sessionId) || $sessionId === ''
             || ! is_string($accountId) || $accountId === '') {
-            Log::critical('ExpireUnpaidBookings: booking missing session_id or connected_account_id — cannot pre-flight', [
+            // F-002 (PAYMENTS Hardening Round 1): an online booking past its
+            // grace window with no session_id / account_id is by definition
+            // unrecoverable — there is no Stripe handle to retrieve, so we
+            // cannot disambiguate "Stripe never accepted the session" from
+            // "we lost the local write after Stripe accepted it". Either
+            // way the slot must not stay held forever. Cancel it. The
+            // mintCheckoutOrRollback path now releases the slot
+            // synchronously when the local write fails, so reaching this
+            // branch implies a write that happened in a prior session and
+            // should not be preserved.
+            Log::critical('ExpireUnpaidBookings: booking missing session_id or connected_account_id — cancelling orphan', [
                 'booking_id' => $booking->id,
                 'stripe_checkout_session_id' => $sessionId,
                 'stripe_connected_account_id' => $accountId,
             ]);
 
-            return 'skipped';
+            return $this->cancelBooking($booking) ? 'cancelled' : 'skipped';
         }
 
         // Pre-flight retrieve (locked decision #31.2).
