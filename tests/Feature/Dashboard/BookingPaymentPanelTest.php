@@ -47,8 +47,12 @@ test('admin sees payment panel data on a paid booking in the list payload', func
             ->where('bookings.data.0.payment.status', 'paid')
             ->where('bookings.data.0.payment.paid_amount_cents', 5000)
             ->where('bookings.data.0.payment.currency', 'chf')
-            ->where('bookings.data.0.payment.stripe_charge_id', 'ch_test_panel')
-            ->where('bookings.data.0.payment.stripe_connected_account_id', 'acct_test_panel')
+            // D-184 (PAYMENTS Hardening Round 2): raw Stripe IDs no longer
+            // ride the prop. The deeplink button reads `has_stripe_payment_link`
+            // and the controller resolves the IDs server-side.
+            ->where('bookings.data.0.payment.has_stripe_payment_link', true)
+            ->missing('bookings.data.0.payment.stripe_charge_id')
+            ->missing('bookings.data.0.payment.stripe_connected_account_id')
             ->where('bookings.data.0.pending_payment_action', null)
         );
 });

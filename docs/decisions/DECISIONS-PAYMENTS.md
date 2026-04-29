@@ -1089,3 +1089,50 @@ Distinct from `DECISIONS-FOUNDATIONS.md`, which carries the SaaS subscription bi
     - A reconnect with a NEW `acct_…` id no longer collides with the prior cache entry — the new key cannot match the stale one even without `forget`. The `forget` covers the rarer reconnect-with-same-id case (Stripe test-account replay) and keeps the cache hygienic.
     - The new test `tests/Feature/Dashboard/PayoutsControllerTest.php::disconnect forgets the payouts cache for the disconnected account (F-006)` asserts the forget. Existing cache-isolation tests now construct keys via `PayoutsController::cacheKey()` to track the new shape.
     - The first deploy invalidates every existing payouts cache entry implicitly (the prior key shape is no longer read). Pre-launch this is irrelevant; pinned for ops awareness.
+
+---
+
+### D-183 — Locked roadmap decision #43 governs CH-centric copy in the payment-mode Settings UI; D-112 governs the gate STATE
+
+- **Date**: 2026-04-29 (PAYMENTS Hardening Round 2)
+- **Status**: accepted
+- **Context**: Codex Round 2 (Finding G-006) flagged a hardcoded `'CH'` literal in `resources/js/pages/dashboard/settings/booking.tsx` ("Online payments in MVP support CH-located businesses only.") as a D-112 drift. D-112 names `config('payments.supported_countries')` as the single switch for country GATE STATE. But `booking.tsx:77-83` carries a 7-line comment citing locked roadmap decision #43: copy / UX / tax assumptions are CH-specific until the post-MVP locale-list audit. The two are not in conflict — they govern different surfaces (gate state vs UI copy) — but the conflict is not visible in the D-IDs alone, which led to the false-positive finding.
+- **Decision**: Make the precedence explicit. For UI copy that explains the gate to a human user, locked roadmap decision #43 governs: copy stays CH-specific until the fast-follow locale-list audit. For the gate STATE itself (whether a country is allowed at all), D-112 governs: `config('payments.supported_countries')` is authoritative. The `booking.tsx` literal is correct as-is. Future reviewers should not re-litigate without engaging both decisions.
+- **Consequences**:
+    - The Round 2 G-006 finding is closed as out-of-scope: not a drift, not a regression.
+    - The existing comment block in `booking.tsx` is augmented with a `D-183` reference so a future reader sees the explicit locked decision instead of having to chase locked roadmap decision #43.
+    - The locale-list audit BACKLOG entry remains as the activation surface for any future change here.
+
+---
+
+### D-184 — Stripe dashboard deeplinks live on admin-only server-side redirect endpoints; raw Stripe object IDs do not ride Inertia props
+
+- **Date**: 2026-04-29 (PAYMENTS Hardening Round 2)
+- **Status**: accepted
+- **Context**: Codex Round 2 G-001 documented that the dashboard booking-detail Inertia payload was sending full `stripe_charge_id`, `stripe_payment_intent_id`, `stripe_connected_account_id`, `stripe_refund_id`, dispute IDs, and unfiltered Pending Action payloads to the browser. The React side then concatenated those raw values into Stripe dashboard URLs. Admin-only, but a violation of the prop contract: any future XSS, browser extension, frontend exception reporter, or screen-share moment would harvest semi-secret Stripe identifiers from page JSON.
+- **Decision**: Three new admin-only routes on the dashboard sit behind `role:admin` + tenant scoping and 302 to Stripe:
+    - `GET /dashboard/bookings/{booking}/stripe-link/payment`
+    - `GET /dashboard/bookings/{booking}/stripe-link/refund/{refund}`
+    - `GET /dashboard/bookings/{booking}/stripe-link/dispute`
+  The `StripeDashboardLinkController` reads the raw Stripe IDs server-side from the booking + (for refund) the route-bound BookingRefund + (for dispute) the booking's most-recent dispute Pending Action `payload->>'dispute_id'`. The React side passes through Wayfinder helpers; no raw Stripe ID rides the prop. The admin booking-detail prop carries truncated `_last4` display fields where the UI shows a partial id ("re_…XXXX"), plus a `has_stripe_*_link` boolean per link type so the React side knows when to render the deeplink button. Pending Action payloads (urgent + dispute) are whitelisted server-side: only the keys the React banner consumes ride to the browser.
+- **Consequences**:
+    - A future XSS, browser extension, or exception reporter cannot harvest semi-secret Stripe identifiers from page JSON.
+    - The dispute deeplink reads the dispute id from a server-side PA lookup; the URL never carries a user-controlled dispute id.
+    - The endpoints are admin-only + tenant-scoped; cross-tenant + staff attempts return 403/404. The refund endpoint additionally asserts the route-bound refund row belongs to the route-bound booking.
+    - The booking-detail Inertia prop loses `stripe_charge_id`, `stripe_payment_intent_id`, `stripe_connected_account_id`, and `stripe_refund_id`. Existing tests asserting those keys must be updated to assert their ABSENCE plus the new `_last4` / `has_*_link` shapes.
+    - `tests/Feature/Dashboard/StripeDashboardLinkControllerTest.php` covers: payment 302 (charge id); payment 302 (payment_intent fallback when no charge id); payment 404 (no Stripe handle); payment 403 (staff); payment 404 (cross-tenant); refund 302; refund 404 (cross-booking nesting); refund 404 (null `stripe_refund_id`); dispute 302 (pending PA); dispute 404 (no dispute PA); dispute 403 (staff); dispute 404 (resolved-only PA — H-001); dispute 302 (pending selected over newer-resolved — H-001); plus a regression-guard that asserts no raw Stripe IDs appear in the bookings list Inertia payload. **Not currently covered**: staff-refund 403, cross-tenant-refund 404, cross-tenant-dispute 404 (H-004 — flagged for future tightening; the auth pattern is identical to the payment endpoint, which is exhaustively covered).
+    - **H-001 hardening (Codex Round 3)**: the dispute endpoint additionally filters `status = pending` so a resolved historical PA cannot redirect to a no-longer-relevant Stripe dispute page. The booking-list eager-load in `BookingController::index` already filtered on `status = pending`; the deeplink endpoint now matches that contract.
+
+---
+
+### D-185 — Connected-account `requirements_currently_due` exposed as count + generic CTA only
+
+- **Date**: 2026-04-29 (PAYMENTS Hardening Round 2)
+- **Status**: accepted
+- **Context**: Codex Round 2 G-002 documented that `PayoutsController::accountPayload` and `ConnectedAccountController` both pass-through the raw `requirements_currently_due` array to the React side, where it renders as a list of badges. Stripe sometimes returns paths like `person_xxx.dob.day`, `individual.id_number`, `company.tax_id` — semi-PII-flavoured field references that should not surface as a rendered list to the operator (and should not appear in page JSON either).
+- **Decision**: Replace the `requirementsCurrentlyDue: string[]` prop with `requirementsCount: int` on both controller surfaces. The React renderer shows "X items pending — continue in Stripe to complete onboarding" + a CTA button that opens the Stripe Express dashboard. Operators get the action; the field-path list stays server-side (and in Stripe).
+- **Consequences**:
+    - Page JSON no longer carries Stripe field paths.
+    - The connected-account + payouts UI route operators to Stripe for the actual list, which is the system of record anyway.
+    - Future changes to Stripe's requirements vocabulary (new fields, key renames, drift) cannot leak into page JSON.
+    - The previous Tooltip wrapping the requirements chip in `payouts.tsx` is removed — no longer needed because the chip is a plain status badge with the count.

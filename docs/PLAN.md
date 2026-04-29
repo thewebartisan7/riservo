@@ -1,275 +1,365 @@
-# PAYMENTS Hardening — Codex Adversarial Review Round 1 Fixes
+# PAYMENTS Hardening Round 2 — Codex Round 2 Frontend + Fix Verification
 
-This plan lives at `docs/PLAN.md` and follows `.claude/references/PLAN.md`. It is a post-roadmap hardening session: the PAYMENTS roadmap closed at Session 5 (HANDOFF.md), and a separate adversarial Codex review (`docs/REVIEW.md`, 2026-04-28) surfaced seven findings against the shipped slice. This session fixes those findings on a single uncommitted diff before going to a second adversarial review round.
+This plan lives at `docs/PLAN.md` and follows `.claude/references/PLAN.md`. It is a post-roadmap hardening session running on top of the Round 1 commit (`bc991e8`). Codex Round 2 (`docs/REVIEW.md`, 2026-04-29) verified all seven Round 1 findings closed (no regressions) AND surfaced eight frontend findings (G-001..G-008). This session fixes the six that survive triage on a single uncommitted diff.
 
-Iteration-loop baseline at session start: **963 tests / 4173 assertions** (HANDOFF.md, post-Session-5). PHPStan level 5 / `app/` clean. Pint clean. Wayfinder up to date. Vite build green.
+Iteration-loop baseline at session start: **965 tests / 4183 assertions** (Round 1 close). PHPStan level 5 / `app/` clean. Pint clean. Wayfinder up to date. Vite build green.
 
 ---
 
 ## Purpose / Big Picture
 
-The Stripe Connect payments slice works on the happy path and the test matrix is dense, but Codex found seven brittleness points on uncommon-but-realistic execution paths. The unifying theme of the highest-severity findings: **the booking row is supposed to be the snapshot source of truth for amount, currency, and connected-account identity, but several call sites still re-derive these from mutable upstream state**. A second theme: **post-Stripe local writes have no deterministic recovery path** — when Stripe accepts a side effect and the local write that records it fails, the system is left in a state the operator must clean up by hand.
+Round 1 hardened the backend money paths. Round 2 hardens the frontend prop contract + UX coherence on the same Stripe Connect surfaces. Three themes:
 
-Concretely, after this session:
+1. **Stop leaking Stripe object IDs to the browser.** The admin booking-detail payload is sending full `acct_…`, `pi_…`, `ch_…`, `re_…`, dispute IDs, and whole Pending Action payloads as Inertia props. The React side then builds Stripe dashboard deeplinks from those raw values. This is admin-only, so it is not an external leak today, but it violates the prop contract: any future XSS, browser extension, frontend exception reporter, or screen-share moment harvests semi-secret Stripe identifiers from page JSON. Fix: server-side redirect endpoints for deeplinks (the React side passes `bookingId`, the controller resolves the IDs server-side and 302s to Stripe), truncation for display fields, whitelist on PA payload keys.
 
-1. The Stripe Checkout session is built from `Booking.paid_amount_cents` + `Booking.currency`, never from the live `Service.price` or the live connected-account `default_currency`. A booking created with a 50 CHF snapshot can no longer be charged a different amount because someone edited the service price between the booking and the redirect.
-2. A DB failure between `checkout.sessions.create` and `Booking::update(['stripe_checkout_session_id'])` no longer strands a slot. Either the local write succeeds and the customer reaches Checkout, or the booking is cancelled and the slot released.
-3. Refund settlement webhooks resolve `BookingRefund` rows by `stripe_refund_id` only (D-171). The amount-based fallback that can mis-attribute partial refunds is removed.
-4. Admin cancellation of a paid booking can no longer leave the customer refunded with the slot still active. The cancellation transitions the booking to `cancelled` in the same logical unit of work that dispatches the refund attempt.
-5. The Payouts cache is keyed by both business id AND `stripe_account_id`, and is invalidated on disconnect / deauthorization / account-id change.
-6. `recordSettlementFailure` is idempotent: a duplicate webhook for an already-failed refund does NOT re-send the admin email or duplicate the Pending Action. A new partial unique index closes the PA-creation race.
-7. The payments-era column migration's `down()` actually rolls back every column it added.
+2. **Use the Inertia-native error envelope everywhere.** The Payouts login-link endpoint returns `response()->json(['error' => ...], 502)` when Stripe fails — the only payments endpoint that deviates from the `ValidationException::withMessages([discriminator => message])` pattern locked across the public booking flow. The React side has a parallel `setError()` branch instead of consuming `http.errors`. Project rule (`resources/js/CLAUDE.md`) is unambiguous: useHttp + ValidationException, no parallel state. Fix: throw `ValidationException::withMessages(['login_link' => ...])`, render `http.errors` on the React side.
 
-Acceptance is verifiable by walking the Codex finding list against the staged diff (Round 2 review will check this explicitly), running `php artisan test tests/Feature tests/Unit --compact`, and watching the baseline grow without regressions.
+3. **Currency display + i18n hygiene before launch.** Three small but real surfaces: refund-dialog and booking-detail-sheet format money via `${currency.toUpperCase()} ${(cents/100).toFixed(2)}` instead of `Intl.NumberFormat`; `payment-success.tsx` builds `/bookings/${token}` instead of using the Wayfinder helper; PaymentStatusBadge labels (`Paid`, `Awaiting`, `Refund failed`) and Payouts page status badges (`in_transit`, `paid`) bypass `t()`. Pre-launch is the right window to fix these.
+
+After this session:
+
+- Inertia prop payloads on the dashboard booking surfaces carry NO raw Stripe object IDs. Admins reach the Stripe dashboard via signed redirect endpoints that read the IDs server-side.
+- The Connected Account + Payouts surfaces show `requirementsCount` + a generic localized "Continue in Stripe" CTA instead of the raw `requirements_currently_due` array.
+- The Payouts login-link button consumes `http.errors` like every other useHttp surface.
+- The refund dialog + booking detail sheet format CHF amounts via `Intl.NumberFormat`.
+- The payment-success page links to the booking management page via Wayfinder.
+- Payment status badges + payout status labels go through `t()`.
+
+Acceptance is verifiable by running `php artisan test tests/Feature tests/Unit --compact`, `vendor/bin/pint --dirty --format agent`, `./vendor/bin/phpstan`, `php artisan wayfinder:generate`, `npm run build`, AND launching Codex Round 3 against the staged diff.
 
 ---
 
 ## Scope
 
-### In scope (only the Codex findings F-001..F-007)
+### In scope (six findings: G-001, G-002, G-003 partial, G-004, G-005, G-007)
 
-- `app/Services/Payments/CheckoutSessionFactory.php` — read amount/currency from booking, not service/account.
-- `app/Http/Controllers/Booking/PublicBookingController.php::mintCheckoutOrRollback` — catch local persistence failures after Stripe-side success.
-- `app/Console/Commands/ExpireUnpaidBookings.php` — change the `missing session_id` policy from `skipped` to `cancelled` for online bookings past their grace window.
-- `app/Http/Controllers/Webhooks/StripeConnectWebhookController.php::handleRefundEvent` + `resolveRefundRowByFallback` — remove the payment_intent+amount fallback per D-171.
-- `app/Http/Controllers/Dashboard/BookingController.php::updateStatus` — refund + status transition in one transactional unit.
-- `app/Services/Payments/RefundService.php::recordSettlementFailure` — idempotency guard around PA upsert + email dispatch.
-- `app/Http/Controllers/Dashboard/PayoutsController.php` + `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php` (+ Connect webhook deauth handler) — cache key includes `stripe_account_id`; forget on disconnect / deauth.
-- A new migration adding a partial unique index on `pending_actions.payload->>'booking_refund_id'` for `type = 'payment.refund_failed'`.
-- `database/migrations/2026_04_23_174426_add_payment_columns_to_bookings.php::down()` — include `stripe_connected_account_id` in `dropColumn()`.
-- New + updated tests under `tests/Feature/` and `tests/Unit/` covering each finding's "How to break it" sequence.
+- **G-001** — `app/Http/Controllers/Dashboard/BookingController.php` (the `index` / Inertia bookings prop builder around lines 253-300) and `resources/js/components/dashboard/booking-detail-sheet.tsx` (lines 132-160 deeplink builders, 380-540 refund/dispute panels). New server-side controller endpoints (signed admin-only redirects) for the three deeplink types: payment, refund, dispute. PA payload whitelist: only the keys the UI actually consumes.
+- **G-002** — `app/Http/Controllers/Dashboard/PayoutsController.php` (`accountPayload`, around line 312) + `app/Http/Controllers/Dashboard/Settings/ConnectedAccountController.php` (`asEditPayload` or equivalent, line 736). Replace `requirementsCurrentlyDue: string[]` with `requirementsCount: int`. React side: `resources/js/pages/dashboard/payouts.tsx` (lines 331, 376) + `resources/js/pages/dashboard/settings/connected-account.tsx` (lines 175, 181) consume the count and render a localized "Continue in Stripe to complete onboarding" CTA. The TS type definitions in those files updated to drop the array.
+- **G-003 partial — display only** — `resources/js/components/dashboard/refund-dialog.tsx` (line 59), `resources/js/components/dashboard/booking-detail-sheet.tsx` (lines 132-138, 368). Add a shared `formatMoney(cents, currency)` helper using `Intl.NumberFormat(undefined, { style: 'currency', currency })`. The locale-aware INPUT parsing (`10,50`, `1'000.50`) is deferred to a separate UX session and a BACKLOG entry — it is not a money-correctness bug, it is a UX limitation.
+- **G-004** — `resources/js/pages/booking/payment-success.tsx` (lines 46-47). Replace `/bookings/${booking.token}` with the Wayfinder helper from `@/actions/App/Http/Controllers/Booking/BookingManagementController` or `@/routes/bookings`.
+- **G-005** — `app/Http/Controllers/Dashboard/PayoutsController.php` (lines 127-137) replaces `response()->json(['error' => ...], 502)` with `throw ValidationException::withMessages(['login_link' => __(...)])`. `resources/js/pages/dashboard/payouts.tsx` (lines 473-497) consumes `http.errors.login_link` instead of local `setError()`.
+- **G-007** — `resources/js/components/dashboard/payment-status-badge.tsx` (lines 18-29) wraps the labels in `t()`; payout status labels in `resources/js/pages/dashboard/payouts.tsx` (lines 607, 616, 678) and the unknown-refund-reason fallback in `resources/js/components/dashboard/booking-detail-sheet.tsx:542` go through `t()`.
 
-### Out of scope
+### Out of scope (with reasons)
 
-- Frontend XSS / Inertia prop leak audit on `payouts.tsx`, `connected-account.tsx`, `refund-dialog.tsx`. **Deferred to Round 2 of the Codex review** (where the developer asks for explicit frontend depth). Doing it now would conflate finding-fix verification with new analysis.
-- Browser test authoring for the new payments surfaces (`tests/Browser/Payments/*`). Coverage gap acknowledged in Round 1; bigger session of its own.
-- Refund metadata-based response-loss recovery (the alternative Codex offered for F-003). Not rolling-deploy-safe, and the simpler "remove the fallback, log unknown ids and 200" path that D-171 already prescribes is sufficient for MVP. Future work if response-loss is observed in production.
-- Anything outside the seven findings: D-IDs, controllers, services, migrations not listed above.
-- The 11 failing browser tests (`tests/Browser/Embed/IframeEmbedTest` etc.) — investigated separately after this hardening lands.
+- **G-006** (hardcoded `CH` in `resources/js/pages/dashboard/settings/booking.tsx:77-89`): **false positive on contextual review**. The file carries an explicit 7-line comment block (lines 77-83) that documents this as a deliberate CH-centric MVP choice, citing locked roadmap decision #43: "config is the gate STATE; copy + UX + tax assumptions are CH-centric. Do not rewrite this to render the config list dynamically — YAGNI for MVP and contradicts D-43's locale-audit contract." Codex Round 2 cited D-112 as the drift basis; D-112 (config-driven gate state) and locked roadmap decision #43 (copy CH-specific until the locale audit) are coherent, not in conflict. The locale-list audit is already a BACKLOG entry per the prior roadmap; no new entry needed. Documented as **D-183 below** to make the decision explicit and pin it against future re-litigation.
+
+- **G-008** (banner stack always assertive, no dismiss): real but **out of payments scope**. `dashboard-banner.tsx` is consumed by the subscription-lapse banner, payment-mode mismatch banner, AND the unbookable-services banner. A11y polish here is a UI session of its own. Documented as a new BACKLOG entry instead.
+
+- **G-003 input parsing** (CH locale `10,50` / `1'000.50` accepted): real UX limitation for CH operators but NOT a money-correctness bug — the server uses cents and rejects bad input via `StoreBookingRefundRequest`. The fix shape (parse apostrophe-thousands and comma-decimals into integer cents) belongs in a focused UX session. BACKLOG entry.
+
+- The Round 1 findings (F-001..F-007): Codex Round 2 verified all closed. No re-work.
+
+- Browser tests for the new payments surfaces. Acknowledged + deferred (Round 1 PLAN already noted this).
+
+- The 11 failing browser tests (`tests/Browser/Embed/IframeEmbedTest` etc.) — out of scope, separate investigation after this session.
+
+- Anything else in `docs/REVIEW.md::What I Did Not Cover` (auth, scheduling, Cashier subscriptions, generic dashboard code).
 
 ---
 
 ## Approach (per finding)
 
-### F-001 — Checkout reads booking snapshot, not mutable upstream
+### G-001 — No raw Stripe IDs in Inertia props; deeplinks via redirect endpoints
 
-`CheckoutSessionFactory::create($booking, $service, $business, $account)` currently computes:
+Three changes:
 
-```php
-$currency    = $account->default_currency ?? 'chf';
-$amountCents = (int) round((float) $service->price * 100);
+**(a) New routes + controller for Stripe deeplinks.** Admin-only, tenant-scoped, signed by booking ownership:
+
+```
+GET  /dashboard/bookings/{booking}/stripe-link/payment   → 302 Stripe payments page
+GET  /dashboard/bookings/{booking}/stripe-link/refund/{refund}  → 302 Stripe refund page
+GET  /dashboard/bookings/{booking}/stripe-link/dispute   → 302 Stripe dispute page (uses booking → first dispute PA → dispute_id)
 ```
 
-Replace with:
+Implementation: a small `StripeDashboardLinkController` under `app/Http/Controllers/Dashboard/` with three actions. Each one resolves the booking via `tenant()->business()` (route-model-binding scoped to the tenant), reads the appropriate Stripe IDs from server-side state, and returns a redirect to the Stripe dashboard URL. Routes sit inside `role:admin` middleware (matches Payouts pattern). The dispute action reads the `payload->>'dispute_id'` from the booking's open dispute PA — never accepts a dispute id from the URL.
+
+**(b) Booking-detail Inertia payload trimmed.** Remove from `BookingController::index`'s `payment` block (lines 253-300):
+- `stripe_charge_id` → keep only the truncated last-8-chars display field IF the UI needs to show "Charge ch_…XXXXX" anywhere. Audit shows the React side uses it ONLY for the deeplink, so drop entirely.
+- `stripe_payment_intent_id` → same; UI uses it ONLY for the deeplink. Drop.
+- `stripe_connected_account_id` → same; UI uses it ONLY for the deeplink. Drop.
+
+For the refunds list (lines 289-300):
+- `stripe_refund_id` → drop. UI uses it for the deeplink (and its truncated last-4 in the operator audit caption — keep as `stripe_refund_id_last4`).
+
+For the dispute PA payload (line 281):
+- Replace `'payload' => $disputePendingAction->payload` with a whitelist: `dispute_id_last4`, `charge_id_last4` (if needed for display), `amount`, `currency`, `reason`, `status`, `evidence_due_by`. The dispute deeplink uses the new server-side endpoint, not the raw `dispute_id`.
+
+For the urgent payment PA payload (line 269):
+- Same whitelist treatment. The UI consumes `payload.refund_amount_cents`, `payload.failure_reason`, `payload.dispute_id` (display-truncated only) — anything else dropped.
+
+**(c) React side rewired.** `booking-detail-sheet.tsx`:
+- The `stripeDashboardDeepLink` builder (lines 140-147) becomes `route('dashboard.bookings.stripe-link.payment', booking.id)` via Wayfinder.
+- The `disputeDeepLink` builder (lines 148-155) becomes the dispute-link helper.
+- Refund row deeplinks rewire to the refund-link helper.
+- Display fields read the new `_last4` props instead of slicing raw IDs.
+
+The deeplink endpoints can fail (e.g. booking has no `stripe_charge_id` yet). The fallback shape: 404 with a localized message. The React side already conditions deeplinks on the IDs being present; with the new shape, it conditions on a server-passed boolean (`payment.has_stripe_link: true`).
+
+Tests: a feature test for each of the three deeplink routes — happy path 302, cross-tenant 404, missing-id 404, staff-attempt 403. A snapshot test for `BookingController::index` Inertia props that asserts no key matches `/^stripe_(charge|payment_intent|refund|connected_account)_id$/` and no payload key contains `dispute_id` (only `dispute_id_last4`).
+
+### G-002 — `requirementsCount` instead of raw `requirementsCurrentlyDue`
+
+`PayoutsController::accountPayload` (line 312) and `ConnectedAccountController` (line 736 — the equivalent payload builder for `dashboard/settings/connected-account` page) drop the raw array and add:
 
 ```php
-$currency    = $booking->currency;
-$amountCents = $booking->paid_amount_cents;
+'requirementsCount' => count($row->requirements_currently_due ?? []),
+```
 
-if (! is_string($currency) || $currency === '' || ! is_int($amountCents) || $amountCents <= 0) {
-    throw new InvalidBookingSnapshotForCheckout($booking);
+The TS types in `payouts.tsx` (line 32) and `connected-account.tsx` (line 36) drop `requirementsCurrentlyDue: string[]` and add `requirementsCount: number`. The badge renderers (lines 175-181 in connected-account.tsx, 331/376 in payouts.tsx) replace the per-key list with a single localized "X items pending — continue in Stripe to complete onboarding" line + a CTA button that opens the Stripe Express dashboard.
+
+The Payouts page already has the dashboard-login-link mint flow (G-005's endpoint); the connected-account page's CTA can use the existing "Open Stripe Express" button if present, or a new mint endpoint.
+
+Tests: assert the prop shape change in the existing `PayoutsControllerTest` happy-path test.
+
+### G-003 partial — `formatMoney` helper for display
+
+New shared frontend helper at `resources/js/lib/format-money.ts`:
+
+```ts
+export function formatMoney(cents: number, currency: string): string {
+    return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: currency.toUpperCase(),
+    }).format(cents / 100);
 }
 ```
 
-The two snapshot columns are populated in `PublicBookingController::store` at booking creation (lines 439, 447), so by the time `mintCheckoutOrRollback` runs they are guaranteed non-null for any online-payment booking. The new exception is caught at the controller boundary and surfaces as `ValidationException::withMessages(['checkout_failed' => __(...)])` — same error envelope as `ApiErrorException` for symmetry.
+Three call sites updated:
+- `refund-dialog.tsx:59` — `remainingFormatted` uses the helper.
+- `booking-detail-sheet.tsx:132-138` — `paidAmountFormatted` + `remainingFormatted` use the helper.
+- `booking-detail-sheet.tsx:368` — refund row amount display uses the helper.
 
-The `Service` parameter on `CheckoutSessionFactory::create` is now only used for `$service->name` in the line item's `product_data.name`. We keep the parameter (the product name is still a runtime value, not pinned on the booking).
+The locale-aware INPUT parser is deferred (BACKLOG); the existing `parseAmount` strict-dot-decimal stays, with a clearer placeholder that hints the format.
 
-**D-ID**: this implements the **letter** of D-152 / D-156 — those decisions defined the booking columns as the contract; this change makes them the actual contract. Promoted as **D-177** (the booking snapshot is the only Checkout amount source).
+### G-004 — Wayfinder helper on `payment-success.tsx`
 
-### F-002 — Post-Stripe DB failure releases the slot, reaper cancels strays
+```tsx
+import { show } from '@/actions/App/Http/Controllers/Booking/BookingManagementController';
 
-`mintCheckoutOrRollback` currently:
-
-```php
-$session = $this->checkoutSessionFactory->create(...);
-$booking->update(['stripe_checkout_session_id' => $session->id]);   // can throw
+<Link href={show(booking.token)}>{t('Check booking status')}</Link>
 ```
 
-Wrap the persistence write in its own try/catch. On failure:
+Verify the helper resolves correctly via `php artisan wayfinder:generate` first (the helper exists per the Codex citation).
 
-1. Log critical with the (now-orphaned) Stripe session id so the operator can manually expire it on the Stripe dashboard.
-2. Call `$this->releaseSlotFor($booking)` (existing helper that flips the booking to `cancelled` so the GIST exclusion frees up).
-3. Throw `ValidationException::withMessages(['checkout_failed' => __(...)])`.
-
-Reaper policy in `ExpireUnpaidBookings::processBooking`: today, missing `stripe_checkout_session_id` returns `'skipped'` and logs critical (line 99-108). After this fix the orphaned-DB-write path cancels the booking on the spot, so the reaper should never see a missing session id under normal operation. The reaper still needs to handle the legacy / unexpected case — change the policy from `skipped` to `cancelled` when the booking is past its `expires_at + grace`. Log critical with the same operator-actionable detail. The tests for the missing-session-id branch get rewritten to assert cancellation.
-
-### F-003 — Drop the D-171 fallback
-
-`StripeConnectWebhookController::handleRefundEvent` calls `resolveRefundRowByFallback` when the primary `where('stripe_refund_id', $refundId)` lookup misses. Delete `resolveRefundRowByFallback` outright and the call site. Replace with a `Log::warning` (already there in the post-fallback miss branch) and `continue;`.
-
-The "How to break it" sequence in F-003 (a CHF 10.00 partial-refund response-loss leaving row A pending, then a second CHF 10.00 partial creating row B, then the webhook for row A backfilling row B's id) is closed by simply not having a fallback. The narrow window the fallback was meant to cover (Stripe SDK throws after Stripe accepted the refund) is documented in D-171 as "log + 200, accept the operational gap". Restore that contract.
-
-The `tests/Feature/Payments/RefundSettlementWebhookTest.php` test that codifies the fallback (`refund event for unmatched stripe_refund_id falls back to payment_intent + amount lookup` or similar) is rewritten to assert the unmatched id is logged and 200'd with no row update. Add a new test that proves the F-003 mis-attribution sequence does NOT mutate row B.
-
-**D-ID drift fix**: this aligns the code with D-171 verbatim. No new D-ID; the comment block at the call site is rewritten to reference D-171 and the F-003 finding for traceability.
-
-### F-004 — `recordSettlementFailure` idempotent
-
-Two changes in `app/Services/Payments/RefundService.php`:
-
-1. The DB transaction returns `bool $didTransition` (true iff the row moved from a non-terminal state to `Failed`). The current early-return `if ($row->status === BookingRefundStatus::Failed) { return; }` becomes the false branch.
-2. The post-transaction Pending Action upsert + `Notification::route('mail', $admin)->notify(...)` block runs only when `$didTransition === true`.
-
-Add a Postgres partial unique index migration:
-
-```sql
-CREATE UNIQUE INDEX pending_actions_payment_refund_failed_unique
-  ON pending_actions ((payload->>'booking_refund_id'))
-  WHERE type = 'payment.refund_failed'
-    AND resolved_at IS NULL;
-```
-
-`PendingAction` creation in `recordSettlementFailure` is wrapped in a savepoint + catch-on-unique-violation — same shape as the dispute PA per D-126. The loser of the race silently no-ops; the winner has an active PA. Tests assert two concurrent webhook events for the same failed refund land exactly one PA + one admin email.
-
-### F-005 — Admin paid-cancel: refund + status in one logical transaction
-
-Today in `Dashboard\BookingController::updateStatus`:
+### G-005 — `loginLink` uses ValidationException
 
 ```php
-$result = $refundService->refund($booking, null, $reason);   // Stripe refund + local row
-$booking->refresh();
-// ... possibly other code ...
-$booking->update(['status' => $newStatus]);                  // separate write
-```
+} catch (ApiErrorException $e) {
+    report($e);
 
-The risk window is "Stripe accepted the refund + we committed our local refund row, but we never wrote `status = cancelled`". Fix shape: transition the booking to `cancelled` BEFORE calling Stripe, on the assumption that the cancel intent is the source of truth and the refund is a downstream side effect. The refund row records the attempt; if Stripe accepts, the refund row is `succeeded`, if Stripe fails, the refund row is `failed` and the existing `payment.refund_failed` Pending Action surfaces it. The slot is freed either way — which is the correct state once the admin has clicked cancel.
-
-Concrete change:
-
-```php
-DB::transaction(function () use ($booking, $newStatus) {
-    $booking->update(['status' => $newStatus]);   // free the slot first
-});
-// Now dispatch the refund — failures land as PA + email, slot already free.
-try {
-    $result = $refundService->refund($booking, null, $reason);
-} catch (...) { ... }
-```
-
-Concretely the refund call is moved to AFTER the status transition. The transaction wraps the status update only (the refund itself opens its own DB transactions inside `RefundService`). If `RefundService::refund` raises a transient Stripe error, the existing handler catches and returns a flash; the booking is now `cancelled` regardless, which is the safer state.
-
-Tests: existing `PaidCancellationRefundTest.php` already covers happy path + refund-failure cases; add a test that asserts a worker-killed-after-refund scenario leaves `status = cancelled` (this is implicit in the new ordering, but worth a regression test). A second test asserts the public booking list reflects cancellation immediately even when the refund is still in flight.
-
-### F-006 — Payouts cache: include account id, forget on disconnect
-
-`PayoutsController::cacheKey` currently `"payouts:business:{$businessId}"`. Change to:
-
-```php
-private function cacheKey(int $businessId, string $stripeAccountId): string
-{
-    return "payouts:business:{$businessId}:account:{$stripeAccountId}";
+    throw ValidationException::withMessages([
+        'login_link' => __('Could not open Stripe right now. Please try again in a moment.'),
+    ]);
 }
 ```
 
-Both call sites (`fetchPayoutsPayload` line 145; the `Cache::put` line 158) thread the row's `stripe_account_id` through. A disconnect+reconnect mints a new account id, so the new key cannot collide with the stale one — the stale entry simply expires harmlessly.
+React side: replace the local `setError()` branch in the `onError` handler with reading `http.errors.login_link`. The button's disabled-during-request bit stays; only the error-display path changes.
 
-Belt-and-braces: `ConnectedAccountController::disconnect` and the Connect webhook's `account.application.deauthorized` handler call:
+Test: an existing `PayoutsControllerTest` test that drives the failure path — update the assertion from "JSON 502 with `error` key" to "Inertia validation error envelope with `login_link` key".
 
-```php
-Cache::forget("payouts:business:{$businessId}:account:{$stripeAccountId}");
+### G-007 — `t()` for status labels
+
+`PaymentStatusBadge`:
+
+```tsx
+const t = useTrans();
+const paymentConfig: Record<string, { variant: ..., label: () => string }> = {
+    paid: { variant: 'success', label: () => t('Paid') },
+    awaiting_payment: { variant: 'warning', label: () => t('Awaiting') },
+    // ... etc
+};
 ```
 
-Inside the same DB transaction that soft-deletes the row. Tests: a unit test on the cache key shape; a feature test that disconnect+reconnect followed by a fresh `index()` call hits Stripe (not cache).
-
-### F-007 — Migration `down()` includes `stripe_connected_account_id`
-
-One-line fix in `database/migrations/2026_04_23_174426_add_payment_columns_to_bookings.php`: append `'stripe_connected_account_id'` to the `dropColumn()` array. Add a unit test in `tests/Unit/Migrations/` (or extend an existing one) that runs `down()` on a freshly-migrated payments-era schema and asserts the column is gone.
+Same shape for the payout status labels in `payouts.tsx` (lines 607, 616, 678). The unknown-refund-reason fallback in `booking-detail-sheet.tsx:542` becomes `t('Unknown')`.
 
 ---
 
 ## Risk register
 
-- **F-005's reordering is the most behaviour-changing fix.** Today the admin sees the refund result before status flips; after this change, the cancel happens first and the refund is "best effort". Verify no UI relies on `payment_status` reflecting the refund outcome in the same response. Tests + manual walk through Settings → Bookings.
-- **F-001 + F-003 are pure subtractions** (less ambient state, fewer fallbacks). Low blast radius.
-- **F-004's partial unique index requires a non-rolling deploy** if the table has existing duplicate rows. Pre-launch — `migrate:fresh --seed` is the norm, no production data — so safe by inspection. The migration includes a guard that asserts no duplicates exist before adding the index (fails loud if a future deploy violates the precondition).
-- **F-006's cache key change** invalidates every existing payouts cache entry on first deploy. This is desirable (the prior key is the bug); just note it for the operator.
-- **D-177 promotion**: the finalised D-ID lands in `docs/decisions/DECISIONS-PAYMENTS.md` at session close, not before. Until promoted, the decision lives only in `## Decision Log` here. Per CLAUDE.md scoped guide rule, we write D-177 directly into `DECISIONS-PAYMENTS.md` during exec to avoid the overwrite-risk on next session.
-- **Wayfinder regen**: no new routes added; no Wayfinder regen expected. Verify with `git diff resources/js/wayfinder/` after `php artisan wayfinder:generate`.
+- **G-001 is the most invasive change** — three new routes, controller, prop reshaping, React rewiring across two files. Each piece is small but the bundle is wide. Mitigation: write the new controller + routes first, add the feature tests, then change the prop shape, then change the React. Each step is its own commit-able point if needed.
+- **The new `StripeDashboardLinkController` is admin-only**. Verify the route group is inside `role:admin` middleware. The dispute deeplink reads server-side from the booking's first open dispute PA — never accepts a dispute id from the URL (mitigates the obvious "use a stranger's dispute id" attack).
+- **G-002 changes the Inertia prop shape**. Existing tests asserting `requirementsCurrentlyDue` need updates. Mitigation: search for the prop name in tests, update in one pass.
+- **Wayfinder regeneration must happen for G-004 + G-001 to compile**. Run `php artisan wayfinder:generate` after route additions.
+- **G-005's existing test asserts the JSON 502 shape**. Update to ValidationException shape.
 
 ---
 
 ## Quality bar / Done check
 
-- `php artisan test tests/Feature tests/Unit --compact` green; new tests added per finding.
+- `php artisan test tests/Feature tests/Unit --compact` green; new tests for the three deeplink endpoints + the prop-shape regression.
 - `vendor/bin/pint --dirty --format agent` clean.
-- `php artisan wayfinder:generate` idempotent.
+- `php artisan wayfinder:generate` — new routes regenerate frontend helpers.
 - `./vendor/bin/phpstan` no errors.
-- `npm run build` clean.
-- `docs/PLAN.md` `## Progress` reflects every finding closed; `## Decision Log` documents the few cases where the fix shape differs from Codex's suggestion (notably F-005's reorder vs Codex's intent/refund-pending-state suggestion).
-- `D-177` written into `docs/decisions/DECISIONS-PAYMENTS.md` (booking snapshot is the only Checkout amount source).
-- `docs/HANDOFF.md` rewritten — adds a "PAYMENTS Hardening Round 1" line under "What shipped" and updates the test baseline.
-- `/codex:review` (Round 2) launched against the staged diff — see `## Review` section for findings + dispositions.
+- `npm run build` clean; `npx tsc --noEmit` clean (the React side gets new types).
+- `docs/PLAN.md` `## Progress` reflects every milestone closed; `## Decision Log` documents the deeplink-endpoint shape; `## Surprises & Discoveries` records anything unexpected.
+- Two new architectural decisions written into `docs/decisions/DECISIONS-PAYMENTS.md`:
+  - **D-183** — locked roadmap decision #43 supersedes D-112 for COPY in the public payment-mode UI; the hardcoded CH literal in `booking.tsx` is intentional MVP behaviour, not drift.
+  - **D-184** — Stripe dashboard deeplinks live on server-side admin-only redirect endpoints; raw Stripe object IDs do not ride Inertia props (closes G-001).
+  - **D-185** — Payouts / Connected Account `requirements_currently_due` exposed only as a count + generic CTA, never as a raw array (closes G-002).
+- `docs/HANDOFF.md` updated with the Round 2 hardening line + new baseline + D-183..D-185 promotion + next free D-ID.
+- `docs/BACKLOG.md` gains two entries: G-008 (banner a11y polish) + G-003 input parser (CH locale).
+- `/codex:review` (Round 3) launched against the staged diff — see `## Review` section for findings + dispositions.
 
 ---
 
 ## Progress
 
-- [x] (2026-04-28) Milestone 1 — F-001: `CheckoutSessionFactory::create` reads booking snapshot. New `InvalidBookingSnapshotForCheckout` exception. Caller catches as `checkout_failed`. Promoted as D-177.
-- [x] (2026-04-28) Milestone 2 — F-002: `mintCheckoutOrRollback` catches local persistence failure (try/catch around `Booking::update`); reaper changes missing-session-id branch from `'skipped'` to `cancelBooking($booking)`. Promoted as D-178.
-- [x] (2026-04-28) Milestone 3 — F-003: removed `resolveRefundRowByFallback` from `StripeConnectWebhookController`; orphan import cleanup (`BookingRefundStatus`). Rewrote the prior fallback test as F-003 mis-attribution proof. Promoted as D-179.
-- [x] (2026-04-28) Milestone 4 — F-004: `recordSettlementFailure` returns `didTransition`; PA + email only on transition. New migration `2026_04_28_194851_add_refund_failed_unique_index_to_pending_actions.php` with pre-flight duplicate guard. `upsertRefundFailedPendingAction` wraps insert in `DB::transaction` + `UniqueConstraintViolationException` catch. New idempotency test. Promoted as D-180.
-- [x] (2026-04-28) Milestone 5 — F-005: `Dashboard\BookingController::updateStatus` reorders `$booking->update(['status' => $newStatus])` BEFORE the `RefundService::refund()` call. New `transient` flash outcome added to the `match` + `flashKey` allow-list so transient Stripe errors surface to the admin without short-circuiting customer email + calendar push. Promoted as D-181.
-- [x] (2026-04-28) Milestone 6 — F-006: `PayoutsController::cacheKey` promoted to public static, includes `stripe_account_id`. `Cache::forget` called inside `ConnectedAccountController::disconnect` + `StripeConnectWebhookController::handleAccountDeauthorized`. Existing cache-isolation tests rewritten to construct keys via the public helper. New disconnect-forgets-cache test. Promoted as D-182.
-- [x] (2026-04-28) Milestone 7 — F-007: `2026_04_23_174426_add_payment_columns_to_bookings.php::down()` includes `stripe_connected_account_id` in `dropColumn()` list. Banal one-liner; not a D-ID promotion (not architectural).
-- [x] (2026-04-28) Milestone 8 — Iteration loop:
-    - `php artisan test tests/Feature tests/Unit --compact` → **965 / 4183** (baseline 963 / 4173; +2 tests, +10 assertions). Net change: F-003 pre-existing fallback test rewritten to the new contract + 2 net-new tests (F-003 mis-attribution proof, F-004 duplicate-webhook idempotency, F-006 disconnect-forgets-cache).
-    - `vendor/bin/pint --dirty --format agent` → pass.
-    - `php artisan wayfinder:generate` → regenerated (no route changes; idempotent re-run).
-    - `./vendor/bin/phpstan` → No errors. (One transient finding on `BookingController:407` `$refundReason !== null` was redundant after the F-005 reorder; tightened the guard since `$refundReason` is set only via `$shouldRefund`'s positive branch.)
-    - `npm run build` → clean (main app chunk ~585 kB; pre-existing warning unchanged).
-- [x] (2026-04-28) Milestone 9 — Promoted D-177..D-182 (six decisions) directly into `docs/decisions/DECISIONS-PAYMENTS.md`. Next free D-ID: D-183.
-- [x] (2026-04-28) Milestone 10 — Rewrote `docs/HANDOFF.md`. New baseline 965 / 4183. Six new D-IDs recorded. Browser-test failure note added (out of scope here; tracked separately).
-- [ ] Milestone 11 — Codex Round 2 review against the staged diff; findings (if any) applied under `## Review — Round 2`.
+- [x] (2026-04-29) Milestone 1 — G-001a: new `StripeDashboardLinkController` with payment/refund/dispute redirect endpoints. Admin role + tenant scoping in the controller; routes inside the existing `role:admin` group with the Payouts routes. Dispute reads `payload->>'dispute_id'` from the booking's most-recent dispute PA — never accepts an id from the URL.
+- [x] (2026-04-29) Milestone 2 — G-001b: `BookingController::index` Inertia payload reshaped. Removed `stripe_charge_id`, `stripe_payment_intent_id`, `stripe_connected_account_id` from `payment`; removed `stripe_refund_id` from refund rows (replaced by `stripe_refund_id_last4` + `has_stripe_link`); whitelisted urgent + dispute PA payloads (raw `dispute_id` no longer rides; `dispute_id_last4` instead). Two private helpers added (`whitelistPaymentPaPayload`, `whitelistDisputePaPayload`, `refundRowPayload`).
+- [x] (2026-04-29) Milestone 3 — G-001c: `booking-detail-sheet.tsx` consumes Wayfinder helpers (`stripePaymentLink.url`, `stripeRefundLink.url`, `stripeDisputeLink.url`). Removed the local `disputeDeepLink`/`stripeDashboardDeepLink` builders; the `payment.has_stripe_payment_link` and `disputePaymentAction.has_dispute_link` booleans gate visibility. Refund row caption shows `re_…XXXX` from the truncated last4. TS types in `@/types/index.d.ts` updated (no raw Stripe IDs).
+- [x] (2026-04-29) Milestone 4 — G-002: `PayoutsController::accountPayload` and `ConnectedAccountController` payload builder expose `requirementsCount: int`. Removed the previous Tooltip + raw badge list in `payouts.tsx`; replaced with a single status chip "X requirement(s) due — see Stripe". `connected-account.tsx` shows "X items pending — continue in Stripe to complete onboarding." Tooltip primitive import dropped (no other consumer in the file).
+- [x] (2026-04-29) Milestone 5 — G-003 partial: new `resources/js/lib/format-money.ts` (`Intl.NumberFormat`). Three call sites updated. The locale-aware INPUT parser is deferred to BACKLOG — out of scope.
+- [x] (2026-04-29) Milestone 6 — G-004: `payment-success.tsx` imports `show as bookingShow` from `@/actions/.../BookingManagementController` and uses `bookingShow.url(booking.token)`.
+- [x] (2026-04-29) Milestone 7 — G-005: `PayoutsController::loginLink` now throws `ValidationException::withMessages(['login_link' => __(...)])`. React side: `useHttp<{ login_link?: string }>({})` typed; the `error` value is derived from `http.errors.login_link` (string | string[]); local `setError`/`error` state removed. New test asserts the new envelope (`assertJsonValidationErrors(['login_link'])`).
+- [x] (2026-04-29) Milestone 8 — G-007: `PaymentStatusBadge` rewritten with split `variantByStatus` + `labelByStatus` maps wrapped in `t()`; `PayoutStatusBadge` translates known Stripe statuses (paid / in_transit / pending / failed / canceled) and falls back to `t('Unknown')`; `formatRefundReason` unknown-fallback returns `t('Unknown')` instead of the raw internal string.
+- [x] (2026-04-29) Milestone 9 — Tests:
+    - New `tests/Feature/Dashboard/StripeDashboardLinkControllerTest.php` (12 tests): payment 302, payment-intent fallback, missing-handle 404, staff 403, cross-tenant 404, refund 302, cross-booking refund 404, null-stripe-refund-id 404, dispute 302, dispute-no-PA 404, staff-dispute 403, prop-shape regression-guard.
+    - New `login-link mint Stripe failure surfaces as Inertia validation error envelope (G-005)` test in `PayoutsControllerTest.php`.
+    - `BookingPaymentPanelTest.php` rewritten to assert `has_stripe_payment_link` + `missing(stripe_charge_id)` + `missing(stripe_connected_account_id)`.
+    - `BookingsListPaymentFilterTest.php`: explicit non-overlapping `starts_at` to dodge a pre-existing GIST exclusion-constraint flake (factory random dates collided for the same provider). Pre-existing flake noted in `## Surprises & Discoveries`.
+- [x] (2026-04-29) Milestone 10 — Iteration loop:
+    - `php artisan test tests/Feature tests/Unit --compact` → **978 / 4246** (baseline 965 / 4183; +13 tests, +63 assertions).
+    - `vendor/bin/pint --dirty --format agent` → pass (one auto-fix on the new helper imports).
+    - `php artisan wayfinder:generate` → regenerated; 3 new dashboard routes appear in `@/actions` + `@/routes`.
+    - `./vendor/bin/phpstan` → No errors. (One PHPStan covariance issue on `Collection<TValue>` invariance was resolved by extracting `refundRowPayload` into a typed private method + converting the refunds map to a plain array via `->values()->all()`. See `## Surprises & Discoveries`.)
+    - `npm run build` → clean.
+    - `npx tsc --noEmit` → clean. (One TS error fixed by typing `useHttp<{ login_link?: string }>({})`.)
+- [x] (2026-04-29) Milestone 11 — Promoted **D-183**, **D-184**, **D-185** directly into `docs/decisions/DECISIONS-PAYMENTS.md`. Next free D-ID: D-186.
+- [x] (2026-04-29) Milestone 12 — Rewrote `docs/HANDOFF.md` with Round 2 baseline (978 / 4246) + new D-IDs + the false-positive resolution for G-006. Added two BACKLOG entries: G-008 dashboard banner a11y + G-003 input parser.
+- [ ] Milestone 13 — Codex Round 3 review against staged diff; findings (if any) under `## Review — Round 3`.
 
 ---
 
 ## Surprises & Discoveries
 
-- **F-005's customer email path** initially broke. The first cut of the F-005 reorder caught `ApiConnectionException|RateLimitException|ApiErrorException` and returned `back()->with('error', ...)` early — but by then the booking was already in `Cancelled`, so the early return short-circuited the customer cancellation email + the Google Calendar `delete` push. Fixed by lifting the transient error into a new `$refundOutcome = 'transient'` outcome so the rest of the handler still runs; the new flash branch surfaces "Booking cancelled. The refund hit a temporary Stripe issue — retry the refund from the booking detail panel." This is more user-honest than the prior shape too: before F-005 the flash on transient error was just "Temporary Stripe issue — try again in a minute" which is misleading because the cancel side-effect is already irreversible at that point.
-- **D-177 was originally one promotion** in the plan; in practice each finding warranted its own D-ID because every fix changes a comportamental contract: D-177 (snapshot-as-truth), D-178 (reaper policy), D-179 (D-171 verbatim, drops fallback), D-180 (settlement-failure idempotency), D-181 (paid-cancel reorder), D-182 (payouts cache key + forget). F-007 stays out of the D-ID register — it's a missed-column rollback, not an architectural decision.
-- **PHPStan caught one redundant guard** (`$shouldRefund && $refundReason !== null`) post-F-005. After the reorder `$refundReason` is set only inside the positive `$shouldRefund` branch, so the second check is always true. Tightened to `if ($refundReason !== null)`. Trivial follow-up; flagged the static analyser is keeping us honest on the new ordering.
-- **`StripeEventBuilder::refundEvent` did not accept an event-id override**, which the F-004 idempotency test needs (the cache-layer dedup keys on event id; we want two distinct ids carrying the same refund id). Extended the builder with an optional `?string $eventId = null` parameter; default keeps the existing `'evt_test_'.uniqid()` shape so no other tests change.
+- **PHPStan covariance on the bookings paginator's nested refund Collection**. The first run flagged a `Collection<TValue> is not covariant` issue: the `through()` callback's inferred return shape included `refunds: Collection<int, array{...stripe_refund_id_last4: non-empty-string|null...}>|null`, but somewhere PHPStan compared it against a narrower `non-empty-string` shape and rejected the assignment. Two changes made it stick: (a) extract the refund-row map closure into a typed private method `refundRowPayload(BookingRefund, Booking): array{...}` so the return shape is statically pinned; (b) convert the result via `->values()->all()` to a plain `array` (Inertia serializes both identically in the JSON payload, so the browser-side shape is unchanged). Worth noting because the same shape appears elsewhere (`bookingPayload`-style inline arrays); future expansions of the booking-detail prop should reach for a typed helper rather than inline closures.
 
----
+- **Pre-existing GIST flake on `BookingsListPaymentFilterTest`**. The "every payment_status value surfaces in the list payload (chip dataset coverage)" test creates 7 bookings on the same provider via `Booking::factory()->create([...])` with the factory's random `starts_at`. On this run, two of them landed within the same 30-minute window, hitting the `bookings_no_provider_overlap` GIST exclusion constraint at INSERT time. Not caused by this session — the test was identical before — but our larger payload changes nudged execution timing enough that the flake surfaced. Fixed by giving each booking an explicit `starts_at = now()->addDays(7 + $i)`. Worth flagging because other "create N bookings on one provider" tests in the suite likely share the same latent flake.
 
-## Review
+- **`G-006` was a false positive**. The `'CH'` literal in `booking.tsx:77-89` is documented in a 7-line comment as a deliberate MVP choice citing locked roadmap decision #43 — Codex Round 2 read line 77 but missed the comment block above. Rather than re-litigate it on every future review, promoted as **D-183** (locked roadmap decision #43 governs CH-centric COPY; D-112 governs the gate STATE) and added a `D-183` reference to the existing comment so the next reader sees the locked decision in the D-ID register.
 
-(Filled in after the developer launches `/codex:review` against the staged diff.)
+- **Bookings list is paginated**. The Codex prop-shape regression test initially asserted on `bookings.0` but the controller renders `bookings.data.0` (Eloquent paginator). One-line fix; flagged because future review-prompts should mention the paginator shape so review agents don't write similar test paths.
+
+- **TS `useHttp` defaults to `FormDataErrors<{}>`**. `useHttp({})` types `errors` as effectively empty, so consuming `http.errors.login_link` fails at compile time. The fix is `useHttp<{ login_link?: string }>({})`. Worth noting because every future useHttp call that surfaces a discriminator-keyed validation error needs the same typing pattern; the project's `resources/js/CLAUDE.md` rule "useHttp + ValidationException, no parallel state" implies but doesn't make this explicit.
 
 ---
 
 ## Decision Log
 
-D-177 through D-182 were promoted directly into `docs/decisions/DECISIONS-PAYMENTS.md` during exec to avoid the next-session-overwrite risk. Summary here for orientation; the canonical bodies live in DECISIONS-PAYMENTS.
+D-183, D-184, D-185 were promoted directly into `docs/decisions/DECISIONS-PAYMENTS.md` during exec to avoid the next-session-overwrite risk. Summary here for orientation; the canonical bodies live in DECISIONS-PAYMENTS.
 
-- **D-177** — Stripe Checkout amount + currency read from booking snapshot, not live Service / connected-account.
-- **D-178** — Reaper cancels orphan online bookings missing `stripe_checkout_session_id` instead of skipping; `mintCheckoutOrRollback` releases the slot synchronously when the local write fails.
-- **D-179** — Refund-settlement webhook fallback removed; D-171 holds verbatim (match by `stripe_refund_id` only; unmatched logs + 200).
-- **D-180** — `recordSettlementFailure` is idempotent on already-Failed rows; partial unique index on `pending_actions.payload->>'booking_refund_id'` for `payment.refund_failed` mirrors D-126.
-- **D-181** — Admin paid-cancel transitions Cancelled BEFORE the refund call; new `transient` flash outcome.
-- **D-182** — Payouts cache key includes `stripe_account_id`; `Cache::forget` on disconnect + deauthorization.
+- **D-183** — Locked roadmap decision #43 governs CH-centric copy in the payment-mode Settings UI; D-112 governs the gate STATE. Pins the precedence so future reviews don't re-flag the `'CH'` literal in `booking.tsx` as drift.
+- **D-184** — Stripe dashboard deeplinks live on admin-only server-side redirect endpoints. Raw Stripe object IDs no longer ride Inertia props; the booking-detail prop carries truncated `_last4` display fields + `has_*_link` booleans.
+- **D-185** — Connected-account `requirements_currently_due` exposed as `requirementsCount: int` only; the field-path list stays server-side / in Stripe.
+
+(Pre-locked sketches retained below for historical context — final bodies in DECISIONS-PAYMENTS supersede.)
+
+### D-183 (provisional) — Locked roadmap decision #43 governs CH-centric copy in the payment-mode Settings UI, not D-112's config-driven gate
+
+- **Date**: 2026-04-29 (PAYMENTS Hardening Round 2)
+- **Status**: provisional (promoted to accepted at close)
+- **Context**: Codex Round 2 (Finding G-006) flagged a hardcoded `'CH'` literal in `resources/js/pages/dashboard/settings/booking.tsx` ("Online payments in MVP support CH-located businesses only.") as a D-112 drift. D-112 says `config('payments.supported_countries')` is the single switch for country GATE STATE. But `booking.tsx:77-83` carries a 7-line comment citing locked roadmap decision #43: copy / UX / tax assumptions are CH-specific until the post-MVP locale-list audit. The two are not in conflict — they govern different surfaces (gate state vs UI copy) — but the conflict is not visible in the D-IDs alone, which led to the false-positive finding.
+- **Decision**: Make the precedence explicit. For UI copy that explains the gate to a human user, locked roadmap decision #43 governs: copy stays CH-specific until the fast-follow locale audit. For the gate STATE itself (whether a country is allowed at all), D-112 governs: `config('payments.supported_countries')` is authoritative. The `booking.tsx` literal is correct as-is. Future reviewers should not re-litigate without engaging both decisions.
+- **Consequences**:
+    - The Round 2 G-006 finding is closed as out-of-scope: not a drift, not a regression.
+    - The existing comment block in `booking.tsx` is augmented with a `D-183` reference so a future reader sees the explicit locked decision instead of having to chase locked roadmap #43.
+    - The locale-list audit BACKLOG entry remains as the activation surface for any future change here.
+
+### D-184 (provisional) — Stripe dashboard deeplinks on admin-only server-side redirect endpoints; raw Stripe IDs never ride Inertia props
+
+- **Date**: 2026-04-29 (PAYMENTS Hardening Round 2)
+- **Status**: provisional (promoted to accepted at close)
+- **Context**: Codex Round 2 G-001 documented that the dashboard booking-detail Inertia payload was sending full `stripe_charge_id`, `stripe_payment_intent_id`, `stripe_connected_account_id`, `stripe_refund_id`, dispute IDs, and unfiltered Pending Action payloads to the browser. The React side then concatenated those raw values into Stripe dashboard URLs. Admin-only, but a violation of the prop contract: any future XSS, browser extension, or frontend exception reporter can harvest the IDs from page JSON.
+- **Decision**: Three new admin-only routes on the dashboard sit behind `role:admin` + tenant scoping and 302 to Stripe:
+    - `GET /dashboard/bookings/{booking}/stripe-link/payment`
+    - `GET /dashboard/bookings/{booking}/stripe-link/refund/{refund}`
+    - `GET /dashboard/bookings/{booking}/stripe-link/dispute`
+  The controller reads the raw Stripe IDs server-side from the booking + (for refund) the route-bound BookingRefund + (for dispute) the booking's open dispute Pending Action's `payload->>'dispute_id'`. The React side passes through Wayfinder helpers; no raw Stripe ID rides the prop. The admin booking-detail prop shape carries truncated `_last4` display fields where the UI needs to show a partial id ("re_…XXXX"), plus a `has_stripe_link` boolean per link type so the React side knows when to render the deeplink button.
+- **Consequences**:
+    - A future XSS / browser-extension / exception-reporter cannot harvest semi-secret Stripe identifiers from page JSON.
+    - The dispute deeplink reads the dispute id from a server-side PA lookup; the URL never carries a user-controlled dispute id.
+    - The endpoint is admin-only + tenant-scoped; cross-tenant + staff attempts return 403/404.
+    - PA payload exposure is whitelisted: only the keys the UI actually consumes. Everything else (raw payment_intent in payload, internal Stripe object refs) stays server-side.
+
+### D-185 (provisional) — Connected-account `requirements_currently_due` exposed as count + generic CTA only
+
+- **Date**: 2026-04-29 (PAYMENTS Hardening Round 2)
+- **Status**: provisional (promoted to accepted at close)
+- **Context**: Codex Round 2 G-002 documented that `PayoutsController::accountPayload` and `ConnectedAccountController` both pass-through the raw `requirements_currently_due` array to the React side, where it renders as a list of badges. Stripe sometimes returns paths like `person_xxx.dob.day`, `individual.id_number`, `company.tax_id` — semi-PII-flavoured field references that should not surface as a rendered list to the operator (and should not appear in page JSON either).
+- **Decision**: Replace the `requirementsCurrentlyDue: string[]` prop with `requirementsCount: int` on both controller surfaces. The React renderer shows "X items pending — continue in Stripe to complete onboarding" + a CTA button that opens the Stripe Express dashboard. Operators get the action; the field-path list stays server-side (and in Stripe).
+- **Consequences**:
+    - Page JSON no longer carries Stripe field paths.
+    - The connected-account + payouts UI route operators to Stripe for the actual list, which is the correct system of record anyway.
+    - Future changes to Stripe's requirements vocabulary (new fields, key renames, drift) cannot leak into the page JSON.
+
+---
+
+## Review
+
+### Round 3 — 2026-04-29
+
+Codex Round 3 ran against the staged Round 2 diff. Verdict: Round 2 **partial** — five findings closed cleanly (G-002, G-004, G-005, G-006, G-008 deferral), three incomplete (G-001, G-003 partial, G-007). Drift sweep surfaced four findings (H-001..H-004); all four were applied on the same uncommitted diff before commit.
+
+Verification commands re-run after the Round 3 fixes: `php artisan test tests/Feature tests/Unit --compact` (**980 / 4249** — +2 tests / +3 assertions for H-001), `./vendor/bin/phpstan` (no errors), `vendor/bin/pint --dirty --format agent` (pass), `npx tsc --noEmit` (clean), `npm run build` (clean).
+
+#### H-001 — Dispute deeplink filters `status = pending`
+
+- **Severity:** Medium (real lifecycle bug — D-184 contract drift)
+- **Status:** Fixed
+- **Location:** `app/Http/Controllers/Dashboard/StripeDashboardLinkController.php:99`
+- **Fix:** added `->where('status', PendingActionStatus::Pending->value)` to the dispute PA lookup so resolved historical rows cannot redirect to a no-longer-relevant Stripe dispute page. Imported `App\Enums\PendingActionStatus`. The filter mirrors the booking-list eager-load in `BookingController::index` (the deeplink behaviour now matches the Inertia banner's visibility contract).
+- **Tests added:** `tests/Feature/Dashboard/StripeDashboardLinkControllerTest.php`:
+    - `dispute deeplink: 404 when the only dispute PA is resolved (H-001)` — proves the bug Codex documented is closed.
+    - `dispute deeplink: pending PA is selected even when a newer resolved PA exists (H-001)` — pins the selection semantics: pending wins over a higher-id resolved row.
+
+#### H-002 — `payouts.tsx` formatAmount → formatMoney
+
+- **Severity:** Low (drift from Round 2 G-003 partial intent)
+- **Status:** Fixed
+- **Location:** `resources/js/pages/dashboard/payouts.tsx:610-622`
+- **Fix:** removed the local `formatAmount()` helper (Intl with a `toFixed(2)` fallback). Both call sites (`formatBalanceArms` + the payouts table row) now use the shared `formatMoney(cents, currency)` from `@/lib/format-money`. An invalid currency now fails loud at the Intl call rather than silently rendering through a hand-rolled fallback — the server is the source of truth and must not pass an invalid currency to the React renderer in the first place.
+
+#### H-003 — Unknown payment status / payout schedule fall back to `t('Unknown')`
+
+- **Severity:** Low (i18n hygiene drift from Round 2 G-007 intent)
+- **Status:** Fixed
+- **Location:** `resources/js/components/dashboard/payment-status-badge.tsx:42`, `resources/js/pages/dashboard/payouts.tsx:651`
+- **Fix:** `PaymentStatusBadge` default case now returns `t('Unknown')` instead of the raw `status` string. `formatSchedule` default case now returns `t('Unknown')` instead of the raw `schedule.interval` string. Component header comment updated to reflect the new fallback semantics. A future server-side enum addition that bypasses the React label map degrades gracefully instead of leaking the internal token.
+
+#### H-004 — Documentation hygiene: HANDOFF invariant + D-184 coverage claim
+
+- **Severity:** Low (doc drift only; no behavioural change)
+- **Status:** Fixed
+- **Location:** `docs/HANDOFF.md` (the "Conventions that future work must not break" section), `docs/decisions/DECISIONS-PAYMENTS.md` (D-184 consequences)
+- **Fix:** rewrote the HANDOFF "No hardcoded `'CH'` literal anywhere" bullet to make the gate-state vs copy precedence explicit per **D-183**: config owns the gate state, locked roadmap decision #43 / D-183 owns CH-centric COPY until the locale-list audit. Future reviewers reading the HANDOFF invariant will not re-litigate G-006. Separately, narrowed D-184's "Consequences" test-coverage claim to the paths actually exercised (the prior wording overstated coverage; the refund/dispute auth paths inherit the same shape as the payment endpoint, which IS exhaustively covered, but the deferred test additions are now flagged as a follow-up rather than implied complete).
+
+#### What remains intentionally deferred
+
+- Full coverage parity for staff-refund / cross-tenant-refund / cross-tenant-dispute (Codex Round 3 noted these as a "Coverage Gap"). The endpoint auth shape is identical to the payment endpoint (`assertAdminTenantOwns()` + `role:admin` route group), so the patterns inherit by construction; adding the explicit tests is a hygiene improvement, not a security fix. Flagged in the narrowed D-184 consequences.
+- The frontend-shape regression-guard tests Codex suggested under "Coverage Gaps" (e.g. "in-scope money display calls `formatMoney` and not `toFixed(2)`") are useful but better expressed as a Pest arch-test or a lint rule than a Feature test. Left for a separate quality-tooling session.
 
 ---
 
 ## Outcomes & Retrospective
 
-**Shipped**: every Codex Round 1 finding closed. Iteration loop green: 965 / 4183 tests passing, PHPStan clean, Pint clean, Wayfinder regenerated, Vite build green. Six new architectural decisions promoted into `DECISIONS-PAYMENTS.md`.
+**Shipped**: every Codex Round 2 finding triaged. Six fixed (G-001 + D-184, G-002 + D-185, G-003 partial, G-004, G-005, G-007). One closed as false positive (G-006 → D-183). Two deferred to BACKLOG (G-008 banner a11y, G-003 input parser). Iteration loop green: 978 / 4246 tests, PHPStan clean, Pint clean, Wayfinder regenerated, Vite build green, TSC clean. Three new architectural decisions promoted into `DECISIONS-PAYMENTS.md`.
 
 **What went well**:
 
-- The plan's per-finding milestone shape held throughout — no surprises that required re-planning, just one PHPStan tightness check and one F-005 follow-up (the customer-email short-circuit). Both caught quickly.
-- The decision to remove the D-171 fallback rather than rebuild it on metadata was the right call: the fix is small (one method removed, one comment block rewritten, one test rewritten + one new) and aligns with the locked decision verbatim. The metadata-based recovery remains a future option in BACKLOG.
-- The F-005 reorder pattern (cancel-first, refund-as-side-effect) generalises beyond admin paid-cancel; it's worth keeping in mind if/when other money-and-status sequences land.
+- The decision to do the prop-shape audit BEFORE writing the React rewire saved a roundtrip — once the new server-side endpoints existed and the Wayfinder helpers were generated, the React side became a one-pass `s/raw-id-concat/Wayfinder.url(...)/` rewrite.
+- The G-006 false-positive resolution into D-183 is the right pattern: rather than fix nothing and let the next reviewer flag it again, document the locked decision precedence explicitly.
+- The deeplink controller is small enough to test exhaustively — 12 tests for 3 endpoints + the prop-shape regression-guard. Future reviewers can verify D-184 holds by re-running the regression-guard alone.
 
 **What to watch**:
 
-- The first deploy of this hardening invalidates every existing payouts cache entry implicitly because the cache key shape changed (D-182). Pre-launch this is irrelevant; flagged for ops.
-- The `payment.refund_failed` partial unique index (D-180) requires a non-rolling deploy if duplicates somehow exist already. The migration's pre-flight guard fails loud rather than silently corrupting; pre-launch + `migrate:fresh --seed` baseline → no problem in practice.
-- Browser test failures (~11) the developer reported on a recent run are NOT introduced by this hardening — `tests/Browser/Embed/IframeEmbedTest` and friends fail on availability/UI assertions, not on payments-related surfaces. Out of scope for this session; tracked separately.
+- The PHPStan covariance issue on nested Collections is a recurring shape problem — any future Inertia prop builder that returns a complex `array{...refunds: Collection<X>...}` will likely hit the same issue. Reach for `->values()->all()` + a typed helper method early.
+- The pre-existing GIST flake on `BookingsListPaymentFilterTest` is now closed via explicit dates, but other "create N bookings on one provider" tests in the suite may share the same latent flake. Worth a focused sweep when convenient.
+- The 11 failing browser tests reported at Round 1 close remain unfixed — out of scope for this session, tracked separately.
 
 **Next**:
 
-- Codex Round 2 review with frontend-deep prompt (XSS / Inertia prop leak audit on `payouts.tsx`, `connected-account.tsx`, `refund-dialog.tsx`) AND verification that the seven Round 1 findings are closed.
-- Once Round 2 lands clean, developer commits the bundle (Hardening Round 1 exec + Round 2 fixes if any) as a single commit on top of `94567dc`.
+- Codex Round 3 with a "verify Round 2 fixes are real + sweep for any drift introduced" prompt.
+- Once Round 3 lands clean, developer commits the bundle (Round 2 exec + any Round 3 fixes) as a single commit on top of `bc991e8`.
 - Browser test investigation as a separate follow-up session.
+- BACKLOG entries (G-008 banner a11y + G-003 input parser) ready for prioritisation.

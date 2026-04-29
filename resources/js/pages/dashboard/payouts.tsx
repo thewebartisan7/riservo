@@ -3,7 +3,6 @@ import { Card, CardPanel } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import {
     SectionHeading,
     SectionTitle,
@@ -21,6 +20,7 @@ import {
 } from 'lucide-react';
 import { loginLink as loginLinkAction } from '@/actions/App/Http/Controllers/Dashboard/PayoutsController';
 import { show as connectedAccountShow } from '@/actions/App/Http/Controllers/Dashboard/Settings/ConnectedAccountController';
+import { formatMoney } from '@/lib/format-money';
 
 interface AccountState {
     status: 'pending' | 'incomplete' | 'active' | 'disabled' | 'unsupported_market';
@@ -29,7 +29,9 @@ interface AccountState {
     chargesEnabled: boolean;
     payoutsEnabled: boolean;
     detailsSubmitted: boolean;
-    requirementsCurrentlyDue: string[];
+    // D-185 (PAYMENTS Hardening Round 2): only the count rides; the raw
+    // Stripe field paths stay server-side.
+    requirementsCount: number;
     requirementsDisabledReason: string | null;
     stripeAccountIdLast4: string;
 }
@@ -74,7 +76,6 @@ interface Props {
 
 interface LoginLinkResponse {
     url?: string;
-    error?: string;
 }
 
 export default function Payouts({ account, payouts, supportedCountries }: Props) {
@@ -328,7 +329,7 @@ function Verified({
 
 function HealthStrip({ account }: { account: AccountState }) {
     const { t } = useTrans();
-    const requirementsCount = account.requirementsCurrentlyDue.length;
+    const requirementsCount = account.requirementsCount;
 
     return (
         <section className="flex flex-col gap-4">
@@ -350,49 +351,22 @@ function HealthStrip({ account }: { account: AccountState }) {
                 {requirementsCount === 0 ? (
                     <HealthChip on={true} onLabel={t('No requirements due')} offLabel="" />
                 ) : (
-                    <Tooltip>
-                        <TooltipTrigger
-                            render={
-                                <span
-                                    className="inline-flex cursor-help items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200"
-                                    data-testid="requirements-due-chip"
-                                >
-                                    <AlertTriangleIcon
-                                        aria-hidden="true"
-                                        className="size-3.5"
-                                    />
-                                    {t(':count requirement(s) due — see Stripe', {
-                                        count: requirementsCount,
-                                    })}
-                                </span>
-                            }
+                    // D-185: render the count + a generic "see Stripe" CTA.
+                    // The previous tooltip listed raw Stripe field paths
+                    // (`person_xxx.dob.day`, ...) which can carry PII-flavoured
+                    // labels. Operators continue in Stripe to see the list.
+                    <span
+                        className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200"
+                        data-testid="requirements-due-chip"
+                    >
+                        <AlertTriangleIcon
+                            aria-hidden="true"
+                            className="size-3.5"
                         />
-                        <TooltipContent className="max-w-72 p-3" side="bottom">
-                            <div className="flex flex-col gap-1">
-                                <p className="text-xs font-semibold">
-                                    {t('Requirements currently due')}
-                                </p>
-                                <ul className="flex flex-col gap-0.5 text-xs">
-                                    {account.requirementsCurrentlyDue
-                                        .slice(0, 3)
-                                        .map((req) => (
-                                            <li key={req}>
-                                                <code className="font-mono text-[11px]">
-                                                    {req}
-                                                </code>
-                                            </li>
-                                        ))}
-                                    {requirementsCount > 3 && (
-                                        <li className="text-muted-foreground">
-                                            {t('+ :count more', {
-                                                count: requirementsCount - 3,
-                                            })}
-                                        </li>
-                                    )}
-                                </ul>
-                            </div>
-                        </TooltipContent>
-                    </Tooltip>
+                        {t(':count requirement(s) due — see Stripe', {
+                            count: requirementsCount,
+                        })}
+                    </span>
                 )}
             </div>
         </section>
@@ -469,30 +443,28 @@ function ScheduleAndLoginCard({
 }) {
     const { t } = useTrans();
     const [busy, setBusy] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const http = useHttp({});
+    // G-005 (PAYMENTS Hardening Round 2): consume http.errors.login_link
+    // instead of a parallel local error state. The backend now throws
+    // ValidationException::withMessages(['login_link' => ...]).
+    const http = useHttp<{ login_link?: string }>({});
 
     const buttonDisabled = busy || account.status === 'disabled';
 
+    const error: string | null = (() => {
+        const v = http.errors?.login_link;
+        if (Array.isArray(v)) return v[0] ?? null;
+        if (typeof v === 'string') return v;
+        return null;
+    })();
+
     function openLoginLink() {
-        setError(null);
         setBusy(true);
         http.post(loginLinkAction().url, {
             onSuccess: (response: unknown) => {
                 const result = response as LoginLinkResponse;
                 if (result.url) {
                     window.open(result.url, '_blank', 'noopener');
-                } else {
-                    setError(
-                        result.error ??
-                            t('Could not open Stripe right now. Please try again.'),
-                    );
                 }
-            },
-            onError: () => {
-                setError(
-                    t('Could not open Stripe right now. Please try again.'),
-                );
             },
             onFinish: () => {
                 setBusy(false);
@@ -583,7 +555,7 @@ function RecentPayoutsTable({ payouts }: { payouts: PayoutsPayload | null }) {
                                             {formatUnixDate(payout.created_at)}
                                         </td>
                                         <td className="px-5 py-3 font-medium">
-                                            {formatAmount(payout.amount, payout.currency)}
+                                            {formatMoney(payout.amount, payout.currency)}
                                         </td>
                                         <td className="px-5 py-3">
                                             <PayoutStatusBadge status={payout.status} />
@@ -605,6 +577,7 @@ function RecentPayoutsTable({ payouts }: { payouts: PayoutsPayload | null }) {
 }
 
 function PayoutStatusBadge({ status }: { status: string }) {
+    const { t } = useTrans();
     const tone: Record<string, 'success' | 'warning' | 'error' | 'secondary'> = {
         paid: 'success',
         in_transit: 'warning',
@@ -612,8 +585,19 @@ function PayoutStatusBadge({ status }: { status: string }) {
         failed: 'error',
         canceled: 'error',
     };
+    // G-007 (PAYMENTS Hardening Round 2): translate known Stripe payout
+    // statuses; unknown statuses render as a generic localized "Unknown"
+    // (the variant fallback to 'secondary' already applies).
+    const labels: Record<string, string> = {
+        paid: t('Paid'),
+        in_transit: t('In transit'),
+        pending: t('Pending'),
+        failed: t('Failed'),
+        canceled: t('Cancelled'),
+    };
     const variant = tone[status] ?? 'secondary';
-    return <Badge variant={variant}>{status}</Badge>;
+    const label = labels[status] ?? t('Unknown');
+    return <Badge variant={variant}>{label}</Badge>;
 }
 
 // =================================================================
@@ -624,20 +608,13 @@ function formatBalanceArms(arms: BalanceArm[]): string {
     if (arms.length === 0) {
         return '—';
     }
-    return arms.map((arm) => formatAmount(arm.amount, arm.currency)).join(' · ');
-}
-
-function formatAmount(amountCents: number, currency: string): string {
-    const code = (currency || 'CHF').toUpperCase();
-    try {
-        return new Intl.NumberFormat(undefined, {
-            style: 'currency',
-            currency: code,
-            minimumFractionDigits: 2,
-        }).format(amountCents / 100);
-    } catch {
-        return `${(amountCents / 100).toFixed(2)} ${code}`;
-    }
+    // H-002 (Codex Round 3): use the shared `formatMoney` helper instead of
+    // a local `formatAmount` with a `toFixed(2)` fallback. The Round 3 gate
+    // requires no `toFixed(2)` survives in display rendering of money in
+    // the in-scope frontend files. An invalid currency now fails loud
+    // (Intl throws) — server is the source of truth and must not pass an
+    // invalid currency to the React renderer in the first place.
+    return arms.map((arm) => formatMoney(arm.amount, arm.currency)).join(' · ');
 }
 
 function formatUnixDate(timestamp: number): string {
@@ -675,6 +652,9 @@ function formatSchedule(
         case 'manual':
             return t('Manual — initiated from your Stripe dashboard');
         default:
-            return schedule.interval;
+            // H-003 (Codex Round 3): unknown payout schedule intervals fall
+            // back to localized `t('Unknown')` instead of the raw Stripe
+            // interval string.
+            return t('Unknown');
     }
 }

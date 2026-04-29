@@ -115,13 +115,20 @@ test('every payment_status value surfaces in the list payload (chip dataset cove
         'not_applicable' => PaymentStatus::NotApplicable,
     ];
 
+    // Round 2 fix: explicit non-overlapping starts_at to dodge a flaky
+    // GIST exclusion-constraint hit when factory random dates land within
+    // the same provider's existing booking window.
+    $i = 0;
     foreach ($map as $enum) {
         Booking::factory()->create([
             'business_id' => $this->business->id,
             'provider_id' => $this->provider->id,
             'service_id' => $this->service->id,
             'payment_status' => $enum,
+            'starts_at' => now()->addDays(7 + $i)->setTime(10, 0),
+            'ends_at' => now()->addDays(7 + $i)->setTime(11, 0),
         ]);
+        $i++;
     }
 
     $this->actingAs($this->admin)

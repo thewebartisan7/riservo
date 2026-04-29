@@ -74,13 +74,14 @@ export default function BookingSettings({ settings, paymentEligibility }: Props)
     // The `can_accept_online_payments` aggregate is the authoritative final
     // bit; the other two flags select the correct explanation.
     //
-    // Note on CH-centric copy (locked roadmap decision #43): the non-CH
-    // reason below is DELIBERATELY CH-specific for MVP. D-43 keeps the
-    // `supported_countries` config as the gate STATE but marks copy / UX
-    // / tax assumptions as CH-centric; the fast-follow roadmap does a
-    // "locale-list audit" when the config extends. Do not rewrite this
-    // to render the config list dynamically — YAGNI for MVP (config is
-    // `['CH']`) and contradicts D-43's locale-audit contract.
+    // Note on CH-centric copy (locked roadmap decision #43, D-183): the
+    // non-CH reason below is DELIBERATELY CH-specific for MVP. D-43 keeps
+    // the `supported_countries` config as the gate STATE (D-112) but marks
+    // copy / UX / tax assumptions as CH-centric; D-183 (PAYMENTS Hardening
+    // Round 2) makes the precedence explicit after Codex G-006 mis-flagged
+    // this literal as drift. Do not rewrite this to render the config list
+    // dynamically — YAGNI for MVP (config is `['CH']`) and contradicts the
+    // locale-list audit contract under D-43.
     const disabledReason = (): string | null => {
         if (!paymentEligibility.has_verified_account) {
             return t('Connect Stripe and finish onboarding to enable online payments.');

@@ -384,6 +384,25 @@ test('login-link mint POST calls accounts.createLoginLink without a stripe_accou
         ]);
 });
 
+test('login-link mint Stripe failure surfaces as Inertia validation error envelope (G-005)', function () {
+    StripeConnectedAccount::factory()
+        ->active()
+        ->for($this->business)
+        ->create(['stripe_account_id' => 'acct_test_login_fail']);
+
+    $stripe = FakeStripeClient::for($this);
+    $stripe->client->accounts = Mockery::mock();
+    $stripe->client->accounts
+        ->shouldReceive('createLoginLink')
+        ->andThrow(new ApiConnectionException('Network failure'));
+
+    $this->actingAs($this->admin)
+        ->withSession(['current_business_id' => $this->business->id])
+        ->postJson('/dashboard/payouts/login-link')
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['login_link']);
+});
+
 test('staff cannot mint a Stripe Express login link', function () {
     StripeConnectedAccount::factory()
         ->active()

@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui/badge';
+import { useTrans } from '@/hooks/use-trans';
 
 /**
  * PAYMENTS Session 2b — chip for the admin bookings-list Payment column
@@ -7,24 +8,42 @@ import { Badge } from '@/components/ui/badge';
  * `not_applicable` is displayed as "Offline" because that's what it means
  * in admin terms — the booking has no online-payment expectation. The URL
  * filter key maps "offline" ↔ `not_applicable` in BookingController::index.
+ *
+ * G-007 (PAYMENTS Hardening Round 2): every label goes through `t()` so
+ * the badge respects the active locale.
+ *
+ * H-003 (Codex Round 3): unknown statuses now fall back to a localized
+ * `t('Unknown')` rather than the raw internal string. A future PaymentStatus
+ * enum value added server-side without a UI map update degrades gracefully
+ * instead of leaking the internal token to end users.
  */
-const paymentConfig: Record<
-    string,
-    {
-        variant: 'success' | 'warning' | 'destructive' | 'error' | 'secondary' | 'info';
-        label: string;
-    }
-> = {
-    paid: { variant: 'success', label: 'Paid' },
-    awaiting_payment: { variant: 'warning', label: 'Awaiting' },
-    unpaid: { variant: 'warning', label: 'Unpaid' },
-    refunded: { variant: 'secondary', label: 'Refunded' },
-    partially_refunded: { variant: 'secondary', label: 'Partial refund' },
-    refund_failed: { variant: 'error', label: 'Refund failed' },
-    not_applicable: { variant: 'secondary', label: 'Offline' },
+type Variant = 'success' | 'warning' | 'destructive' | 'error' | 'secondary' | 'info';
+
+const variantByStatus: Record<string, Variant> = {
+    paid: 'success',
+    awaiting_payment: 'warning',
+    unpaid: 'warning',
+    refunded: 'secondary',
+    partially_refunded: 'secondary',
+    refund_failed: 'error',
+    not_applicable: 'secondary',
 };
 
 export function PaymentStatusBadge({ status }: { status: string }) {
-    const config = paymentConfig[status] ?? { variant: 'secondary' as const, label: status };
-    return <Badge variant={config.variant}>{config.label}</Badge>;
+    const { t } = useTrans();
+
+    const labelByStatus: Record<string, string> = {
+        paid: t('Paid'),
+        awaiting_payment: t('Awaiting'),
+        unpaid: t('Unpaid'),
+        refunded: t('Refunded'),
+        partially_refunded: t('Partial refund'),
+        refund_failed: t('Refund failed'),
+        not_applicable: t('Offline'),
+    };
+
+    const variant = variantByStatus[status] ?? 'secondary';
+    const label = labelByStatus[status] ?? t('Unknown');
+
+    return <Badge variant={variant}>{label}</Badge>;
 }

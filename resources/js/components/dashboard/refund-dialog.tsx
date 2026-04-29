@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useForm } from '@inertiajs/react';
 import { store } from '@/actions/App/Http/Controllers/Dashboard/BookingRefundController';
 import { useTrans } from '@/hooks/use-trans';
+import { formatMoney } from '@/lib/format-money';
 import {
     Dialog,
     DialogClose,
@@ -56,7 +57,7 @@ export default function RefundDialog({
         reason: '',
     });
 
-    const remainingFormatted = `${currency.toUpperCase()} ${(remainingCents / 100).toFixed(2)}`;
+    const remainingFormatted = formatMoney(remainingCents, currency);
 
     function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();

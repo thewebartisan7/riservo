@@ -7,6 +7,7 @@ use App\Models\StripeConnectedAccount;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 use Stripe\Exception\ApiErrorException;
@@ -129,9 +130,16 @@ class PayoutsController extends Controller
         } catch (ApiErrorException $e) {
             report($e);
 
-            return response()->json([
-                'error' => __('Could not open Stripe right now. Please try again in a moment.'),
-            ], 502);
+            // G-005 (PAYMENTS Hardening Round 2): align with the project's
+            // Inertia-native error envelope contract. The previous shape
+            // (`response()->json(['error' => ...], 502)`) was the only
+            // payments endpoint that deviated from the
+            // ValidationException::withMessages([discriminator => message])
+            // pattern, forcing the React side into a parallel local
+            // `setError()` branch instead of consuming `http.errors`.
+            throw ValidationException::withMessages([
+                'login_link' => __('Could not open Stripe right now. Please try again in a moment.'),
+            ]);
         }
 
         return response()->json(['url' => $link->url]);
@@ -309,7 +317,8 @@ class PayoutsController extends Controller
             'chargesEnabled' => $row->charges_enabled,
             'payoutsEnabled' => $row->payouts_enabled,
             'detailsSubmitted' => $row->details_submitted,
-            'requirementsCurrentlyDue' => $row->requirements_currently_due ?? [],
+            // D-185 (PAYMENTS Hardening Round 2): expose only a count.
+            'requirementsCount' => count($row->requirements_currently_due ?? []),
             'requirementsDisabledReason' => $row->requirements_disabled_reason,
             'stripeAccountIdLast4' => substr($row->stripe_account_id, -4),
         ];

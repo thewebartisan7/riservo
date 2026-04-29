@@ -32,6 +32,7 @@ use App\Http\Controllers\Dashboard\Settings\ProviderController as SettingsProvid
 use App\Http\Controllers\Dashboard\Settings\ServiceController as SettingsServiceController;
 use App\Http\Controllers\Dashboard\Settings\StaffController as SettingsStaffController;
 use App\Http\Controllers\Dashboard\Settings\WorkingHoursController;
+use App\Http\Controllers\Dashboard\StripeDashboardLinkController;
 use App\Http\Controllers\OnboardingController;
 use App\Http\Controllers\Webhooks\GoogleCalendarWebhookController;
 use App\Http\Controllers\Webhooks\StripeConnectWebhookController;
@@ -169,6 +170,20 @@ Route::middleware('auth')->group(function () {
                     ->name('dashboard.payouts');
                 Route::post('/dashboard/payouts/login-link', [PayoutsController::class, 'loginLink'])
                     ->name('dashboard.payouts.login-link');
+
+                // PAYMENTS Hardening Round 2 — D-184. Server-side redirect
+                // endpoints replace the prior pattern of riding raw Stripe
+                // IDs in the booking-detail Inertia prop. Admin-only +
+                // tenant-scoped checks live in the controller (mirroring
+                // BookingRefundController). The dispute endpoint reads the
+                // dispute id from the booking's open dispute PA — never
+                // accepts one from the URL.
+                Route::get('/dashboard/bookings/{booking}/stripe-link/payment', [StripeDashboardLinkController::class, 'payment'])
+                    ->name('dashboard.bookings.stripe-link.payment');
+                Route::get('/dashboard/bookings/{booking}/stripe-link/refund/{refund}', [StripeDashboardLinkController::class, 'refund'])
+                    ->name('dashboard.bookings.stripe-link.refund');
+                Route::get('/dashboard/bookings/{booking}/stripe-link/dispute', [StripeDashboardLinkController::class, 'dispute'])
+                    ->name('dashboard.bookings.stripe-link.dispute');
             });
 
             // Dashboard API (JSON)

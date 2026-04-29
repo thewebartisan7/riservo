@@ -33,7 +33,12 @@ interface AccountState {
     chargesEnabled: boolean;
     payoutsEnabled: boolean;
     detailsSubmitted: boolean;
-    requirementsCurrentlyDue: string[];
+    // D-185 (PAYMENTS Hardening Round 2): the raw `requirements_currently_due`
+    // array is no longer exposed to React. Stripe field paths can carry
+    // PII-flavoured labels (`person_xxx.dob.day`, `individual.id_number`, ...)
+    // so the prop carries only a count and the UI routes the operator to
+    // Stripe for the actual list.
+    requirementsCount: number;
     requirementsDisabledReason: string | null;
     stripeAccountIdLast4: string;
 }
@@ -172,18 +177,16 @@ function Incomplete({ account }: { account: AccountState }) {
                     {t('Stripe still needs a few details before you can take online payments.')}
                 </p>
             </div>
-            {account.requirementsCurrentlyDue.length > 0 && (
+            {account.requirementsCount > 0 && (
                 <div className="flex flex-col gap-2">
                     <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
                         {t('Stripe needs')}
                     </p>
-                    <ul className="flex flex-wrap gap-1.5">
-                        {account.requirementsCurrentlyDue.map((req) => (
-                            <li key={req}>
-                                <Badge variant="secondary">{req}</Badge>
-                            </li>
-                        ))}
-                    </ul>
+                    <p className="text-sm text-muted-foreground">
+                        {t(':count item pending — continue in Stripe to complete onboarding.', {
+                            count: account.requirementsCount,
+                        })}
+                    </p>
                 </div>
             )}
             <div className="flex flex-wrap gap-2">

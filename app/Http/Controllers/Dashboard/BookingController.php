@@ -15,6 +15,7 @@ use App\Http\Requests\Dashboard\StoreManualBookingRequest;
 use App\Http\Requests\Dashboard\UpdateBookingStatusRequest;
 use App\Jobs\Calendar\PushBookingToCalendarJob;
 use App\Models\Booking;
+use App\Models\BookingRefund;
 use App\Models\Customer;
 use App\Models\Provider;
 use App\Models\Service;
@@ -187,7 +188,7 @@ class BookingController extends Controller
             : collect();
 
         return Inertia::render('dashboard/bookings', [
-            'bookings' => $bookings->through(function (Booking $booking) use ($isAdmin) {
+            'bookings' => $bookings->through(function (Booking $booking) use ($isAdmin): array {
                 // Codex Round 1 (F2): the `payment` + `pending_payment_
                 // action` sub-objects are admin-only. Staff can view their
                 // own bookings via `/dashboard/bookings`, so including
@@ -250,23 +251,30 @@ class BookingController extends Controller
                     // Session 3 adds `remaining_refundable_cents` so the
                     // Refund dialog's client-side clamp + the "refundable"
                     // caption match the server's authoritative clamp.
+                    // PAYMENTS Hardening Round 2 — D-184. Raw Stripe object
+                    // IDs are no longer exposed via Inertia props. The
+                    // booking-detail-sheet builds Stripe dashboard deeplinks
+                    // via the new server-side redirect endpoints (see
+                    // StripeDashboardLinkController), reading IDs from the
+                    // server. The booleans below tell the UI when each link
+                    // type is available for this booking.
                     'payment' => $isAdmin
                         ? [
                             'status' => $booking->payment_status->value,
                             'paid_amount_cents' => $booking->paid_amount_cents,
                             'currency' => $booking->currency,
                             'paid_at' => $booking->paid_at?->toIso8601String(),
-                            'stripe_charge_id' => $booking->stripe_charge_id,
-                            'stripe_payment_intent_id' => $booking->stripe_payment_intent_id,
-                            'stripe_connected_account_id' => $booking->stripe_connected_account_id,
                             'remaining_refundable_cents' => $booking->remainingRefundableCents(),
+                            'has_stripe_payment_link' => is_string($booking->stripe_connected_account_id) && $booking->stripe_connected_account_id !== ''
+                                && (is_string($booking->stripe_charge_id) && $booking->stripe_charge_id !== ''
+                                    || is_string($booking->stripe_payment_intent_id) && $booking->stripe_payment_intent_id !== ''),
                         ]
                         : null,
                     'pending_payment_action' => $urgentPendingAction !== null
                         ? [
                             'id' => $urgentPendingAction->id,
                             'type' => $urgentPendingAction->type->value,
-                            'payload' => $urgentPendingAction->payload,
+                            'payload' => $this->whitelistPaymentPaPayload($urgentPendingAction->type, $urgentPendingAction->payload ?? []),
                             'created_at' => $urgentPendingAction->created_at->toIso8601String(),
                         ]
                         : null,
@@ -274,11 +282,20 @@ class BookingController extends Controller
                     // a separate payload key so a booking with BOTH a
                     // dispute AND an urgent banner PA surfaces both in the
                     // detail sheet, not only the most urgent.
+                    //
+                    // PAYMENTS Hardening Round 2 (G-001): payload is
+                    // whitelisted; raw `dispute_id` no longer rides the
+                    // prop. The server-side dispute deeplink endpoint reads
+                    // it from the PA itself.
                     'dispute_payment_action' => $disputePendingAction !== null
                         ? [
                             'id' => $disputePendingAction->id,
                             'type' => $disputePendingAction->type->value,
-                            'payload' => $disputePendingAction->payload,
+                            'payload' => $this->whitelistDisputePaPayload($disputePendingAction->payload ?? []),
+                            'has_dispute_link' => is_string($booking->stripe_connected_account_id) && $booking->stripe_connected_account_id !== ''
+                                && is_array($disputePendingAction->payload)
+                                && is_string($disputePendingAction->payload['dispute_id'] ?? null)
+                                && $disputePendingAction->payload['dispute_id'] !== '',
                             'created_at' => $disputePendingAction->created_at->toIso8601String(),
                         ]
                         : null,
@@ -286,17 +303,17 @@ class BookingController extends Controller
                     // Payment & refunds panel. Each row carries the
                     // initiator's name (admin-manual) or null (system-
                     // dispatched — surfaces as "System" in the UI).
+                    //
+                    // PAYMENTS Hardening Round 2 (G-001): `stripe_refund_id`
+                    // replaced with `stripe_refund_id_last4` for the audit
+                    // caption + `has_stripe_link` for the deeplink button.
+                    // Convert Collection to a plain array via ->values()->all()
+                    // so the through() callback's inferred return shape doesn't
+                    // hit Collection<TValue> invariance issues across nested
+                    // shape narrowings. Inertia serializes both to JSON arrays
+                    // identically.
                     'refunds' => $isAdmin
-                        ? $booking->bookingRefunds->map(fn ($r) => [
-                            'id' => $r->id,
-                            'created_at' => $r->created_at->toIso8601String(),
-                            'amount_cents' => $r->amount_cents,
-                            'currency' => $r->currency,
-                            'status' => $r->status->value,
-                            'reason' => $r->reason,
-                            'initiator_name' => $r->initiatedByUser?->name,
-                            'stripe_refund_id' => $r->stripe_refund_id,
-                        ])->values()
+                        ? $booking->bookingRefunds->map(fn ($r) => $this->refundRowPayload($r, $booking))->values()->all()
                         : null,
                 ];
             }),
@@ -928,5 +945,98 @@ class BookingController extends Controller
             ->when($excludeUserId, fn ($c) => $c->where('id', '!=', $excludeUserId));
 
         Notification::send($staffUsers, $notification);
+    }
+
+    /**
+     * Refund row Inertia payload (D-184 / G-001).
+     *
+     * Extracted into a method so the closure inside `bookings.through(...)`
+     * has a single, statically-typed return shape. PHPStan struggled to
+     * unify the nested Collection covariance otherwise.
+     *
+     * @return array{
+     *     id: int,
+     *     created_at: string,
+     *     amount_cents: int,
+     *     currency: string,
+     *     status: string,
+     *     reason: string,
+     *     initiator_name: string|null,
+     *     stripe_refund_id_last4: string|null,
+     *     has_stripe_link: bool,
+     * }
+     */
+    private function refundRowPayload(BookingRefund $r, Booking $booking): array
+    {
+        $refundId = is_string($r->stripe_refund_id) ? $r->stripe_refund_id : '';
+        $accountId = is_string($booking->stripe_connected_account_id) ? $booking->stripe_connected_account_id : '';
+
+        return [
+            'id' => $r->id,
+            'created_at' => $r->created_at->toIso8601String(),
+            'amount_cents' => $r->amount_cents,
+            'currency' => $r->currency,
+            'status' => $r->status->value,
+            'reason' => $r->reason,
+            'initiator_name' => $r->initiatedByUser?->name,
+            'stripe_refund_id_last4' => $refundId !== '' ? substr($refundId, -4) : null,
+            'has_stripe_link' => $refundId !== '' && $accountId !== '',
+        ];
+    }
+
+    /**
+     * D-184 (PAYMENTS Hardening Round 2): the urgent payment Pending Action
+     * payload may carry semi-secret Stripe identifiers (payment_intent id,
+     * charge id) the UI does not need. Whitelist by PA type so the prop
+     * carries only the keys the React banner consumes.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function whitelistPaymentPaPayload(PendingActionType $type, array $payload): array
+    {
+        // The keys consumed by the React banner today, by PA type:
+        //   payment.cancelled_after_payment / payment.refund_failed →
+        //     amount_cents, currency, failure_reason, refund_amount_cents
+        //   (no stripe_*_id rides the banner UI; the deeplink button uses
+        //   the booking's `has_stripe_payment_link` prop + the redirect
+        //   endpoint to reach Stripe.)
+        $allowed = [
+            'amount_cents',
+            'currency',
+            'failure_reason',
+            'refund_amount_cents',
+        ];
+
+        return array_intersect_key($payload, array_flip($allowed));
+    }
+
+    /**
+     * D-184 (PAYMENTS Hardening Round 2): the dispute PA payload exposes
+     * dispute metadata to the operator banner. Whitelist the keys + truncate
+     * the dispute id; the deeplink itself goes through the server-side
+     * redirect endpoint, which reads the raw id from the PA.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function whitelistDisputePaPayload(array $payload): array
+    {
+        $allowed = [
+            'amount',
+            'currency',
+            'reason',
+            'status',
+            'evidence_due_by',
+        ];
+
+        $out = array_intersect_key($payload, array_flip($allowed));
+
+        $disputeId = $payload['dispute_id'] ?? null;
+        if (is_string($disputeId) && $disputeId !== '') {
+            $out['dispute_id_last4'] = substr($disputeId, -4);
+        }
+
+        return $out;
     }
 }

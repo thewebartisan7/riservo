@@ -2,6 +2,11 @@ import { useState } from 'react';
 import { router, useHttp } from '@inertiajs/react';
 import { updateStatus, updateNotes } from '@/actions/App/Http/Controllers/Dashboard/BookingController';
 import { resolve as resolvePaymentPendingAction } from '@/actions/App/Http/Controllers/Dashboard/PaymentPendingActionController';
+import {
+    payment as stripePaymentLink,
+    refund as stripeRefundLink,
+    dispute as stripeDisputeLink,
+} from '@/actions/App/Http/Controllers/Dashboard/StripeDashboardLinkController';
 import { useTrans } from '@/hooks/use-trans';
 import {
     Sheet,
@@ -20,6 +25,7 @@ import { PaymentStatusBadge } from './payment-status-badge';
 import RefundDialog from './refund-dialog';
 import { formatDateTimeMedium, formatTimeShort } from '@/lib/datetime-format';
 import { formatPrice, formatDurationShort } from '@/lib/booking-format';
+import { formatMoney } from '@/lib/format-money';
 import { CalendarDaysIcon, ExternalLinkIcon } from 'lucide-react';
 import type { DashboardBooking, DashboardBookingRefund } from '@/types';
 
@@ -129,30 +135,25 @@ export default function BookingDetailSheet({
         && (payment.status === 'paid' || payment.status === 'partially_refunded')
         && remainingRefundableCents > 0;
     const isDisputePa = disputePaymentAction !== null;
+    // D-184 / G-003 partial: use Intl.NumberFormat via the shared helper.
     const paidAmountFormatted =
         payment && payment.paid_amount_cents !== null && payment.currency !== null
-            ? `${payment.currency.toUpperCase()} ${(payment.paid_amount_cents / 100).toFixed(2)}`
+            ? formatMoney(payment.paid_amount_cents, payment.currency)
             : null;
     const remainingFormatted =
         payment && payment.currency !== null && remainingRefundableCents > 0
-            ? `${payment.currency.toUpperCase()} ${(remainingRefundableCents / 100).toFixed(2)}`
+            ? formatMoney(remainingRefundableCents, payment.currency)
             : null;
-    const stripeDashboardDeepLink =
-        payment && payment.stripe_connected_account_id
-            ? payment.stripe_charge_id
-                ? `https://dashboard.stripe.com/${payment.stripe_connected_account_id}/payments/${payment.stripe_charge_id}`
-                : payment.stripe_payment_intent_id
-                    ? `https://dashboard.stripe.com/${payment.stripe_connected_account_id}/payments/${payment.stripe_payment_intent_id}`
-                    : null
-            : null;
-    const disputeDeepLink = (() => {
-        if (!disputePaymentAction) return null;
-        const payload = disputePaymentAction.payload as Record<string, unknown>;
-        const disputeId = typeof payload.dispute_id === 'string' ? payload.dispute_id : null;
-        const acct = payment?.stripe_connected_account_id ?? null;
-        if (!disputeId || !acct) return null;
-        return `https://dashboard.stripe.com/${acct}/disputes/${disputeId}`;
-    })();
+    // D-184 / G-001: deeplinks go through server-side redirect endpoints.
+    // Raw `stripe_*_id` values no longer ride Inertia props; the React side
+    // calls the Wayfinder helper, the controller resolves the IDs server-
+    // side and 302s to Stripe.
+    const stripeDashboardDeepLink = payment?.has_stripe_payment_link
+        ? stripePaymentLink.url(booking.id)
+        : null;
+    const disputeDeepLink = disputePaymentAction?.has_dispute_link
+        ? stripeDisputeLink.url(booking.id)
+        : null;
     const disputeReason = (() => {
         if (!disputePaymentAction) return null;
         const payload = disputePaymentAction.payload as Record<string, unknown>;
@@ -365,7 +366,7 @@ export default function BookingDetailSheet({
                                     >
                                         <div className="flex flex-col gap-0.5">
                                             <span className="font-medium tabular-nums text-foreground">
-                                                {refund.currency.toUpperCase()} {(refund.amount_cents / 100).toFixed(2)}
+                                                {formatMoney(refund.amount_cents, refund.currency)}
                                                 <span className="ml-2 text-muted-foreground">
                                                     {formatRefundStatus(refund.status, t)}
                                                 </span>
@@ -374,11 +375,17 @@ export default function BookingDetailSheet({
                                                 {formatRefundReason(refund.reason, t)}
                                                 {' · '}
                                                 {refund.initiator_name ?? t('System')}
+                                                {refund.stripe_refund_id_last4 && (
+                                                    <>
+                                                        {' · '}
+                                                        <span className="tabular-nums">re_…{refund.stripe_refund_id_last4}</span>
+                                                    </>
+                                                )}
                                             </span>
                                         </div>
-                                        {refund.stripe_refund_id && payment?.stripe_connected_account_id && (
+                                        {refund.has_stripe_link && (
                                             <a
-                                                href={`https://dashboard.stripe.com/${payment.stripe_connected_account_id}/refunds/${refund.stripe_refund_id}`}
+                                                href={stripeRefundLink.url({ booking: booking.id, refund: refund.id })}
                                                 target="_blank"
                                                 rel="noreferrer noopener"
                                                 className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground underline-offset-4 hover:underline"
@@ -539,6 +546,10 @@ function formatRefundReason(reason: string, t: (s: string) => string): string {
         case 'business-rejected-pending':
             return t('Booking rejected');
         default:
-            return reason;
+            // G-007 (PAYMENTS Hardening Round 2): unknown reasons surface
+            // as a generic localized fallback rather than the raw internal
+            // string. New refund reasons added server-side without a UI
+            // update degrade gracefully instead of leaking internals.
+            return t('Unknown');
     }
 }

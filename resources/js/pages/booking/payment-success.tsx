@@ -3,6 +3,7 @@ import BookingLayout from '@/layouts/booking-layout';
 import { Card, CardPanel } from '@/components/ui/card';
 import { Display } from '@/components/ui/display';
 import { useTrans } from '@/hooks/use-trans';
+import { show as bookingShow } from '@/actions/App/Http/Controllers/Booking/BookingManagementController';
 import type { PageProps } from '@/types';
 
 interface PaymentSuccessProps extends PageProps {
@@ -44,7 +45,7 @@ export default function BookingPaymentSuccess() {
                             )}
                         </p>
                         <Link
-                            href={`/bookings/${booking.token}`}
+                            href={bookingShow.url(booking.token)}
                             className="text-sm font-medium text-primary underline-offset-4 hover:underline"
                         >
                             {t('Check booking status')}

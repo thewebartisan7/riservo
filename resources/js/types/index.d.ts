@@ -142,6 +142,10 @@ export interface DashboardBooking {
     // Payment column on the bookings list. Admin-only; the backend
     // returns null for non-admin viewers (Codex Round 1 F2 — staff see
     // their own bookings and must not receive Stripe ids).
+    // D-184 (PAYMENTS Hardening Round 2): raw Stripe object IDs no longer
+    // ride this prop. The Stripe dashboard deeplink button reads
+    // `has_stripe_payment_link` and routes through the server-side redirect
+    // endpoint; the controller resolves the IDs server-side.
     payment: {
         status:
             | 'not_applicable'
@@ -154,20 +158,21 @@ export interface DashboardBooking {
         paid_amount_cents: number | null;
         currency: string | null;
         paid_at: string | null;
-        stripe_charge_id: string | null;
-        stripe_payment_intent_id: string | null;
-        stripe_connected_account_id: string | null;
         // PAYMENTS Session 3: server-computed clamp against
         // `paid_amount_cents - SUM(pending+succeeded refunds)` (locked
         // decision #37). Drives the Refund button's visibility + the
         // dialog's amount clamp.
         remaining_refundable_cents: number;
+        has_stripe_payment_link: boolean;
     } | null;
     pending_payment_action: PendingPaymentAction | null;
     // PAYMENTS Session 3 Codex Round 1 P2: dispute PA rides a separate key
     // so the detail sheet can surface BOTH a dispute banner AND a
     // higher-priority refund banner simultaneously when both exist.
-    dispute_payment_action: PendingPaymentAction | null;
+    //
+    // D-184: dispute deeplink resolves through the server-side redirect
+    // endpoint; `has_dispute_link` gates the button.
+    dispute_payment_action: (PendingPaymentAction & { has_dispute_link: boolean }) | null;
     // PAYMENTS Session 3: admin-only refund attempts list, newest-first.
     // The backend returns null for non-admin viewers.
     refunds: DashboardBookingRefund[] | null;
@@ -181,7 +186,11 @@ export interface DashboardBookingRefund {
     status: 'pending' | 'succeeded' | 'failed';
     reason: string;
     initiator_name: string | null;
-    stripe_refund_id: string | null;
+    // D-184: raw `stripe_refund_id` no longer rides the prop. The audit
+    // caption shows the truncated last4; the deeplink button reads the
+    // boolean.
+    stripe_refund_id_last4: string | null;
+    has_stripe_link: boolean;
 }
 
 export interface PendingPaymentAction {
@@ -190,6 +199,10 @@ export interface PendingPaymentAction {
         | 'payment.cancelled_after_payment'
         | 'payment.refund_failed'
         | 'payment.dispute_opened';
+    // D-184: payload keys are whitelisted server-side. Raw `dispute_id`,
+    // `stripe_payment_intent_id`, and similar identifiers do not ride
+    // through; the dispute deeplink endpoint reads the dispute id from
+    // the PA itself.
     payload: Record<string, unknown>;
     created_at: string;
 }

@@ -733,7 +733,10 @@ class ConnectedAccountController extends Controller
             'chargesEnabled' => $row->charges_enabled,
             'payoutsEnabled' => $row->payouts_enabled,
             'detailsSubmitted' => $row->details_submitted,
-            'requirementsCurrentlyDue' => $row->requirements_currently_due ?? [],
+            // D-185 (PAYMENTS Hardening Round 2): expose only a count.
+            // Stripe field paths can carry PII-flavoured labels; the UI
+            // routes the operator to Stripe for the actual list.
+            'requirementsCount' => count($row->requirements_currently_due ?? []),
             'requirementsDisabledReason' => $row->requirements_disabled_reason,
             'stripeAccountIdLast4' => substr($row->stripe_account_id, -4),
         ];
