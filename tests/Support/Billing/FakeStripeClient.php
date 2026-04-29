@@ -2,6 +2,7 @@
 
 namespace Tests\Support\Billing;
 
+use Illuminate\Support\Str;
 use Mockery;
 use Mockery\MockInterface;
 use Stripe\Account as StripeAccount;
@@ -55,6 +56,9 @@ class FakeStripeClient
 
     private ?MockInterface $taxSettings = null;
 
+    /** @var array<string, list<string>> */
+    private array $externalUrls = [];
+
     public function __construct()
     {
         $this->client = Mockery::mock(StripeClient::class);
@@ -71,9 +75,102 @@ class FakeStripeClient
         return new self;
     }
 
+    public static function forBrowser(TestCase $test): self
+    {
+        $fake = new self;
+        $fake->registerBrowserDefaults();
+
+        return $fake;
+    }
+
     public static function bind(): self
     {
         return new self;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function externalUrls(?string $bucket = null): array
+    {
+        if ($bucket !== null) {
+            return $this->externalUrls[$bucket] ?? [];
+        }
+
+        return array_merge(...array_values($this->externalUrls ?: [[]]));
+    }
+
+    public function lastExternalUrl(?string $bucket = null): ?string
+    {
+        $urls = $this->externalUrls($bucket);
+
+        return $urls === [] ? null : $urls[array_key_last($urls)];
+    }
+
+    public static function isExternalStripeStubUrl(string $url): bool
+    {
+        return (bool) preg_match('#^https://stripe\.test/external/[0-9a-f-]{36}$#', $url);
+    }
+
+    private function fakeExternalUrl(string $bucket): string
+    {
+        $url = 'https://stripe.test/external/'.(string) Str::uuid();
+        $this->externalUrls[$bucket][] = $url;
+
+        return $url;
+    }
+
+    private function registerBrowserDefaults(): void
+    {
+        $this->ensureAccounts();
+        $this->ensureAccountLinks();
+        $this->ensureCheckoutSessions();
+
+        // Browser-mode defaults keep later E2E tests on fake hosted-Stripe
+        // URLs and tolerate webhook-triggered account refreshes. Feature-test
+        // mode stays strict unless individual tests opt into these mocks.
+        $this->accounts
+            ->shouldReceive('createLoginLink')
+            ->byDefault()
+            ->andReturnUsing(fn (string $accountId) => StripeLoginLink::constructFrom([
+                'object' => 'login_link',
+                'created' => time(),
+                'url' => $this->fakeExternalUrl('login_link'),
+            ]));
+
+        $this->accounts
+            ->shouldReceive('retrieve')
+            ->byDefault()
+            ->andReturnUsing(fn (string $accountId) => StripeAccount::constructFrom([
+                'id' => $accountId,
+                'country' => 'CH',
+                'default_currency' => 'chf',
+                'charges_enabled' => true,
+                'payouts_enabled' => true,
+                'details_submitted' => true,
+                'requirements' => (object) [
+                    'currently_due' => [],
+                    'disabled_reason' => null,
+                ],
+            ]));
+
+        $this->accountLinks
+            ->shouldReceive('create')
+            ->byDefault()
+            ->andReturnUsing(fn () => StripeAccountLink::constructFrom([
+                'object' => 'account_link',
+                'created' => time(),
+                'expires_at' => time() + 300,
+                'url' => $this->fakeExternalUrl('account_link'),
+            ]));
+
+        $this->checkoutSessions
+            ->shouldReceive('create')
+            ->byDefault()
+            ->andReturnUsing(fn () => StripeCheckoutSession::constructFrom([
+                'id' => 'cs_test_'.Str::ulid(),
+                'url' => $this->fakeExternalUrl('checkout_session'),
+            ]));
     }
 
     /**
@@ -88,7 +185,7 @@ class FakeStripeClient
 
         $session = StripeCheckoutSession::constructFrom(array_merge([
             'id' => 'cs_test_'.uniqid(),
-            'url' => 'https://checkout.stripe.com/c/pay/cs_test_123',
+            'url' => $this->fakeExternalUrl('checkout_session'),
         ], $response));
 
         $this->checkoutSessions
@@ -297,7 +394,7 @@ class FakeStripeClient
             'object' => 'account_link',
             'created' => time(),
             'expires_at' => time() + 300,
-            'url' => 'https://connect.stripe.com/setup/c/acct_test/link_'.uniqid(),
+            'url' => $this->fakeExternalUrl('account_link'),
         ], $response));
 
         $this->accountLinks
@@ -365,7 +462,7 @@ class FakeStripeClient
         $link = StripeLoginLink::constructFrom(array_merge([
             'object' => 'login_link',
             'created' => time(),
-            'url' => 'https://connect.stripe.com/express/'.$expectedAccountId.'/login_'.uniqid(),
+            'url' => $this->fakeExternalUrl('login_link'),
         ], $response));
 
         $this->accounts
@@ -417,7 +514,7 @@ class FakeStripeClient
         $id = (string) ($response['id'] ?? 'cs_test_'.uniqid());
         $session = StripeCheckoutSession::constructFrom(array_merge([
             'id' => $id,
-            'url' => 'https://checkout.stripe.com/c/pay/'.$id,
+            'url' => $this->fakeExternalUrl('checkout_session'),
         ], $response));
 
         $this->checkoutSessions

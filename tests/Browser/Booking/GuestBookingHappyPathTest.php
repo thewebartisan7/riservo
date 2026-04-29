@@ -14,11 +14,9 @@ use Tests\Browser\Support\BusinessSetup;
 // Covers: POST /booking/{slug}/book — booking.store — guest happy path.
 
 beforeEach(function () {
-    // Pick the next real Monday (in business timezone) so the browser-rendered calendar
-    // shows the chosen day as a future slot (client-side today comes from browser wall
-    // clock; we cannot freeze the browser clock the way we freeze PHP).
+    // Pick the next real Monday; the helper navigates to its month because travelTo()
+    // freezes PHP but not the browser-rendered calendar month.
     $this->targetDate = CarbonImmutable::now('Europe/Zurich')->next(Carbon\Carbon::MONDAY);
-    $this->targetDay = (int) $this->targetDate->format('d');
     // Freeze PHP to 07:30 on that Monday so the server-side availability computation
     // sees it as 'today' in the business timezone.
     $this->travelTo($this->targetDate->setTime(7, 30));
@@ -41,11 +39,7 @@ it('books a guest appointment end-to-end with a specific provider', function () 
 
     $page->assertSee('When works for you?');
 
-    // Click the target Monday's cell (PHP frozen + real time both agree it's the next Monday).
-    $day = $this->targetDay;
-    $page->script("Array.from(document.querySelectorAll('button.tabular-nums')).find(b => b.textContent.trim() === '{$day}' && !b.disabled)?.click();");
-    $page->assertSee('09:00');
-    $page->script("Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '09:00')?.click();");
+    BookingFlowHelper::selectDateAndTime($page, $this->targetDate);
 
     $page->assertSee('Just a few details')
         ->type('name', 'Jane Customer')

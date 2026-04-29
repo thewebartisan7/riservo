@@ -5,6 +5,7 @@ use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Service;
 use App\Models\User;
+use Carbon\CarbonInterface;
 
 /**
  * PAYMENTS Session 2b — bookings list Payment filter (locked roadmap
@@ -23,23 +24,37 @@ beforeEach(function () {
     $this->provider->services()->attach($this->service);
 });
 
+/**
+ * @return array{starts_at: CarbonInterface, ends_at: CarbonInterface}
+ */
+function bookingsListPaymentFilterWindow(int $dayOffset): array
+{
+    $startsAt = now()->addDays(7 + $dayOffset)->setTime(10, 0);
+
+    return [
+        'starts_at' => $startsAt,
+        'ends_at' => $startsAt->copy()->addMinutes(30),
+    ];
+}
+
 test('payment_status=paid filters to Paid bookings only', function () {
+    // Use deterministic non-overlapping windows; random factory dates can violate the provider overlap GIST constraint.
     Booking::factory()->paid()->create([
         'business_id' => $this->business->id,
         'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
-    ]);
+    ] + bookingsListPaymentFilterWindow(0));
     Booking::factory()->awaitingPayment()->create([
         'business_id' => $this->business->id,
         'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
-    ]);
+    ] + bookingsListPaymentFilterWindow(1));
     Booking::factory()->create([
         'business_id' => $this->business->id,
         'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'payment_status' => PaymentStatus::NotApplicable,
-    ]);
+    ] + bookingsListPaymentFilterWindow(2));
 
     $this->actingAs($this->admin)
         ->get('/dashboard/bookings?payment_status=paid')
@@ -52,17 +67,18 @@ test('payment_status=paid filters to Paid bookings only', function () {
 });
 
 test('payment_status=offline filters to NotApplicable', function () {
+    // Use deterministic non-overlapping windows; random factory dates can violate the provider overlap GIST constraint.
     Booking::factory()->paid()->create([
         'business_id' => $this->business->id,
         'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
-    ]);
+    ] + bookingsListPaymentFilterWindow(0));
     Booking::factory()->create([
         'business_id' => $this->business->id,
         'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'payment_status' => PaymentStatus::NotApplicable,
-    ]);
+    ] + bookingsListPaymentFilterWindow(1));
 
     $this->actingAs($this->admin)
         ->get('/dashboard/bookings?payment_status=offline')
@@ -82,13 +98,13 @@ test('staff requesting ?payment_status=paid gets their full booking list back (f
         'business_id' => $this->business->id,
         'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
-    ]);
+    ] + bookingsListPaymentFilterWindow(0));
     Booking::factory()->create([
         'business_id' => $this->business->id,
         'provider_id' => $this->provider->id,
         'service_id' => $this->service->id,
         'payment_status' => PaymentStatus::NotApplicable,
-    ]);
+    ] + bookingsListPaymentFilterWindow(1));
 
     // Admin sees only the paid row when filtering.
     $this->actingAs($this->admin)
@@ -115,9 +131,7 @@ test('every payment_status value surfaces in the list payload (chip dataset cove
         'not_applicable' => PaymentStatus::NotApplicable,
     ];
 
-    // Round 2 fix: explicit non-overlapping starts_at to dodge a flaky
-    // GIST exclusion-constraint hit when factory random dates land within
-    // the same provider's existing booking window.
+    // Use deterministic non-overlapping windows; random factory dates can violate the provider overlap GIST constraint.
     $i = 0;
     foreach ($map as $enum) {
         Booking::factory()->create([
@@ -125,9 +139,7 @@ test('every payment_status value surfaces in the list payload (chip dataset cove
             'provider_id' => $this->provider->id,
             'service_id' => $this->service->id,
             'payment_status' => $enum,
-            'starts_at' => now()->addDays(7 + $i)->setTime(10, 0),
-            'ends_at' => now()->addDays(7 + $i)->setTime(11, 0),
-        ]);
+        ] + bookingsListPaymentFilterWindow($i));
         $i++;
     }
 

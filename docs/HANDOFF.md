@@ -1,12 +1,12 @@
 # Handoff
 
-**State (2026-04-29):** PAYMENTS Hardening Round 2 staged on top of Round 1 (`bc991e8`) on the closed PAYMENTS roadmap. Codex Round 2 (`docs/REVIEW.md`, 2026-04-29) verified all seven Round 1 findings closed AND surfaced eight frontend findings (G-001..G-008). Six are fixed on this diff (G-001, G-002, G-003 partial, G-004, G-005, G-007); G-006 was a false positive (resolved as **D-183**); G-003 input parser + G-008 banner a11y are deferred to BACKLOG. Ready for Codex Round 3 against the staged diff. **`docs/ROADMAP.md` is still closed** — this hardening sits between roadmaps.
+**State (2026-04-29):** PAYMENTS Hardening Rounds 1-3 are on `main` on top of the closed PAYMENTS roadmap. The pre-existing Browser failures are fixed, and the Browser suite is green again with the new Payments E2E-P0 smoke test. The parked `docs/roadmaps/ROADMAP-E2E-PAYMENTS.md` roadmap remains parked; only E2E-P0 setup infrastructure shipped in this session. **`docs/ROADMAP.md` is still closed** — this work sits between roadmaps.
 
 **Branch**: main.
 **Feature+Unit suite**: 980 passed / 4249 assertions (baseline 965 / 4183 at Round 1 close; Round 2 + Round 3 added 15 tests / 66 assertions — 11 deeplink-controller tests, 1 prop-shape regression-guard test, 1 G-005 ValidationException-envelope test, 2 H-001 dispute-status-filter tests).
-**Full suite**: 2+ minutes because of `tests/Browser`. Developer pre-push check. **Note**: the 11 failing browser tests (`tests/Browser/Embed/IframeEmbedTest` and friends) flagged at Round 1 close remain — out of scope for this session; investigate after Round 3 review lands.
-**Tooling**: Pint clean. PHPStan (level 5, `app/` only) clean. Vite build clean (main app chunk ~585 kB; pre-existing >500 kB warning unaffected). Wayfinder regenerated (added 3 new dashboard routes for the Stripe deeplink endpoints). `npx tsc --noEmit` clean.
-**Codex review**: Round 1 (2026-04-28) closed via `bc991e8`. Round 2 (2026-04-29) verified Round 1 + raised 8 frontend findings; 6 fixed, 1 deferred (G-008), 1 deferred input parser (G-003 partial), 1 closed as false positive (G-006 → D-183). Round 3 (2026-04-29 later same day) verified Round 2 partial — 5 closed, 3 incomplete + 4 drift findings (H-001..H-004); all four applied on the same staged diff under `## Review — Round 3` in `docs/PLAN.md`. The bundle (Round 2 exec + Round 3 fixes) is ready for a single final commit.
+**Browser suite**: 250 passed / 958 assertions. The 11 pre-existing Browser failures (`tests/Browser/Embed/IframeEmbedTest` and related booking-flow tests) were caused by PHP `travelTo()` freezing server time while the browser calendar stayed on the real month; `BookingFlowHelper` now navigates by full target month/date before asserting the seeded `09:00` slot.
+**Tooling**: Pint clean. PHPStan (level 5, `app/` only) clean. Vite build clean (main app chunk ~585 kB; pre-existing >500 kB warning unaffected). Wayfinder regenerated. `npx tsc --noEmit` clean.
+**Codex review**: Round 1 (2026-04-28) closed via `bc991e8`. Round 2 (2026-04-29) verified Round 1 + raised 8 frontend findings; 6 fixed, 1 deferred (G-008), 1 deferred input parser (G-003 partial), 1 closed as false positive (G-006 → D-183). Round 3 (2026-04-29 later same day) verified Round 2 partial — 5 closed, 3 incomplete + 4 drift findings (H-001..H-004); all four were applied in the hardening bundle. This session's uncommitted bundle is Browser baseline repair + Payments E2E-P0 setup only.
 
 ---
 
@@ -69,11 +69,18 @@ MVP (Sessions 1–11) + MVP Completion (MVPC-1..5): data layer, scheduling engin
 - **G-008** — Dashboard banner stack: configurable `role` (alert vs status) and optional dismiss action for non-blocking advisory banners. Out of payments scope; UI session.
 - **G-003 input parser** — refund-dialog amount input accepts CH locale formats (`10,50`, `1'000.50`). UX session.
 
+**Browser baseline repair + PAYMENTS E2E-P0 setup (2026-04-29, staged):**
+
+- **Browser baseline**: fixed 11 pre-existing Browser failures without production-code changes. Root cause was date selection by day number only: PHP `travelTo()` froze seeded availability into the next Tuesday relative to server time, while the browser calendar rendered the real month. `tests/Browser/Support/BookingFlowHelper.php` now navigates by full month/date before selecting the seeded `09:00` slot, and direct booking tests use the same helper.
+- **Payments E2E-P0 foundation**: added `tests/Browser/Support/Payments/PaymentsTestCase.php`, `PaymentsWorld.php`, page objects under `tests/Browser/Support/Payments/Pages/`, `FakeStripeClient::forBrowser()`, a signed Connect webhook helper, stub Stripe external URLs, and `tests/Browser/Payments/SmokeTest.php`. The smoke test proves an admin sees the active connected-account state with `PaymentsWorld::default()->withActiveStripeAccount()`.
+- **Drift baked into helpers**: D-184 deeplinks are server-side redirect paths, D-185 requirements assertions use count/CTA, D-183 CH-centric copy is locked copy while config flips only gate state, `useHttp` errors are discriminator-keyed Inertia errors, and refund row assertions use `_last4` + `has_stripe_link`.
+- **Baseline after this session**: Browser 250 / 958; Feature + Unit 980 / 4249; Pint, PHPStan, Wayfinder, Vite, and `npx tsc --noEmit` clean.
+
 ---
 
 ## What is next
 
-`docs/ROADMAP.md` is **closed**. Choose one:
+`docs/ROADMAP.md` is **closed**. The next maintainer step is to launch **E2E-P1 (Connect onboarding)** from `docs/roadmaps/ROADMAP-E2E-PAYMENTS.md` using the same prompt pattern as this session, reusing the E2E-P0 helpers. Choose one:
 
 - **Promote a parked roadmap**: `docs/roadmaps/ROADMAP-E2E.md` (ongoing coverage) or `docs/roadmaps/ROADMAP-GROUP-BOOKINGS.md` (post-MVP). Overwrite `docs/ROADMAP.md` with the chosen body and delete the parked file.
 - **Draft a fresh roadmap**: use `.claude/references/ROADMAP.md` as the canonical reference for structure + probing checklist + quality bar.

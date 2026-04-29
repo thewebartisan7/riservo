@@ -5,6 +5,7 @@ use App\Models\Business;
 use App\Models\Provider;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Browser\Support\Payments\PaymentsTestCase;
 use Tests\TestCase;
 
 /*
@@ -38,6 +39,12 @@ pest()->extend(TestCase::class)
 pest()->extend(TestCase::class)
     ->use(RefreshDatabase::class)
     ->in('Browser');
+
+pest()->use(PaymentsTestCase::class)
+    ->beforeEach(function () {
+        $this->setUpPaymentsBrowser();
+    })
+    ->in('Browser/Payments');
 
 pest()->browser()->timeout(10000);
 

@@ -12,11 +12,12 @@ use Tests\Browser\Support\BusinessSetup;
 // Covers: D-074 — registered-customer booking flow with customerPrefill + Customer linked to User.
 
 beforeEach(function () {
+    // Pick a full target date because travelTo() does not move the browser's calendar month.
     $next = CarbonImmutable::now('Europe/Zurich');
     if ($next->dayOfWeekIso !== 1) {
         $next = $next->next(Carbon\Carbon::MONDAY);
     }
-    $this->targetDay = (int) $next->format('d');
+    $this->targetDate = $next;
     $this->travelTo($next->setTime(7, 30));
 });
 
@@ -42,10 +43,7 @@ it('pre-fills the customer form for a logged-in customer user', function () {
         $page->click('Any specialist');
     }
 
-    $day = $this->targetDay;
-    $page->script("Array.from(document.querySelectorAll('button.tabular-nums')).find(b => b.textContent.trim() === '{$day}' && !b.disabled)?.click();");
-    $page->assertSee('09:00');
-    $page->script("Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '09:00')?.click();");
+    BookingFlowHelper::selectDateAndTime($page, $this->targetDate);
 
     // Form is pre-filled from customerPrefill — assert the values directly.
     $page->assertSee('Just a few details')

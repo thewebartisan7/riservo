@@ -103,15 +103,7 @@ final class BookingFlowHelper
         if ($targetDate->dayOfWeekIso !== 1) {
             $targetDate = $targetDate->next(Carbon::MONDAY);
         }
-        $day = (int) $targetDate->format('d');
-
-        $page->script("Array.from(document.querySelectorAll('button.tabular-nums')).find(b => b.textContent.trim() === '{$day}' && !b.disabled)?.click();");
-
-        // Wait for a slot button to appear (assertSee implicitly waits) and click it.
-        // The slot button text like '09:00' contains a colon, which confuses CSS parsers,
-        // so click via a script by text content instead of the click() helper.
-        $page->assertSee('09:00');
-        $page->script("Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '09:00')?.click();");
+        self::selectDateAndTime($page, $targetDate);
 
         // Customer details step — fill only when not prefilled (the form keeps prefilled values untouched).
         $page->assertSee('Just a few details');
@@ -131,6 +123,46 @@ final class BookingFlowHelper
 
         // Confirmation.
         $page->assertSee($business->name);
+    }
+
+    public static function selectDateAndTime(mixed $page, CarbonImmutable $targetDate, string $time = '09:00'): void
+    {
+        $browserNow = (array) $page->script(<<<'JS'
+(() => {
+    const now = new Date();
+
+    return {
+        year: now.getFullYear(),
+        month: now.getMonth() + 1,
+    };
+})()
+JS);
+
+        $monthsToAdvance = (((int) $targetDate->format('Y') - (int) $browserNow['year']) * 12)
+            + ((int) $targetDate->format('n') - (int) $browserNow['month']);
+
+        for ($i = 0; $i < max(0, $monthsToAdvance); $i++) {
+            $page->click('button[aria-label="Next month"]');
+        }
+
+        $day = (int) $targetDate->format('d');
+
+        // travelTo() freezes PHP only; navigate by full month before clicking the seeded day.
+        $page->assertScript(<<<JS
+(() => {
+    const button = Array.from(document.querySelectorAll('button.tabular-nums'))
+        .find((element) => element.textContent.trim() === '{$day}');
+
+    return !!button && !button.disabled;
+})()
+JS);
+        $page->script("Array.from(document.querySelectorAll('button.tabular-nums')).find(b => b.textContent.trim() === '{$day}' && !b.disabled)?.click();");
+
+        // Wait for a slot button to appear (assertSee implicitly waits) and click it.
+        // The slot button text like '09:00' contains a colon, which confuses CSS parsers,
+        // so click via a script by text content instead of the click() helper.
+        $page->assertSee($time);
+        $page->script("Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '{$time}')?.click();");
     }
 
     private static function resolveToken(string $email): string

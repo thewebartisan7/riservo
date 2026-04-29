@@ -23,6 +23,42 @@ namespace Tests\Support\Billing;
 class StripeEventBuilder
 {
     /**
+     * @param  array<string, mixed>  $sessionOverrides  merged into the Checkout Session object
+     * @return array<string, mixed>
+     */
+    public static function checkoutSessionEvent(
+        string $accountId,
+        string $type,
+        array $sessionOverrides = [],
+        ?string $eventId = null,
+    ): array {
+        $sessionId = (string) ($sessionOverrides['id'] ?? 'cs_test_'.uniqid());
+        $eventId ??= 'evt_test_'.uniqid();
+
+        $session = array_merge([
+            'id' => $sessionId,
+            'object' => 'checkout.session',
+            'account' => $accountId,
+            'client_reference_id' => null,
+            'payment_status' => 'paid',
+            'amount_total' => 5000,
+            'currency' => 'chf',
+            'payment_intent' => 'pi_test_'.uniqid(),
+            'latest_charge' => 'ch_test_'.uniqid(),
+        ], $sessionOverrides);
+
+        return [
+            'id' => $eventId,
+            'object' => 'event',
+            'type' => $type,
+            'account' => $accountId,
+            'data' => [
+                'object' => $session,
+            ],
+        ];
+    }
+
+    /**
      * @param  array<string, mixed>  $overrides  merged into the dispute object (inner merge)
      * @return array<string, mixed>
      */

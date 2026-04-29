@@ -4,20 +4,19 @@ declare(strict_types=1);
 
 use App\Models\Booking;
 use Carbon\CarbonImmutable;
+use Tests\Browser\Support\BookingFlowHelper;
 use Tests\Browser\Support\BusinessSetup;
 
 // Covers: customer-details-form client-side validation (empty name/email/phone,
 // invalid email format) on the public booking funnel.
 
 beforeEach(function () {
-    // Next real Monday (in business timezone) — browser uses real wall clock for its
-    // "today" threshold; we align the PHP clock to match so availability and the client
-    // agree on which day is future.
+    // Pick a full target date because travelTo() does not move the browser's calendar month.
     $next = CarbonImmutable::now('Europe/Zurich');
     if ($next->dayOfWeekIso !== 1) {
         $next = $next->next(Carbon\Carbon::MONDAY);
     }
-    $this->targetDay = (int) $next->format('d');
+    $this->targetDate = $next;
     $this->travelTo($next->setTime(7, 30));
 });
 
@@ -30,10 +29,7 @@ it('blocks advance and shows per-field errors when name, email, and phone are em
         $page->click('Any specialist');
     }
 
-    $day = $this->targetDay;
-    $page->script("Array.from(document.querySelectorAll('button.tabular-nums')).find(b => b.textContent.trim() === '{$day}' && !b.disabled)?.click();");
-    $page->assertSee('09:00');
-    $page->script("Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '09:00')?.click();");
+    BookingFlowHelper::selectDateAndTime($page, $this->targetDate);
 
     $page->assertSee('Just a few details');
     // The "Continue to review" button wraps its text inside <Display> — click via script.
